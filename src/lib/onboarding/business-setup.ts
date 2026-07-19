@@ -1,0 +1,188 @@
+import {
+  AuditStatus,
+  BusinessProfileStatus,
+  type BusinessGoal,
+  type ProfilePlatform,
+} from "@prisma/client";
+
+import {
+  confirmedSocialProfiles,
+  hasConfirmedWebsite,
+} from "@/lib/audits/audit-applicability";
+
+export const businessSetupSteps = [
+  "profiles",
+  "context",
+  "goals",
+  "audit",
+  "results",
+] as const;
+
+export type BusinessSetupStep = (typeof businessSetupSteps)[number];
+
+export type BusinessSetupSource = {
+  profiles: Array<{
+    status: BusinessProfileStatus;
+    platform: ProfilePlatform;
+    url?: string | null;
+    handle?: string | null;
+  }>;
+  description?: string | null;
+  targetAudience?: string | null;
+  mainOffer?: string | null;
+  industry?: string | null;
+  businessType?: string | null;
+  primaryConversionGoal?: string | null;
+  contextConfirmedAt?: Date | null;
+  goals: BusinessGoal[];
+  primaryGoal?: BusinessGoal | null;
+  audits: Array<{
+    status: AuditStatus;
+    id?: string;
+    overallScore?: number | null;
+  }>;
+  onboardingCompletedAt?: Date | null;
+  googleBusinessProfiles?: Array<{ status: string }>;
+};
+
+export type BusinessSetupProgress = {
+  profileCounts: {
+    confirmed: number;
+    pending: number;
+    removed: number;
+  };
+  profilesComplete: boolean;
+  hasConfirmedWebsite: boolean;
+  socialFirst: boolean;
+  contextHasCoreDetails: boolean;
+  contextState: "missing" | "needs_review" | "complete";
+  contextComplete: boolean;
+  goalsComplete: boolean;
+  auditComplete: boolean;
+  resultsReviewed: boolean;
+  readyToAudit: boolean;
+  completedSteps: Record<BusinessSetupStep, boolean>;
+  currentStep: BusinessSetupStep;
+  completedCount: number;
+  percent: number;
+  listStatus: "Setup incomplete" | "Ready to audit" | "Audit complete";
+};
+
+export function deriveBusinessSetupProgress(
+  business: BusinessSetupSource,
+): BusinessSetupProgress {
+  const confirmedProfiles = business.profiles.filter(
+    (profile) =>
+      profile.status === BusinessProfileStatus.CONFIRMED &&
+      Boolean(profile.url?.trim() || profile.handle?.trim()),
+  );
+  const pendingProfiles = business.profiles.filter(
+    (profile) => profile.status === BusinessProfileStatus.PENDING,
+  );
+  const removedProfiles = business.profiles.filter(
+    (profile) => profile.status === BusinessProfileStatus.REMOVED,
+  );
+  const hasConfirmedGoogleBusiness = Boolean(
+    business.googleBusinessProfiles?.some(
+      (profile) => profile.status.toLowerCase() === "confirmed",
+    ),
+  );
+  const confirmedGoogleAlreadyCounted = confirmedProfiles.some(
+    (profile) => profile.platform === "GOOGLE_BUSINESS",
+  );
+  const websiteConfirmed = hasConfirmedWebsite(business.profiles);
+  const confirmedSocialCount = confirmedSocialProfiles(
+    business.profiles,
+  ).length;
+  const socialFirst = !websiteConfirmed && confirmedSocialCount > 0;
+  const profilesComplete =
+    confirmedProfiles.length > 0 || hasConfirmedGoogleBusiness;
+  const contextHasCoreDetails = Boolean(
+    business.description?.trim() &&
+      business.targetAudience?.trim() &&
+      business.mainOffer?.trim(),
+  );
+  const hasContext = Boolean(
+    business.description?.trim() ||
+      business.targetAudience?.trim() ||
+      business.mainOffer?.trim() ||
+      business.industry?.trim() ||
+      business.businessType?.trim() ||
+      business.primaryConversionGoal?.trim(),
+  );
+  const contextState = !hasContext
+    ? "missing"
+    : business.contextConfirmedAt
+      ? "complete"
+      : "needs_review";
+  const goalsComplete =
+    business.goals.length > 0 && Boolean(business.primaryGoal);
+  const auditComplete = business.audits.some(
+    (audit) => audit.status === AuditStatus.COMPLETED,
+  );
+  const resultsReviewed = Boolean(business.onboardingCompletedAt);
+  const completedSteps: Record<BusinessSetupStep, boolean> = {
+    profiles: profilesComplete,
+    context: contextState === "complete",
+    goals: goalsComplete,
+    audit: auditComplete,
+    results: resultsReviewed,
+  };
+  const currentStep =
+    businessSetupSteps.find((step) => !completedSteps[step]) ?? "results";
+  const completedCount = businessSetupSteps.filter(
+    (step) => completedSteps[step],
+  ).length;
+
+  return {
+    profileCounts: {
+      confirmed:
+        confirmedProfiles.length +
+        (hasConfirmedGoogleBusiness && !confirmedGoogleAlreadyCounted ? 1 : 0),
+      pending: pendingProfiles.length,
+      removed: removedProfiles.length,
+    },
+    profilesComplete,
+    hasConfirmedWebsite: websiteConfirmed,
+    socialFirst,
+    contextHasCoreDetails,
+    contextState,
+    contextComplete: contextState === "complete",
+    goalsComplete,
+    auditComplete,
+    resultsReviewed,
+    readyToAudit:
+      profilesComplete &&
+      (socialFirst
+        ? contextState === "complete" && contextHasCoreDetails
+        : contextState !== "missing") &&
+      goalsComplete,
+    completedSteps,
+    currentStep,
+    completedCount,
+    percent: Math.round((completedCount / businessSetupSteps.length) * 100),
+    listStatus: auditComplete
+      ? "Audit complete"
+      : profilesComplete &&
+          (socialFirst
+            ? contextState === "complete" && contextHasCoreDetails
+            : contextState !== "missing") &&
+          goalsComplete
+        ? "Ready to audit"
+        : "Setup incomplete",
+  };
+}
+
+export function isBusinessSetupStep(value: string): value is BusinessSetupStep {
+  return businessSetupSteps.includes(value as BusinessSetupStep);
+}
+
+export function nextBusinessSetupStep(step: BusinessSetupStep) {
+  const index = businessSetupSteps.indexOf(step);
+  return businessSetupSteps[Math.min(index + 1, businessSetupSteps.length - 1)];
+}
+
+export function previousBusinessSetupStep(step: BusinessSetupStep) {
+  const index = businessSetupSteps.indexOf(step);
+  return businessSetupSteps[Math.max(index - 1, 0)];
+}

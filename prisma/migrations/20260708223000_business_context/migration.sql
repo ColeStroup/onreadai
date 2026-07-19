@@ -1,0 +1,10 @@
+ALTER TABLE "Business" ADD COLUMN "description" TEXT,
+ADD COLUMN "targetAudience" TEXT,
+ADD COLUMN "mainOffer" TEXT,
+ADD COLUMN "businessType" TEXT,
+ADD COLUMN "primaryConversionGoal" TEXT,
+ADD COLUMN "brandTone" TEXT,
+ADD COLUMN "contextConfidence" INTEGER,
+ADD COLUMN "contextSource" TEXT,
+ADD COLUMN "contextConfirmedAt" TIMESTAMP(3),
+ADD COLUMN "contextUpdatedAt" TIMESTAMP(3);

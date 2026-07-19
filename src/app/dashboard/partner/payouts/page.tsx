@@ -1,0 +1,11 @@
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { requirePartner } from "@/lib/partners/authorization";
+import { getPartnerAvailableBalance } from "@/lib/partners/payouts";
+import { prisma } from "@/lib/prisma";
+
+function money(cents: number, currency = "usd") { return new Intl.NumberFormat("en-US", { style: "currency", currency: currency.toUpperCase() }).format(cents / 100); }
+export default async function PartnerPayoutsPage() {
+  const { partner } = await requirePartner("/dashboard/partner/payouts");
+  const [balance, payouts] = await Promise.all([getPartnerAvailableBalance(partner.id), prisma.partnerPayout.findMany({ where: { partnerId: partner.id }, orderBy: { createdAt: "desc" }, take: 50 })]);
+  return <div className="space-y-6"><div className="grid gap-4 sm:grid-cols-3"><Card><CardContent className="p-5"><p className="text-sm text-muted">Available net balance</p><p className="mt-2 text-2xl font-semibold">{money(balance.netAvailableCents)}</p></CardContent></Card><Card><CardContent className="p-5"><p className="text-sm text-muted">Payout minimum</p><p className="mt-2 text-2xl font-semibold">{money(partner.minimumPayoutCents)}</p></CardContent></Card><Card><CardContent className="p-5"><p className="text-sm text-muted">Eligibility</p><p className="mt-2 text-lg font-semibold">{partner.payoutEligibilityStatus.replaceAll("_", " ")}</p></CardContent></Card></div><Card><CardHeader><CardTitle>Manual payout history</CardTitle><p className="text-sm text-muted">Administrators send funds outside the application and record the method and reference here. No bank credentials are stored.</p></CardHeader><CardContent className="space-y-3">{payouts.length ? payouts.map((payout) => <div key={payout.id} className="flex flex-col gap-3 border-b border-border pb-4 last:border-0 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-medium">{money(payout.netPayoutCents, payout.currency)}</p><p className="mt-1 text-xs text-muted">{payout.periodStart.toLocaleDateString()} to {payout.periodEnd.toLocaleDateString()} · {payout.status}</p></div><div className="text-sm text-muted">{payout.paidAt ? `Paid ${payout.paidAt.toLocaleDateString()}` : "Not yet paid"}</div></div>) : <p className="py-8 text-center text-sm text-muted">No payouts have been recorded yet.</p>}</CardContent></Card></div>;
+}

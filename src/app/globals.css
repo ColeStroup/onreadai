@@ -1,0 +1,110 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f6f7f9;
+  --foreground: #171717;
+  --card: #ffffff;
+  --muted: #5f6673;
+  --border: #e1e5ea;
+  --accent: #0f766e;
+  --accent-foreground: #ffffff;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #101113;
+    --foreground: #f4f4f5;
+    --card: #17191c;
+    --muted: #a1a1aa;
+    --border: #2a2d33;
+    --accent: #2dd4bf;
+    --accent-foreground: #042f2e;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--background);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+}
+
+.marketing-shell {
+  --marketing-bg: #071011;
+  --marketing-surface: #0d1718;
+  --marketing-text: #f8fafc;
+  color-scheme: dark;
+}
+
+.marketing-shell h1,
+.marketing-shell h2,
+.marketing-shell h3 {
+  text-wrap: balance;
+}
+
+.marketing-shell p {
+  text-wrap: pretty;
+}
+
+.marketing-menu summary::-webkit-details-marker,
+.marketing-faq summary::-webkit-details-marker {
+  display: none;
+}
+
+.marketing-menu[open] > summary {
+  background: rgb(255 255 255 / 0.08);
+}
+
+@keyframes marketing-preview-breathe {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+@media (min-width: 1024px) and (prefers-reduced-motion: no-preference) {
+  .marketing-preview {
+    animation: marketing-preview-breathe 7s ease-in-out infinite;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html:focus-within {
+    scroll-behavior: auto;
+  }
+
+  .marketing-shell *,
+  .marketing-shell *::before,
+  .marketing-shell *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}

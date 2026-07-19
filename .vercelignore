@@ -1,0 +1,14 @@
+.artifacts
+.next
+node_modules
+*.tsbuildinfo
+coverage
+docs
+test-results
+playwright-report
+tests
+scripts
+*.log
+cloudflared.exe
+.env*
+!.env.example

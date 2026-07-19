@@ -1,0 +1,1337 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum BusinessInputType {
+  WEBSITE
+  SOCIAL_PROFILE
+  BUSINESS_NAME
+}
+
+enum BusinessStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum ProfilePlatform {
+  WEBSITE
+  GOOGLE_BUSINESS
+  INSTAGRAM
+  FACEBOOK
+  TIKTOK
+  YOUTUBE
+  LINKEDIN
+  X
+  PINTEREST
+  OTHER
+}
+
+enum BusinessProfileStatus {
+  PENDING
+  CONFIRMED
+  REMOVED
+}
+
+enum AuditStatus {
+  PENDING
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum ScoreCategory {
+  OVERALL
+  WEBSITE
+  SOCIAL
+  SEO
+  BRANDING
+  REVIEWS
+  COMPETITORS
+}
+
+enum FindingSeverity {
+  INFO
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum RecommendationPriority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum RecommendationStatus {
+  TODO
+  IN_PROGRESS
+  COMPLETED
+  DISMISSED
+}
+
+enum ImplementationDraftStatus {
+  DRAFT
+  SAVED
+  APPLIED
+  ARCHIVED
+}
+
+enum BusinessGoal {
+  MORE_CUSTOMERS
+  MORE_LEADS
+  IMPROVE_WEBSITE
+  IMPROVE_SEO
+  GROW_SOCIAL_MEDIA
+  INCREASE_SALES
+  BEAT_COMPETITORS
+  IMPROVE_BRANDING
+  INCREASE_CONVERSIONS
+  BUILD_EMAIL_LIST
+  IMPROVE_LOCAL_VISIBILITY
+  OTHER
+}
+
+enum CompetitorStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum CompetitorSnapshotStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  PARTIAL
+  FAILED
+}
+
+enum ChatRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
+
+enum PlanType {
+  FREE
+  ONE_TIME_AUDIT
+  STARTER
+  PRO
+  AGENCY
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  TRIALING
+  PAST_DUE
+  UNPAID
+  CANCELED
+  INCOMPLETE
+  INCOMPLETE_EXPIRED
+  PAUSED
+  FREE
+}
+
+enum OneTimePurchaseStatus {
+  AVAILABLE
+  USED
+  REFUNDED
+  EXPIRED
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum EmailVerificationPurpose {
+  SIGNUP_VERIFICATION
+  EMAIL_CHANGE
+}
+
+enum AuthSecurityAction {
+  SIGNUP
+  SIGN_IN
+  FORGOT_PASSWORD
+  PASSWORD_RESET
+}
+
+enum PartnerApplicationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  WAITLISTED
+  WITHDRAWN
+}
+
+enum PartnerStatus {
+  PENDING_TRAINING
+  ACTIVE
+  SUSPENDED
+  TERMINATED
+}
+
+enum PartnerTier {
+  CERTIFIED
+  GROWTH
+  ELITE
+}
+
+enum PartnerPayoutEligibilityStatus {
+  NOT_CONFIGURED
+  PENDING_REVIEW
+  ELIGIBLE
+  BLOCKED
+}
+
+enum PartnerAgreementType {
+  PARTNER_TERMS
+  COMMISSION_POLICY
+  PROMOTION_STANDARDS
+  SCANNER_POLICY
+}
+
+enum PartnerAttributionStatus {
+  LOCKED
+  CONVERTED
+  DISQUALIFIED
+  OVERRIDDEN
+}
+
+enum PartnerAttributionSource {
+  REFERRAL_LINK
+  REFERRAL_CODE
+  PROSPECT_PREVIEW
+  ADMIN_OVERRIDE
+}
+
+enum PartnerPurchaseType {
+  FULL_AUDIT
+  STARTER_SUBSCRIPTION
+  PRO_SUBSCRIPTION
+}
+
+enum PartnerCommissionStatus {
+  PENDING
+  AVAILABLE
+  PARTIALLY_REVERSED
+  REVERSED
+  PAID
+  REJECTED
+}
+
+enum PartnerCommissionAdjustmentType {
+  REFUND
+  PARTIAL_REFUND
+  DISPUTE
+  DISPUTE_REVERSAL
+  MANUAL_CREDIT
+  MANUAL_DEBIT
+  CORRECTION
+}
+
+enum PartnerPayoutStatus {
+  DRAFT
+  APPROVED
+  PAID
+  FAILED
+  CANCELED
+}
+
+enum PartnerPayoutMethod {
+  PAYPAL
+  WISE
+  ACH_MANUAL
+  CHECK
+  OTHER
+}
+
+enum PartnerProspectStatus {
+  NEW
+  SCANNED
+  CONTACTED
+  INTERESTED
+  CONVERTED
+  CLOSED
+  DO_NOT_CONTACT
+}
+
+enum PartnerProspectScanStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+model User {
+  id                          String    @id @default(cuid())
+  name                        String?
+  email                       String?   @unique
+  emailVerified               DateTime?
+  emailVerificationRequiredAt DateTime?
+  sessionVersion              Int       @default(0)
+  image                       String?
+  passwordHash                String?
+  stripeCustomerId            String?   @unique
+  role                        UserRole  @default(USER)
+  createdAt                   DateTime  @default(now())
+  updatedAt                   DateTime  @updatedAt
+
+  accounts               Account[]
+  sessions               Session[]
+  businesses             Business[]
+  chatThreads            ChatThread[]
+  subscriptions          UserSubscription[]
+  oneTimeAuditPurchases  OneTimeAuditPurchase[]
+  implementationDrafts   ImplementationDraft[]
+  stripeWebhookEvents    StripeWebhookEvent[]
+  partnerApplications    PartnerApplication[]
+  partnerProfile         PartnerProfile?
+  partnerAttribution     PartnerReferralAttribution?
+  partnerCommissions     PartnerCommission[]
+  partnerCheckoutIntents PartnerCheckoutIntent[]
+  partnerNotifications   PartnerNotification[]
+  emailVerificationCodes EmailVerificationCode[]
+  passwordResetTokens    PasswordResetToken[]
+
+  @@index([email])
+  @@index([role])
+}
+
+model EmailVerificationCode {
+  id            String                   @id @default(cuid())
+  userId        String
+  email         String
+  codeHash      String
+  purpose       EmailVerificationPurpose @default(SIGNUP_VERIFICATION)
+  expiresAt     DateTime
+  attemptCount  Int                      @default(0)
+  maxAttempts   Int                      @default(5)
+  lastAttemptAt DateTime?
+  consumedAt    DateTime?
+  invalidatedAt DateTime?
+  createdAt     DateTime                 @default(now())
+  updatedAt     DateTime                 @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([email])
+  @@index([purpose])
+  @@index([expiresAt])
+  @@index([consumedAt])
+  @@index([userId, purpose, createdAt])
+}
+
+model PasswordResetToken {
+  id            String    @id @default(cuid())
+  userId        String
+  email         String
+  tokenHash     String    @unique
+  expiresAt     DateTime
+  attemptCount  Int       @default(0)
+  maxAttempts   Int       @default(5)
+  lastAttemptAt DateTime?
+  consumedAt    DateTime?
+  invalidatedAt DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([email])
+  @@index([expiresAt])
+  @@index([consumedAt])
+  @@index([userId, createdAt])
+}
+
+model AuthSecurityEvent {
+  id        String             @id @default(cuid())
+  action    AuthSecurityAction
+  keyHash   String
+  outcome   String?
+  createdAt DateTime           @default(now())
+
+  @@index([action, keyHash, createdAt])
+  @@index([createdAt])
+}
+
+model RateLimitEvent {
+  id        String   @id @default(cuid())
+  scope     String
+  keyHash   String
+  createdAt DateTime @default(now())
+
+  @@index([scope, keyHash, createdAt])
+  @@index([createdAt])
+}
+
+model UserSubscription {
+  id                           String             @id @default(cuid())
+  userId                       String
+  plan                         PlanType           @default(FREE)
+  status                       SubscriptionStatus @default(FREE)
+  stripeSubscriptionId         String?            @unique
+  stripePriceId                String?
+  stripeProductKey             String?
+  currentPeriodStart           DateTime?
+  currentPeriodEnd             DateTime?
+  cancelAtPeriodEnd            Boolean            @default(false)
+  latestStripeEventCreatedAt   DateTime?
+  lastInvoicePaidAt            DateTime?
+  lastPaymentFailedAt          DateTime?
+  partnerId                    String?
+  partnerReferralAttributionId String?
+  createdAt                    DateTime           @default(now())
+  updatedAt                    DateTime           @updatedAt
+
+  user                       User                        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  partner                    PartnerProfile?             @relation(fields: [partnerId], references: [id], onDelete: SetNull)
+  partnerReferralAttribution PartnerReferralAttribution? @relation(fields: [partnerReferralAttributionId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([plan])
+  @@index([status])
+  @@index([stripePriceId])
+  @@index([partnerId])
+  @@index([partnerReferralAttributionId])
+}
+
+model OneTimeAuditPurchase {
+  id                           String                @id @default(cuid())
+  userId                       String
+  businessId                   String?
+  auditId                      String?
+  status                       OneTimePurchaseStatus @default(AVAILABLE)
+  productKey                   String?
+  stripePriceId                String?
+  stripeCheckoutSessionId      String?               @unique
+  stripePaymentIntentId        String?               @unique
+  partnerId                    String?
+  partnerReferralAttributionId String?
+  createdAt                    DateTime              @default(now())
+  usedAt                       DateTime?
+
+  user                       User                        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  partner                    PartnerProfile?             @relation(fields: [partnerId], references: [id], onDelete: SetNull)
+  partnerReferralAttribution PartnerReferralAttribution? @relation(fields: [partnerReferralAttributionId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([businessId])
+  @@index([auditId])
+  @@index([status])
+  @@index([partnerId])
+  @@index([partnerReferralAttributionId])
+}
+
+model StripeWebhookEvent {
+  id              String   @id @default(cuid())
+  stripeEventId   String   @unique
+  eventType       String
+  userId          String?
+  stripeCreatedAt DateTime
+  processedAt     DateTime @default(now())
+  processingError String?
+  createdAt       DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([eventType])
+  @@index([processedAt])
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model Business {
+  id                    String            @id @default(cuid())
+  ownerId               String
+  name                  String
+  initialInput          String
+  inputType             BusinessInputType @default(BUSINESS_NAME)
+  websiteUrl            String?
+  industry              String?
+  description           String?
+  targetAudience        String?
+  mainOffer             String?
+  businessType          String?
+  primaryConversionGoal String?
+  brandTone             String?
+  contextConfidence     Int?
+  contextSource         String?
+  contextConfirmedAt    DateTime?
+  contextUpdatedAt      DateTime?
+  location              String?
+  status                BusinessStatus    @default(DRAFT)
+  goals                 BusinessGoal[]    @default([])
+  primaryGoal           BusinessGoal?
+  onboardingCompletedAt DateTime?
+  onboardingDismissedAt DateTime?
+  onboardingLastStep    String?
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+
+  owner                  User                    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  profiles               BusinessProfile[]
+  audits                 Audit[]
+  recommendations        Recommendation[]
+  competitors            Competitor[]
+  chatThreads            ChatThread[]
+  socialStrategies       SocialStrategy[]
+  googleBusinessProfiles GoogleBusinessProfile[]
+  implementationDrafts   ImplementationDraft[]
+
+  @@index([ownerId])
+  @@index([status])
+}
+
+model SocialStrategy {
+  id                      String   @id @default(cuid())
+  businessId              String
+  platformRecommendations Json?
+  contentPillars          Json?
+  weeklyPlan              Json?
+  suggestedPosts          Json?
+  conversionTips          Json?
+  competitorOpportunities Json?
+  confidence              Int?
+  source                  String?
+  reasoningSummary        String?
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId])
+  @@index([createdAt])
+}
+
+model BusinessProfile {
+  id              String                @id @default(cuid())
+  businessId      String
+  platform        ProfilePlatform
+  url             String?
+  handle          String?
+  displayName     String?
+  confidenceScore Int                   @default(0)
+  status          BusinessProfileStatus @default(PENDING)
+  isConfirmed     Boolean               @default(false)
+  discoveredAt    DateTime?
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, platform, url])
+  @@index([businessId])
+  @@index([platform])
+}
+
+model GoogleBusinessProfile {
+  id               String    @id @default(cuid())
+  businessId       String
+  googlePlaceId    String?
+  displayName      String?
+  formattedAddress String?
+  phoneNumber      String?
+  websiteUri       String?
+  googleMapsUri    String?
+  rating           Float?
+  reviewCount      Int?
+  businessStatus   String?
+  primaryType      String?
+  types            Json?
+  matchConfidence  Int?
+  matchReasons     Json?
+  status           String    @default("pending")
+  source           String    @default("places_api")
+  rawSnapshot      Json?
+  discoveredAt     DateTime?
+  confirmedAt      DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, googlePlaceId])
+  @@index([businessId])
+  @@index([googlePlaceId])
+  @@index([status])
+}
+
+model Audit {
+  id               String      @id @default(cuid())
+  businessId       String
+  status           AuditStatus @default(PENDING)
+  overallScore     Int?
+  summary          String?
+  analysisSnapshot Json?
+  startedAt        DateTime?
+  completedAt      DateTime?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  business             Business              @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  scores               AuditScore[]
+  findings             AuditFinding[]
+  recommendations      Recommendation[]
+  implementationDrafts ImplementationDraft[]
+  competitorSnapshots  CompetitorSnapshot[]
+
+  @@index([businessId])
+  @@index([status])
+}
+
+model AuditScore {
+  id        String           @id @default(cuid())
+  auditId   String
+  category  ScoreCategory
+  platform  ProfilePlatform?
+  label     String?
+  score     Int
+  maxScore  Int              @default(100)
+  createdAt DateTime         @default(now())
+
+  audit Audit @relation(fields: [auditId], references: [id], onDelete: Cascade)
+
+  @@unique([auditId, category, platform])
+  @@index([auditId])
+  @@index([category])
+}
+
+model AuditFinding {
+  id          String          @id @default(cuid())
+  auditId     String
+  category    ScoreCategory
+  severity    FindingSeverity @default(MEDIUM)
+  title       String
+  description String
+  evidence    Json?
+  sourceUrl   String?
+  isResolved  Boolean         @default(false)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  audit Audit @relation(fields: [auditId], references: [id], onDelete: Cascade)
+
+  @@index([auditId])
+  @@index([severity])
+}
+
+model Recommendation {
+  id                String                 @id @default(cuid())
+  businessId        String
+  auditId           String?
+  title             String
+  description       String
+  category          ScoreCategory
+  priority          RecommendationPriority @default(MEDIUM)
+  status            RecommendationStatus   @default(TODO)
+  impact            String?
+  effort            String?
+  expectedImpact    String?
+  estimatedEffort   String?
+  sortOrder         Int?
+  dueDate           DateTime?
+  completedAt       DateTime?
+  sourceType        String?
+  sourceReferenceId String?
+  sourceUrl         String?
+  evidence          Json?
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+
+  business             Business              @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  audit                Audit?                @relation(fields: [auditId], references: [id], onDelete: SetNull)
+  implementationDrafts ImplementationDraft[]
+
+  @@index([businessId])
+  @@index([auditId])
+  @@index([status])
+}
+
+model ImplementationDraft {
+  id               String                    @id @default(cuid())
+  businessId       String
+  recommendationId String?
+  auditId          String?
+  userId           String
+  type             String
+  title            String
+  content          Json
+  sourceKey        String?
+  source           String
+  status           ImplementationDraftStatus @default(DRAFT)
+  appliedAt        DateTime?
+  createdAt        DateTime                  @default(now())
+  updatedAt        DateTime                  @updatedAt
+
+  business       Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  recommendation Recommendation? @relation(fields: [recommendationId], references: [id], onDelete: SetNull)
+  audit          Audit?          @relation(fields: [auditId], references: [id], onDelete: SetNull)
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([businessId])
+  @@index([businessId, sourceKey])
+  @@index([recommendationId])
+  @@index([auditId])
+  @@index([userId, createdAt])
+  @@index([status])
+}
+
+model Competitor {
+  id                 String               @id @default(cuid())
+  businessId         String
+  name               String
+  websiteUrl         String?
+  profiles           Json?
+  notes              String?
+  status             CompetitorStatus     @default(ACTIVE)
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  discoveredProfiles CompetitorProfile[]
+  snapshots          CompetitorSnapshot[]
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, name])
+  @@index([businessId])
+  @@index([status])
+}
+
+model CompetitorProfile {
+  id              String                @id @default(cuid())
+  competitorId    String
+  platform        ProfilePlatform
+  label           String
+  urlOrHandle     String?
+  confidenceScore Int                   @default(0)
+  status          BusinessProfileStatus @default(PENDING)
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+
+  competitor Competitor @relation(fields: [competitorId], references: [id], onDelete: Cascade)
+
+  @@index([competitorId])
+  @@index([platform])
+  @@index([status])
+}
+
+model CompetitorSnapshot {
+  id                  String                   @id @default(cuid())
+  competitorId        String
+  auditId             String?
+  status              CompetitorSnapshotStatus @default(PENDING)
+  websiteUrl          String?
+  websiteScore        Int?
+  seoScore            Int?
+  socialCoverageScore Int?
+  reviewsScore        Int?
+  positioningScore    Int?
+  websiteSnapshot     Json?
+  seoSnapshot         Json?
+  socialSnapshot      Json?
+  reviewsSnapshot     Json?
+  positioningSnapshot Json?
+  analysisSummary     Json?
+  completedSections   Json?
+  failedSections      Json?
+  errorMessage        String?
+  source              String?
+  scannedAt           DateTime?
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @updatedAt
+
+  competitor Competitor @relation(fields: [competitorId], references: [id], onDelete: Cascade)
+  audit      Audit?     @relation(fields: [auditId], references: [id], onDelete: SetNull)
+
+  @@index([competitorId, createdAt])
+  @@index([auditId])
+  @@index([status])
+}
+
+model ChatThread {
+  id         String   @id @default(cuid())
+  businessId String
+  userId     String
+  title      String   @default("Growth Strategy Chat")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  business Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  user     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages ChatMessage[]
+
+  @@index([businessId])
+  @@index([userId])
+}
+
+model ChatMessage {
+  id        String   @id @default(cuid())
+  threadId  String
+  role      ChatRole
+  content   String   @db.Text
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  thread ChatThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+
+  @@index([threadId])
+  @@index([role])
+}
+
+model PartnerApplication {
+  id                         String                   @id @default(cuid())
+  userId                     String
+  status                     PartnerApplicationStatus @default(PENDING)
+  activeApplicationKey       String?                  @unique
+  legalName                  String
+  displayName                String
+  email                      String
+  country                    String
+  stateOrRegion              String?
+  websiteUrl                 String?
+  socialProfiles             Json?
+  experienceSummary          String                   @db.Text
+  intendedPromotionMethods   Json?
+  audienceOrOutreachSummary  String                   @db.Text
+  applicationMessage         String                   @db.Text
+  ageConfirmation            Boolean
+  standardsAgreement         Boolean
+  earningsDisclaimerAccepted Boolean
+  submittedAt                DateTime                 @default(now())
+  reviewedAt                 DateTime?
+  reviewedByUserId           String?
+  reviewNotes                String?                  @db.Text
+  rejectionReason            String?                  @db.Text
+  createdAt                  DateTime                 @default(now())
+  updatedAt                  DateTime                 @updatedAt
+
+  user    User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  profile PartnerProfile?
+
+  @@index([userId, createdAt])
+  @@index([status, submittedAt])
+  @@index([country])
+}
+
+model PartnerProfile {
+  id                        String                         @id @default(cuid())
+  userId                    String                         @unique
+  applicationId             String?                        @unique
+  status                    PartnerStatus                  @default(PENDING_TRAINING)
+  tier                      PartnerTier                    @default(CERTIFIED)
+  referralCode              String                         @unique
+  normalizedReferralCode    String                         @unique
+  commissionRateBps         Int
+  recurringCommissionMonths Int
+  referralWindowDays        Int
+  commissionHoldDays        Int
+  minimumPayoutCents        Int
+  allowedCountry            String
+  approvedAt                DateTime
+  activatedAt               DateTime?
+  suspendedAt               DateTime?
+  terminatedAt              DateTime?
+  suspensionReason          String?                        @db.Text
+  trainingCompletedAt       DateTime?
+  certificationIssuedAt     DateTime?
+  currentTermsVersion       String?
+  termsAcceptedAt           DateTime?
+  termsReacceptRequiredAt   DateTime?
+  scannerDailyLimit         Int
+  scannerMonthlyLimit       Int
+  scannerEnabled            Boolean                        @default(false)
+  referralEnabled           Boolean                        @default(false)
+  payoutEligibilityStatus   PartnerPayoutEligibilityStatus @default(NOT_CONFIGURED)
+  payoutMethod              PartnerPayoutMethod?
+  payoutContactEmail        String?
+  payoutAccountDisplayName  String?
+  payoutInstructions        String?                        @db.Text
+  complianceReviewStatus    String                         @default("CLEAR")
+  internalNotes             String?                        @db.Text
+  createdAt                 DateTime                       @default(now())
+  updatedAt                 DateTime                       @updatedAt
+
+  user                  User                          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  application           PartnerApplication?           @relation(fields: [applicationId], references: [id], onDelete: SetNull)
+  trainingProgress      PartnerTrainingProgress[]
+  assessments           PartnerTrainingAssessment[]
+  agreements            PartnerAgreementAcceptance[]
+  referralVisits        PartnerReferralVisit[]
+  attributions          PartnerReferralAttribution[]
+  commissions           PartnerCommission[]
+  commissionAdjustments PartnerCommissionAdjustment[]
+  payouts               PartnerPayout[]
+  prospects             PartnerProspect[]
+  previews              PartnerProspectPreview[]
+  scannerUsage          PartnerScannerUsage[]
+  adminAuditLogs        PartnerAdminAuditLog[]
+  notifications         PartnerNotification[]
+  checkoutIntents       PartnerCheckoutIntent[]
+  subscriptions         UserSubscription[]
+  oneTimePurchases      OneTimeAuditPurchase[]
+
+  @@index([status, createdAt])
+  @@index([tier])
+  @@index([payoutEligibilityStatus])
+}
+
+model PartnerProgramSettings {
+  id                               String   @id @default(cuid())
+  key                              String   @unique @default("default")
+  enabled                          Boolean  @default(false)
+  applicationsOpen                 Boolean  @default(false)
+  referralAttributionEnabled       Boolean  @default(false)
+  commissionCreationEnabled        Boolean  @default(false)
+  scannerEnabled                   Boolean  @default(false)
+  previewPagesEnabled              Boolean  @default(false)
+  manualPayoutWorkflowEnabled      Boolean  @default(false)
+  defaultCommissionRateBps         Int      @default(2000)
+  defaultRecurringCommissionMonths Int      @default(12)
+  defaultReferralWindowDays        Int      @default(30)
+  defaultCommissionHoldDays        Int      @default(30)
+  defaultMinimumPayoutCents        Int      @default(5000)
+  defaultScannerDailyLimit         Int      @default(25)
+  defaultScannerMonthlyLimit       Int      @default(500)
+  scanCacheDays                    Int      @default(30)
+  approvedCountries                Json
+  currentTermsVersion              String   @default("1.0")
+  currentTrainingVersion           String   @default("1.0")
+  updatedByUserId                  String?
+  createdAt                        DateTime @default(now())
+  updatedAt                        DateTime @updatedAt
+}
+
+model PartnerTrainingModule {
+  id               String   @id @default(cuid())
+  slug             String
+  title            String
+  description      String
+  sortOrder        Int
+  version          String
+  content          Json
+  estimatedMinutes Int
+  isRequired       Boolean  @default(true)
+  isPublished      Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  progress PartnerTrainingProgress[]
+
+  @@unique([slug, version])
+  @@index([version, isPublished, sortOrder])
+}
+
+model PartnerTrainingProgress {
+  id               String   @id @default(cuid())
+  partnerId        String
+  moduleId         String
+  completedAt      DateTime
+  versionCompleted String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  partner PartnerProfile        @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  module  PartnerTrainingModule @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+
+  @@unique([partnerId, moduleId, versionCompleted])
+  @@index([partnerId, completedAt])
+}
+
+model PartnerTrainingAssessment {
+  id              String   @id @default(cuid())
+  partnerId       String
+  trainingVersion String
+  score           Int
+  passed          Boolean
+  attempts        Int      @default(1)
+  submittedAt     DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  partner PartnerProfile @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+
+  @@unique([partnerId, trainingVersion])
+  @@index([partnerId, passed])
+}
+
+model PartnerAgreementAcceptance {
+  id               String               @id @default(cuid())
+  partnerId        String
+  agreementType    PartnerAgreementType
+  version          String
+  acceptedAt       DateTime             @default(now())
+  userAgentSummary String?
+  createdAt        DateTime             @default(now())
+
+  partner PartnerProfile @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+
+  @@unique([partnerId, agreementType, version])
+  @@index([partnerId, acceptedAt])
+}
+
+model PartnerReferralVisit {
+  id                 String   @id @default(cuid())
+  partnerId          String
+  referralCode       String
+  anonymousVisitorId String
+  landingPath        String
+  referrerHost       String?
+  utmSource          String?
+  utmMedium          String?
+  utmCampaign        String?
+  createdAt          DateTime @default(now())
+
+  partner PartnerProfile @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+
+  @@unique([partnerId, anonymousVisitorId])
+  @@index([partnerId, createdAt])
+  @@index([anonymousVisitorId])
+}
+
+model PartnerReferralAttribution {
+  id                      String                   @id @default(cuid())
+  partnerId               String
+  referredUserId          String                   @unique
+  referralCode            String
+  status                  PartnerAttributionStatus @default(LOCKED)
+  source                  PartnerAttributionSource
+  firstVisitAt            DateTime
+  signupAt                DateTime
+  convertedAt             DateTime?
+  expiresAt               DateTime
+  landingPath             String
+  prospectId              String?
+  lockedAt                DateTime                 @default(now())
+  disqualifiedAt          DateTime?
+  disqualificationReason  String?
+  overriddenAt            DateTime?
+  overriddenByUserId      String?
+  overrideReason          String?
+  firstSubscriptionPaidAt DateTime?
+  paidSubscriptionMonths  Int                      @default(0)
+  createdAt               DateTime                 @default(now())
+  updatedAt               DateTime                 @updatedAt
+
+  partner          PartnerProfile          @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  referredUser     User                    @relation(fields: [referredUserId], references: [id], onDelete: Restrict)
+  prospect         PartnerProspect?        @relation(fields: [prospectId], references: [id], onDelete: SetNull)
+  commissions      PartnerCommission[]
+  checkoutIntents  PartnerCheckoutIntent[]
+  subscriptions    UserSubscription[]
+  oneTimePurchases OneTimeAuditPurchase[]
+
+  @@index([partnerId, status])
+  @@index([referredUserId, status])
+  @@index([expiresAt])
+}
+
+model PartnerCheckoutIntent {
+  id                      String   @id @default(cuid())
+  userId                  String
+  partnerId               String
+  attributionId           String
+  productKey              String
+  stripeCheckoutSessionId String?  @unique
+  status                  String   @default("INITIATED")
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  user        User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  partner     PartnerProfile             @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  attribution PartnerReferralAttribution @relation(fields: [attributionId], references: [id], onDelete: Restrict)
+
+  @@index([userId, createdAt])
+  @@index([attributionId])
+  @@index([status])
+}
+
+model PartnerCommission {
+  id                            String                  @id @default(cuid())
+  partnerId                     String
+  attributionId                 String
+  referredUserId                String
+  purchaseType                  PartnerPurchaseType
+  stripeCustomerId              String
+  stripeCheckoutSessionId       String?
+  stripePaymentIntentId         String?                 @unique
+  stripeChargeId                String?
+  stripeSubscriptionId          String?
+  stripeInvoiceId               String?                 @unique
+  sourceKey                     String                  @unique
+  sourceEventId                 String
+  currency                      String
+  commissionableAmountCents     Int
+  commissionRateBps             Int
+  originalCommissionAmountCents Int
+  reversedAmountCents           Int                     @default(0)
+  netCommissionAmountCents      Int
+  status                        PartnerCommissionStatus @default(PENDING)
+  recurringPaymentNumber        Int?
+  availableAt                   DateTime
+  disputeOpen                   Boolean                 @default(false)
+  paidAt                        DateTime?
+  createdAt                     DateTime                @default(now())
+  updatedAt                     DateTime                @updatedAt
+
+  partner      PartnerProfile                @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  attribution  PartnerReferralAttribution    @relation(fields: [attributionId], references: [id], onDelete: Restrict)
+  referredUser User                          @relation(fields: [referredUserId], references: [id], onDelete: Restrict)
+  adjustments  PartnerCommissionAdjustment[]
+  payoutItem   PartnerPayoutItem?
+
+  @@index([partnerId, status, availableAt])
+  @@index([referredUserId, createdAt])
+  @@index([stripeCheckoutSessionId])
+  @@index([stripeSubscriptionId])
+  @@index([stripeChargeId])
+  @@index([sourceEventId])
+}
+
+model PartnerCommissionAdjustment {
+  id                String                          @id @default(cuid())
+  commissionId      String
+  partnerId         String
+  type              PartnerCommissionAdjustmentType
+  sourceKey         String                          @unique
+  sourceEventId     String
+  amountCents       Int
+  sourceAmountCents Int?
+  reason            String
+  createdByUserId   String?
+  createdAt         DateTime                        @default(now())
+
+  commission PartnerCommission            @relation(fields: [commissionId], references: [id], onDelete: Restrict)
+  partner    PartnerProfile               @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  payoutItem PartnerPayoutAdjustmentItem?
+
+  @@index([commissionId, createdAt])
+  @@index([partnerId, createdAt])
+  @@index([sourceEventId])
+}
+
+model PartnerPayout {
+  id                      String               @id @default(cuid())
+  partnerId               String
+  status                  PartnerPayoutStatus  @default(DRAFT)
+  currency                String
+  periodStart             DateTime
+  periodEnd               DateTime
+  grossCommissionCents    Int
+  adjustmentCents         Int                  @default(0)
+  netPayoutCents          Int
+  paymentMethod           PartnerPayoutMethod?
+  externalReference       String?
+  adminNotes              String?              @db.Text
+  thresholdOverrideReason String?
+  createdByUserId         String
+  approvedByUserId        String?
+  createdAt               DateTime             @default(now())
+  approvedAt              DateTime?
+  paidAt                  DateTime?
+  canceledAt              DateTime?
+  updatedAt               DateTime             @updatedAt
+
+  partner         PartnerProfile                @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  items           PartnerPayoutItem[]
+  adjustmentItems PartnerPayoutAdjustmentItem[]
+
+  @@index([partnerId, status, createdAt])
+  @@index([status, currency, createdAt])
+}
+
+model PartnerPayoutItem {
+  id           String   @id @default(cuid())
+  payoutId     String
+  commissionId String   @unique
+  amountCents  Int
+  createdAt    DateTime @default(now())
+
+  payout     PartnerPayout     @relation(fields: [payoutId], references: [id], onDelete: Restrict)
+  commission PartnerCommission @relation(fields: [commissionId], references: [id], onDelete: Restrict)
+
+  @@index([payoutId])
+}
+
+model PartnerPayoutAdjustmentItem {
+  id           String   @id @default(cuid())
+  payoutId     String
+  adjustmentId String   @unique
+  amountCents  Int
+  createdAt    DateTime @default(now())
+
+  payout     PartnerPayout               @relation(fields: [payoutId], references: [id], onDelete: Restrict)
+  adjustment PartnerCommissionAdjustment @relation(fields: [adjustmentId], references: [id], onDelete: Restrict)
+
+  @@index([payoutId])
+}
+
+model PartnerProspect {
+  id               String                @id @default(cuid())
+  partnerId        String
+  businessName     String?
+  websiteUrl       String
+  normalizedDomain String
+  status           PartnerProspectStatus @default(NEW)
+  notes            String?               @db.Text
+  contactName      String?
+  contactMethod    String?
+  latestScanId     String?
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+
+  partner      PartnerProfile               @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  latestScan   PartnerProspectScan?         @relation("LatestProspectScan", fields: [latestScanId], references: [id], onDelete: SetNull)
+  previews     PartnerProspectPreview[]
+  attributions PartnerReferralAttribution[]
+
+  @@unique([partnerId, normalizedDomain])
+  @@index([partnerId, status, updatedAt])
+  @@index([normalizedDomain])
+}
+
+model PartnerProspectScan {
+  id                String                    @id @default(cuid())
+  cacheKey          String                    @unique
+  normalizedDomain  String
+  websiteUrl        String
+  scannerVersion    String
+  status            PartnerProspectScanStatus @default(PENDING)
+  startedAt         DateTime?
+  completedAt       DateTime?
+  expiresAt         DateTime
+  pagesAttempted    Int                       @default(0)
+  pagesScanned      Int                       @default(0)
+  findings          Json?
+  outreachSummary   String?                   @db.Text
+  technicalMetadata Json?
+  errorCode         String?
+  createdAt         DateTime                  @default(now())
+  updatedAt         DateTime                  @updatedAt
+
+  prospects PartnerProspect[]        @relation("LatestProspectScan")
+  previews  PartnerProspectPreview[]
+
+  @@index([normalizedDomain, expiresAt])
+  @@index([status, expiresAt])
+}
+
+model PartnerProspectPreview {
+  id         String    @id @default(cuid())
+  partnerId  String
+  prospectId String
+  scanId     String
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  partner  PartnerProfile      @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  prospect PartnerProspect     @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  scan     PartnerProspectScan @relation(fields: [scanId], references: [id], onDelete: Restrict)
+
+  @@index([partnerId, createdAt])
+  @@index([prospectId])
+  @@index([expiresAt, revokedAt])
+}
+
+model PartnerScannerUsage {
+  id              String   @id @default(cuid())
+  partnerId       String
+  usageDate       DateTime @db.Date
+  usageMonth      String
+  scanRequests    Int      @default(0)
+  freshScans      Int      @default(0)
+  cachedScans     Int      @default(0)
+  failures        Int      @default(0)
+  totalDurationMs Int      @default(0)
+  pagesScanned    Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  partner PartnerProfile @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+
+  @@unique([partnerId, usageDate])
+  @@index([partnerId, usageMonth])
+}
+
+model PartnerAdminAuditLog {
+  id          String   @id @default(cuid())
+  adminUserId String
+  partnerId   String?
+  action      String
+  entityType  String
+  entityId    String
+  beforeState Json?
+  afterState  Json?
+  reason      String
+  createdAt   DateTime @default(now())
+
+  partner PartnerProfile? @relation(fields: [partnerId], references: [id], onDelete: SetNull)
+
+  @@index([adminUserId, createdAt])
+  @@index([partnerId, createdAt])
+  @@index([entityType, entityId])
+}
+
+model PartnerNotification {
+  id        String    @id @default(cuid())
+  userId    String
+  partnerId String?
+  type      String
+  title     String
+  message   String    @db.Text
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user    User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  partner PartnerProfile? @relation(fields: [partnerId], references: [id], onDelete: SetNull)
+
+  @@index([userId, readAt, createdAt])
+  @@index([partnerId, createdAt])
+}
