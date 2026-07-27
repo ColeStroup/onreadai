@@ -149,6 +149,15 @@ enum UserRole {
   ADMIN
 }
 
+enum ComplimentaryEntitlementSource {
+  FOUNDER
+  INTERNAL
+  BETA
+  PROMOTION
+  CUSTOMER_SUPPORT
+  MANUAL_ADMIN
+}
+
 enum EmailVerificationPurpose {
   SIGNUP_VERIFICATION
   EMAIL_CHANGE
@@ -282,22 +291,25 @@ model User {
   createdAt                   DateTime  @default(now())
   updatedAt                   DateTime  @updatedAt
 
-  accounts               Account[]
-  sessions               Session[]
-  businesses             Business[]
-  chatThreads            ChatThread[]
-  subscriptions          UserSubscription[]
-  oneTimeAuditPurchases  OneTimeAuditPurchase[]
-  implementationDrafts   ImplementationDraft[]
-  stripeWebhookEvents    StripeWebhookEvent[]
-  partnerApplications    PartnerApplication[]
-  partnerProfile         PartnerProfile?
-  partnerAttribution     PartnerReferralAttribution?
-  partnerCommissions     PartnerCommission[]
-  partnerCheckoutIntents PartnerCheckoutIntent[]
-  partnerNotifications   PartnerNotification[]
-  emailVerificationCodes EmailVerificationCode[]
-  passwordResetTokens    PasswordResetToken[]
+  accounts                         Account[]
+  sessions                         Session[]
+  businesses                       Business[]
+  chatThreads                      ChatThread[]
+  subscriptions                    UserSubscription[]
+  complimentaryEntitlements        ComplimentaryEntitlement[]  @relation("ComplimentaryEntitlementTarget")
+  complimentaryEntitlementsGranted ComplimentaryEntitlement[]  @relation("ComplimentaryEntitlementGrantingAdmin")
+  complimentaryEntitlementsRevoked ComplimentaryEntitlement[]  @relation("ComplimentaryEntitlementRevokingAdmin")
+  oneTimeAuditPurchases            OneTimeAuditPurchase[]
+  implementationDrafts             ImplementationDraft[]
+  stripeWebhookEvents              StripeWebhookEvent[]
+  partnerApplications              PartnerApplication[]
+  partnerProfile                   PartnerProfile?
+  partnerAttribution               PartnerReferralAttribution?
+  partnerCommissions               PartnerCommission[]
+  partnerCheckoutIntents           PartnerCheckoutIntent[]
+  partnerNotifications             PartnerNotification[]
+  emailVerificationCodes           EmailVerificationCode[]
+  passwordResetTokens              PasswordResetToken[]
 
   @@index([email])
   @@index([role])
@@ -401,6 +413,36 @@ model UserSubscription {
   @@index([stripePriceId])
   @@index([partnerId])
   @@index([partnerReferralAttributionId])
+}
+
+model ComplimentaryEntitlement {
+  id              String                         @id @default(cuid())
+  userId          String
+  plan            PlanType
+  source          ComplimentaryEntitlementSource
+  reason          String                         @db.Text
+  internalNotes   String?                        @db.Text
+  startsAt        DateTime
+  expiresAt       DateTime?
+  revokedAt       DateTime?
+  revokedReason   String?                        @db.Text
+  grantedByUserId String
+  revokedByUserId String?
+  createdAt       DateTime                       @default(now())
+  updatedAt       DateTime                       @updatedAt
+
+  user          User  @relation("ComplimentaryEntitlementTarget", fields: [userId], references: [id], onDelete: Cascade)
+  grantedByUser User  @relation("ComplimentaryEntitlementGrantingAdmin", fields: [grantedByUserId], references: [id], onDelete: Restrict)
+  revokedByUser User? @relation("ComplimentaryEntitlementRevokingAdmin", fields: [revokedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([plan])
+  @@index([source])
+  @@index([startsAt])
+  @@index([expiresAt])
+  @@index([revokedAt])
+  @@index([createdAt])
+  @@index([userId, startsAt, expiresAt, revokedAt])
 }
 
 model OneTimeAuditPurchase {

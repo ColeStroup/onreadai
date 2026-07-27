@@ -5,10 +5,13 @@ import {
   CompetitorSnapshotStatus,
   CompetitorStatus,
   PlanType,
-  SubscriptionStatus,
 } from "@prisma/client";
 
-import { prisma } from "@/lib/prisma";
+import {
+  entitlingSubscriptionStatuses,
+  paidSubscriptionAccessStatuses,
+  resolveEffectiveEntitlementFromRecords,
+} from "@/lib/billing/effective-entitlement";
 import {
   getPlanDefinition,
   getPlanEntitlements,
@@ -19,6 +22,7 @@ import {
   subscriptionHasBillingProblem,
   subscriptionHasPaidAccess,
 } from "@/lib/billing/subscription-policy";
+import { prisma } from "@/lib/prisma";
 
 export type EntitlementCheck = {
   allowed: boolean;
@@ -79,77 +83,124 @@ export const featureRequiredPlans = {
   implementationHelp: PlanType.ONE_TIME_AUDIT,
 } as const;
 
-const activeStatuses = [
-  SubscriptionStatus.ACTIVE,
-  SubscriptionStatus.TRIALING,
-  SubscriptionStatus.PAST_DUE,
-  SubscriptionStatus.FREE,
-];
-
-async function getEntitlingSubscription(userId: string) {
-  const subscriptions = await prisma.userSubscription.findMany({
-    where: {
-      userId,
-      status: {
-        in: activeStatuses,
+export async function getEffectiveEntitlement(
+  userId: string,
+  now = new Date(),
+) {
+  const [subscriptions, complimentaryEntitlements] = await Promise.all([
+    prisma.userSubscription.findMany({
+      where: {
+        userId,
+        status: {
+          in: [...entitlingSubscriptionStatuses],
+        },
       },
-    },
-    orderBy: {
-      updatedAt: "desc",
-    },
-    take: 20,
+      orderBy: {
+        updatedAt: "desc",
+      },
+      select: {
+        id: true,
+        plan: true,
+        status: true,
+        stripeSubscriptionId: true,
+        currentPeriodEnd: true,
+        updatedAt: true,
+      },
+    }),
+    prisma.complimentaryEntitlement.findMany({
+      where: {
+        userId,
+        revokedAt: null,
+        startsAt: { lte: now },
+        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+      },
+      orderBy: {
+        startsAt: "desc",
+      },
+      select: {
+        id: true,
+        plan: true,
+        source: true,
+        startsAt: true,
+        expiresAt: true,
+        revokedAt: true,
+        createdAt: true,
+      },
+    }),
+  ]);
+
+  return resolveEffectiveEntitlementFromRecords({
+    subscriptions,
+    complimentaryEntitlements,
+    now,
   });
-
-  const usable = subscriptions.filter(
-    (subscription) =>
-      subscription.stripeSubscriptionId ||
-      !subscription.currentPeriodEnd ||
-      subscription.currentPeriodEnd >= new Date() ||
-      subscription.plan === PlanType.FREE,
-  );
-
-  return (
-    usable.find((subscription) => subscription.stripeSubscriptionId) ??
-    usable.find((subscription) => subscription.plan !== PlanType.FREE) ??
-    usable[0] ??
-    null
-  );
 }
 
 export async function getUserPlan(userId: string): Promise<PlanType> {
-  const subscription = await getEntitlingSubscription(userId);
-
-  if (!subscription) {
-    return PlanType.FREE;
-  }
-
-  return subscription.plan;
+  return (await getEffectiveEntitlement(userId)).effectivePlan;
 }
 
 export async function getUserSubscriptionSummary(userId: string) {
-  const [entitlingSubscription, latestSubscription] = await Promise.all([
-    getEntitlingSubscription(userId),
+  const [
+    effectiveEntitlement,
+    latestSubscription,
+    latestStripeSubscription,
+    activeStripeSubscription,
+  ] = await Promise.all([
+    getEffectiveEntitlement(userId),
     prisma.userSubscription.findFirst({
       where: { userId },
       orderBy: { updatedAt: "desc" },
     }),
+    prisma.userSubscription.findFirst({
+      where: {
+        userId,
+        stripeSubscriptionId: { not: null },
+      },
+      orderBy: { updatedAt: "desc" },
+    }),
+    prisma.userSubscription.findFirst({
+      where: {
+        userId,
+        plan: { not: PlanType.FREE },
+        stripeSubscriptionId: { not: null },
+        status: { in: [...paidSubscriptionAccessStatuses] },
+      },
+      orderBy: { updatedAt: "desc" },
+    }),
   ]);
-  const subscription = entitlingSubscription ?? latestSubscription;
-  const plan = entitlingSubscription?.plan ?? PlanType.FREE;
+  const subscription =
+    effectiveEntitlement.paidSubscription ?? latestSubscription;
+  const plan = effectiveEntitlement.effectivePlan;
 
   return {
     plan,
     definition: getPlanDefinition(plan),
     subscription,
+    latestSubscription,
+    latestStripeSubscription,
+    activeStripeSubscription,
+    paidSubscription: effectiveEntitlement.paidSubscription,
+    paidPlan: effectiveEntitlement.paidPlan,
+    complimentaryPlan: effectiveEntitlement.complimentaryPlan,
+    complimentaryEntitlement:
+      effectiveEntitlement.complimentaryEntitlement,
+    entitlementSource: effectiveEntitlement.source,
     hasPaidAccess: Boolean(
-      subscription &&
-        plan !== PlanType.FREE &&
-        subscriptionHasPaidAccess(subscription.status),
+      effectiveEntitlement.paidSubscription &&
+        effectiveEntitlement.paidPlan !== PlanType.FREE &&
+        subscriptionHasPaidAccess(
+          effectiveEntitlement.paidSubscription.status,
+        ),
     ),
     hasBillingProblem: Boolean(
-      subscription && subscriptionHasBillingProblem(subscription.status),
+      latestStripeSubscription &&
+        subscriptionHasBillingProblem(latestStripeSubscription.status),
     ),
-    cancellationScheduled: Boolean(subscription?.cancelAtPeriodEnd),
+    hasActiveStripeSubscription: Boolean(activeStripeSubscription),
+    cancellationScheduled: Boolean(
+      latestStripeSubscription?.cancelAtPeriodEnd,
+    ),
   };
 }
 

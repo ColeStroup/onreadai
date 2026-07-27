@@ -33,6 +33,37 @@ Audit work is bounded and runs in Vercel `after()`. A refresh or duplicate click
 4. Duplicate events are expected to return success without applying state twice.
 5. For refunds/disputes, verify immutable partner adjustments and never rewrite a paid payout.
 
+## Complimentary access operations
+
+Use `/dashboard/admin/entitlements` with an authorized database-backed admin.
+The complete policy and workflow are in
+[`docs/complimentary-entitlements.md`](./complimentary-entitlements.md).
+
+To grant access:
+
+1. Search for the account and open its entitlement page.
+2. Select Starter or Pro, source, reason, timing, and optional internal notes.
+3. Review the no-charge confirmation and grant access.
+4. Verify the effective plan on the target Billing page.
+5. Verify the actual Stripe subscription remains separate and no partner
+   commission was created.
+
+To revoke access:
+
+1. Open the retained grant history.
+2. Enter a revocation reason and confirm.
+3. Verify the grant remains visible as revoked.
+4. Verify the user's next request falls back to the next valid entitlement.
+
+Expired grants need no cleanup for authorization correctness. Inspect them with
+the Expired filter and retain them for history. Never extend an old grant by
+editing its timestamps silently.
+
+For a manually created Stripe trial, first verify complimentary access, then
+cancel the real trial in Stripe Dashboard and allow signed webhooks to reconcile
+it. Never cancel or fabricate Stripe state as part of the complimentary grant
+transaction.
+
 ## Feature kill switches
 
 Use `/dashboard/admin/partners/settings` with an authorized admin. Recommended emergency order:

@@ -7,6 +7,7 @@ import {
   Handshake,
   LifeBuoy,
   LogOut,
+  KeyRound,
   Plus,
   Settings,
   Sparkles,
@@ -52,6 +53,11 @@ export function DashboardShell({
       : []),
     ...(isAdmin
       ? [
+          {
+            label: "Complimentary Access",
+            href: "/dashboard/admin/entitlements",
+            icon: KeyRound,
+          },
           {
             label: "Partner Admin",
             href: "/dashboard/admin/partners",

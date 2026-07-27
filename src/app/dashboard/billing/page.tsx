@@ -18,8 +18,13 @@ import {
   getUserSubscriptionSummary,
   getUsageSummary,
 } from "@/lib/billing/entitlements";
+import { buildBillingAccessDisplay } from "@/lib/billing/billing-access-display";
 import { billingProductForPlan, getBillingCatalog } from "@/lib/billing/catalog";
-import { planDefinitions, planOrder } from "@/lib/billing/plans";
+import {
+  planDefinitions,
+  planLabels,
+  planOrder,
+} from "@/lib/billing/plans";
 import { requireUser } from "@/lib/session";
 import { cn } from "@/lib/utils";
 
@@ -33,11 +38,24 @@ export default async function BillingPage() {
     plan,
     definition,
     subscription,
-    hasPaidAccess,
     hasBillingProblem,
     cancellationScheduled,
+    paidPlan,
+    complimentaryPlan,
+    complimentaryEntitlement,
+    entitlementSource,
+    latestStripeSubscription,
+    hasActiveStripeSubscription,
   } = billing;
   const billingCatalog = getBillingCatalog();
+  const accessDisplay = buildBillingAccessDisplay({
+    effectivePlan: plan,
+    paidPlan,
+    complimentaryPlan,
+    source: entitlementSource,
+    complimentaryExpiresAt: complimentaryEntitlement?.expiresAt ?? null,
+    hasActiveStripeSubscription,
+  });
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
@@ -87,17 +105,17 @@ export default async function BillingPage() {
             ) : null}
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="rounded-lg border border-border bg-background p-4">
-                <p className="text-sm font-medium text-muted">Billing status</p>
+                <p className="text-sm font-medium text-muted">Access source</p>
                 <p className="mt-2 font-semibold">
-                  {subscription?.status
-                    ? subscription.status.toLowerCase().replaceAll("_", " ")
-                    : "free"}
+                  {accessDisplay.accessSourceLabel}
                 </p>
               </div>
               <div className="rounded-lg border border-border bg-background p-4">
                 <p className="text-sm font-medium text-muted">Renewal</p>
                 <p className="mt-2 font-semibold">
-                  {plan === PlanType.ONE_TIME_AUDIT
+                  {entitlementSource === "COMPLIMENTARY"
+                    ? accessDisplay.complimentaryExpiration
+                    : plan === PlanType.ONE_TIME_AUDIT
                     ? "One-time package"
                     : subscription?.currentPeriodEnd
                     ? subscription.currentPeriodEnd.toLocaleDateString()
@@ -109,13 +127,78 @@ export default async function BillingPage() {
               <div className="flex max-w-xl gap-3">
                 <Info className="mt-0.5 size-4 shrink-0 text-accent" />
                 <p className="text-sm leading-6 text-muted">
-                  Stripe securely handles payment methods, invoices, renewals,
-                  and subscription cancellation. Plan access is confirmed by
-                  signed Stripe events.
+                  {accessDisplay.complimentaryMessage ??
+                    "Stripe securely handles payment methods, invoices, renewals, and subscription cancellation. Plan access is confirmed by signed Stripe events."}
                 </p>
               </div>
-              {hasPaidAccess ? <ManageBillingButton /> : null}
+              {accessDisplay.showCustomerPortal ? (
+                <ManageBillingButton />
+              ) : null}
             </div>
+            {complimentaryPlan && complimentaryEntitlement ? (
+              <div className="rounded-lg border border-teal-300/60 bg-teal-50 p-4 dark:border-teal-900 dark:bg-teal-950/25">
+                <p className="text-sm font-semibold text-teal-900 dark:text-teal-100">
+                  Complimentary access
+                </p>
+                <div className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+                  <div>
+                    <p className="text-teal-800/70 dark:text-teal-200/70">
+                      Granted plan
+                    </p>
+                    <p className="mt-1 font-semibold">
+                      {planLabels[complimentaryPlan]}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-teal-800/70 dark:text-teal-200/70">
+                      Expiration
+                    </p>
+                    <p className="mt-1 font-semibold">
+                      {accessDisplay.complimentaryExpiration}
+                    </p>
+                  </div>
+                </div>
+                <p className="mt-3 text-sm leading-6 text-teal-900/80 dark:text-teal-100/80">
+                  This access was granted by Onread and is not billed through
+                  Stripe.
+                </p>
+              </div>
+            ) : null}
+            {latestStripeSubscription ? (
+              <div className="rounded-lg border border-border bg-background p-4">
+                <p className="text-sm font-semibold">Paid subscription</p>
+                <div className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+                  <div>
+                    <p className="text-muted">Stripe plan</p>
+                    <p className="mt-1 font-semibold">
+                      {planLabels[latestStripeSubscription.plan]}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-muted">Stripe status</p>
+                    <p className="mt-1 font-semibold">
+                      {latestStripeSubscription.status
+                        .toLowerCase()
+                        .replaceAll("_", " ")}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-muted">Current billing period ends</p>
+                    <p className="mt-1 font-semibold">
+                      {latestStripeSubscription.currentPeriodEnd
+                        ? latestStripeSubscription.currentPeriodEnd.toLocaleDateString()
+                        : "Not available"}
+                    </p>
+                  </div>
+                </div>
+                {complimentaryPlan ? (
+                  <p className="mt-3 text-sm leading-6 text-muted">
+                    Your paid subscription remains separate from complimentary
+                    access and keeps its normal Stripe billing obligations.
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
           </CardContent>
         </Card>
 
@@ -227,7 +310,8 @@ export default async function BillingPage() {
                   >
                     View details
                   </Link>
-                ) : plan === PlanType.FREE || product.purchaseType === "one_time" ? (
+                ) : !hasActiveStripeSubscription ||
+                  product.purchaseType === "one_time" ? (
                   <StripeCheckoutButton
                     productKey={product.key}
                     disabled={!product.active}
