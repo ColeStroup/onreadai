@@ -30,6 +30,8 @@ import {
   PARTNER_SCANNER_MAX_FINDINGS,
   PARTNER_SCANNER_MAX_PAGES,
 } from "@/lib/partners/scanner-constants";
+import { partnerProgramBootstrapDefaults } from "@/lib/partners/config";
+import { loadPublicPartnerProgramSettings } from "@/lib/partners/public-program-settings";
 import {
   PARTNER_ASSESSMENT_PASSING_SCORE,
   partnerAssessmentQuestions,
@@ -232,5 +234,52 @@ describe("bounded Partner Scanner", () => {
       assertPublicHttpUrl("http://169.254.169.254/latest/meta-data"),
       (error: unknown) => error instanceof PublicHttpError && error.code === "UNSAFE_HOST",
     );
+  });
+});
+
+describe("partner feature flags and public settings", () => {
+  test("keeps the partner program disabled by default", () => {
+    const priorValue = process.env.PARTNER_PROGRAM_ENABLED;
+
+    try {
+      delete process.env.PARTNER_PROGRAM_ENABLED;
+      assert.equal(partnerProgramBootstrapDefaults().enabled, false);
+
+      process.env.PARTNER_PROGRAM_ENABLED = "true";
+      assert.equal(partnerProgramBootstrapDefaults().enabled, true);
+
+      process.env.PARTNER_PROGRAM_ENABLED = "false";
+      assert.equal(partnerProgramBootstrapDefaults().enabled, false);
+    } finally {
+      if (priorValue === undefined) delete process.env.PARTNER_PROGRAM_ENABLED;
+      else process.env.PARTNER_PROGRAM_ENABLED = priorValue;
+    }
+  });
+
+  test("fails closed when public partner settings are unavailable", async () => {
+    const settings = await loadPublicPartnerProgramSettings(
+      async () => {
+        throw new Error("database unavailable");
+      },
+      () => undefined,
+    );
+
+    assert.equal(settings, null);
+  });
+
+  test("defers the public partner settings query until request time", () => {
+    const source = readFileSync(
+      path.join(process.cwd(), "src/app/partners/page.tsx"),
+      "utf8",
+    );
+    const pageBody = source.slice(
+      source.indexOf("export default async function PartnersPage"),
+    );
+
+    assert.match(
+      pageBody,
+      /await connection\(\);[\s\S]*await loadPublicPartnerProgramSettings\(\)/,
+    );
+    assert.match(pageBody, /if \(!settings\) notFound\(\);/);
   });
 });

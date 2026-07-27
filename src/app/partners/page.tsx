@@ -8,11 +8,13 @@ import {
 } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
+import { notFound } from "next/navigation";
+import { connection } from "next/server";
 
 import { AuditPreview } from "@/components/marketing/audit-preview";
 import { MarketingShell } from "@/components/marketing/marketing-shell";
 import { createMarketingMetadata, brand } from "@/lib/brand";
-import { getPartnerProgramSettings } from "@/lib/partners/config";
+import { loadPublicPartnerProgramSettings } from "@/lib/partners/public-program-settings";
 
 export const metadata: Metadata = createMarketingMetadata({
   title: `Partner Program | ${brand.name}`,
@@ -48,7 +50,10 @@ const faq = [
 ] as const;
 
 export default async function PartnersPage() {
-  const settings = await getPartnerProgramSettings();
+  await connection();
+  const settings = await loadPublicPartnerProgramSettings();
+  if (!settings) notFound();
+
   const applicationsAvailable = settings.enabled && settings.applicationsOpen;
 
   return (
