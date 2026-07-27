@@ -8,6 +8,10 @@ import type { WebsiteCrawlResult } from "@/lib/analyzers/website-crawler";
 import type { WebsiteAnalysis } from "@/lib/analyzers/website-analyzer";
 import { generateBusinessContextDraft } from "@/lib/ai/business-context-generator";
 import {
+  isSameBusinessWebsite,
+  resolveBusinessContextWebsiteAnalysis,
+} from "@/lib/ai/business-context-preanalysis";
+import {
   hasCoreBusinessContext,
   normalizeContextConfidence,
 } from "@/lib/business-context";
@@ -194,15 +198,35 @@ export async function regenerateBusinessContext(formData: FormData) {
   }
 
   const latestAudit = business.audits.at(0);
+  const savedWebsiteAnalysis = latestAudit
+    ? getWebsiteAnalysis(latestAudit.analysisSnapshot)
+    : null;
+  const websitePreanalysis = await resolveBusinessContextWebsiteAnalysis({
+    profiles: business.profiles,
+    savedWebsiteAnalysis,
+    businessContext: {
+      description: business.description,
+      targetAudience: business.targetAudience,
+      mainOffer: business.mainOffer,
+      industry: business.industry,
+      businessType: business.businessType,
+      primaryConversionGoal: business.primaryConversionGoal,
+    },
+  });
   const draft = await generateBusinessContextDraft({
     businessName: business.name,
     initialInput: business.initialInput,
-    websiteAnalysis: latestAudit
-      ? getWebsiteAnalysis(latestAudit.analysisSnapshot)
-      : null,
-    websiteCrawl: latestAudit
-      ? getWebsiteCrawl(latestAudit.analysisSnapshot)
-      : null,
+    websiteAnalysis: websitePreanalysis.analysis,
+    websiteCrawl:
+      latestAudit &&
+      savedWebsiteAnalysis &&
+      websitePreanalysis.analysis &&
+      isSameBusinessWebsite(
+        savedWebsiteAnalysis.normalizedUrl,
+        websitePreanalysis.analysis.normalizedUrl,
+      )
+        ? getWebsiteCrawl(latestAudit.analysisSnapshot)
+        : null,
     profiles: business.profiles,
     goals: business.goals,
     primaryGoal: business.primaryGoal,

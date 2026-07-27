@@ -22,6 +22,7 @@ export type WebsiteAnalysis = {
   normalizedUrl: string;
   pageTitle: string | null;
   metaDescription: string | null;
+  contentExcerpt?: string | null;
   h1Count: number;
   h1Text: string[];
   hasViewportMeta: boolean;
@@ -67,6 +68,8 @@ type BusinessKind =
 
 const fetchTimeoutMs = 8000;
 const maxHtmlBytes = 1_000_000;
+const maxBusinessContentExcerptChars = 4_500;
+const maxBusinessContentBlockChars = 700;
 const socialHosts = [
   "instagram.com",
   "facebook.com",
@@ -141,6 +144,7 @@ function emptyAnalysis(normalizedUrl: string, warnings: string[]): WebsiteAnalys
     normalizedUrl,
     pageTitle: null,
     metaDescription: null,
+    contentExcerpt: null,
     h1Count: 0,
     h1Text: [],
     hasViewportMeta: false,
@@ -183,6 +187,57 @@ export function normalizeWebsiteUrl(input: string) {
 
 function textOf(value: string) {
   return value.replace(/\s+/g, " ").trim();
+}
+
+export function extractBusinessContentExcerpt($: CheerioAPI) {
+  const preferred = $("main, [role='main'], article").find(
+    "h1, h2, h3, h4, p, li, dt, dd",
+  );
+  const candidates =
+    preferred.length > 0
+      ? preferred
+      : $("body").find("h1, h2, h3, h4, p, li, dt, dd");
+  const blocks: string[] = [];
+  const seen = new Set<string>();
+  let length = 0;
+
+  candidates.each((_, element) => {
+    if (length >= maxBusinessContentExcerptChars) {
+      return false;
+    }
+
+    const node = $(element);
+    if (
+      node.closest("script, style, noscript, template, svg, nav, footer").length >
+        0 ||
+      node.attr("aria-hidden") === "true"
+    ) {
+      return;
+    }
+
+    const text = textOf(node.text()).slice(0, maxBusinessContentBlockChars);
+    const key = text.toLowerCase();
+
+    if (text.length < 3 || seen.has(key)) {
+      return;
+    }
+
+    const remaining = maxBusinessContentExcerptChars - length;
+    const block = text.slice(0, remaining);
+    blocks.push(block);
+    seen.add(key);
+    length += block.length + 1;
+  });
+
+  if (blocks.length > 0) {
+    return blocks.join("\n").slice(0, maxBusinessContentExcerptChars);
+  }
+
+  const body = $("body").clone();
+  body.find("script, style, noscript, template, svg, nav, footer").remove();
+  return (
+    textOf(body.text()).slice(0, maxBusinessContentExcerptChars) || null
+  );
 }
 
 function scoreAnalysis(analysis: Omit<WebsiteAnalysis, "score">) {
@@ -390,6 +445,7 @@ export async function analyzeWebsite(
       .join(" ")
       .toLowerCase();
     const bodyText = textOf($("body").text());
+    const contentExcerpt = extractBusinessContentExcerpt($);
     const localBusinessClues = extractLocalBusinessClues({
       $,
       baseUrl: finalUrl,
@@ -406,6 +462,7 @@ export async function analyzeWebsite(
       normalizedUrl: finalUrl,
       pageTitle,
       metaDescription,
+      contentExcerpt,
       h1Count: $("h1").length,
       h1Text,
       hasViewportMeta: $('meta[name="viewport"]').length > 0,

@@ -27,7 +27,7 @@ import { generateDeterministicAudit } from "@/lib/audits/deterministic-audit";
 import { buildAuditEvidenceIntegrity } from "@/lib/audits/evidence-integrity";
 import { getUserPlan } from "@/lib/billing/entitlements";
 import { getPlanEntitlements } from "@/lib/billing/plans";
-import { hasBusinessContext } from "@/lib/business-context";
+import { shouldRefreshGeneratedBusinessContext } from "@/lib/business-context";
 import { analyzeBusinessCompetitors } from "@/lib/competitors/competitor-analysis-runner";
 import { compareBusinessToCompetitors } from "@/lib/competitors/competitor-comparison";
 import type { AuditCompetitorIntelligence } from "@/lib/competitors/competitor-types";
@@ -437,6 +437,42 @@ async function buildAuditData({
   const seoAnalysis = websiteAnalysis
     ? await analyzeSeo(websiteAnalysis.normalizedUrl, websiteAnalysis)
     : null;
+  const businessContextDraft = shouldRefreshGeneratedBusinessContext(business)
+    ? await generateBusinessContextDraft({
+        businessName: business.name,
+        initialInput: business.initialInput,
+        websiteAnalysis,
+        websiteCrawl,
+        profiles: business.profiles,
+        goals: business.goals,
+        primaryGoal: business.primaryGoal,
+      })
+    : null;
+  const effectiveBusinessContext = businessContextDraft
+    ? {
+        description: businessContextDraft.description,
+        targetAudience: businessContextDraft.targetAudience,
+        mainOffer: businessContextDraft.mainOffer,
+        industry: businessContextDraft.industry,
+        businessType: businessContextDraft.businessType,
+        primaryConversionGoal: businessContextDraft.primaryConversionGoal,
+        brandTone: businessContextDraft.brandTone,
+        contextConfidence: businessContextDraft.confidence,
+        contextSource: "generated",
+        contextConfirmedAt: null,
+      }
+    : {
+        description: business.description,
+        targetAudience: business.targetAudience,
+        mainOffer: business.mainOffer,
+        industry: business.industry,
+        businessType: business.businessType,
+        primaryConversionGoal: business.primaryConversionGoal,
+        brandTone: business.brandTone,
+        contextConfidence: business.contextConfidence,
+        contextSource: business.contextSource ?? "generated",
+        contextConfirmedAt: business.contextConfirmedAt,
+      };
   const googleBusinessDiscovery = await discoverGoogleBusinessProfiles({
     business,
     websiteAnalysis,
@@ -532,7 +568,7 @@ async function buildAuditData({
     })),
     goals: business.goals,
     primaryGoal: business.primaryGoal,
-    businessContext,
+    businessContext: effectiveBusinessContext,
   });
   const competitorProfileSummary = business.competitors.map((competitor) => {
     const confirmedProfiles = competitor.discoveredProfiles.filter(
@@ -645,8 +681,14 @@ async function buildAuditData({
     socialAnalysis,
     reviewAnalysis,
     businessContext: {
-      ...businessContext,
-      brandTone: business.brandTone,
+      description: effectiveBusinessContext.description,
+      targetAudience: effectiveBusinessContext.targetAudience,
+      mainOffer: effectiveBusinessContext.mainOffer,
+      industry: effectiveBusinessContext.industry,
+      businessType: effectiveBusinessContext.businessType,
+      primaryConversionGoal:
+        effectiveBusinessContext.primaryConversionGoal,
+      brandTone: effectiveBusinessContext.brandTone,
     },
     goals: business.goals,
     primaryGoal: business.primaryGoal,
@@ -655,10 +697,11 @@ async function buildAuditData({
   const comparison = compareBusinessToCompetitors({
     business: {
       name: business.name,
-      description: business.description,
-      targetAudience: business.targetAudience,
-      mainOffer: business.mainOffer,
-      primaryConversionGoal: business.primaryConversionGoal,
+      description: effectiveBusinessContext.description,
+      targetAudience: effectiveBusinessContext.targetAudience,
+      mainOffer: effectiveBusinessContext.mainOffer,
+      primaryConversionGoal:
+        effectiveBusinessContext.primaryConversionGoal,
     },
     primaryAudit: {
       createdAt: new Date(),
@@ -754,36 +797,6 @@ async function buildAuditData({
       });
     }
   }
-  const businessContextDraft = hasBusinessContext(business)
-    ? null
-    : await generateBusinessContextDraft({
-        businessName: business.name,
-        initialInput: business.initialInput,
-        websiteAnalysis,
-        websiteCrawl,
-        profiles: business.profiles,
-        goals: business.goals,
-        primaryGoal: business.primaryGoal,
-      });
-  const effectiveBusinessContext = {
-    description:
-      business.description ?? businessContextDraft?.description ?? null,
-    targetAudience:
-      business.targetAudience ?? businessContextDraft?.targetAudience ?? null,
-    mainOffer: business.mainOffer ?? businessContextDraft?.mainOffer ?? null,
-    industry: business.industry ?? businessContextDraft?.industry ?? null,
-    businessType:
-      business.businessType ?? businessContextDraft?.businessType ?? null,
-    primaryConversionGoal:
-      business.primaryConversionGoal ??
-      businessContextDraft?.primaryConversionGoal ??
-      null,
-    brandTone: business.brandTone ?? businessContextDraft?.brandTone ?? null,
-    contextConfidence:
-      business.contextConfidence ?? businessContextDraft?.confidence ?? null,
-    contextSource: business.contextSource ?? "generated",
-    contextConfirmedAt: business.contextConfirmedAt,
-  };
   const socialStrategyDependencyFingerprint = buildSocialStrategyDependencyFingerprint({
     auditId,
     businessContext: effectiveBusinessContext,

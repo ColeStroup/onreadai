@@ -173,14 +173,15 @@ export default async function BusinessContextPage({
             <div>
               <p className="font-semibold">Help us understand your business</p>
               <p className="mt-2 max-w-3xl text-sm leading-6 text-muted">
-                Generate a draft from the latest audit, website title, page
-                content, confirmed profiles, and selected goals. You can edit
-                every important field before confirming it.
+                Generate a draft from a bounded public homepage analysis, saved
+                profiles, selected goals, and the latest audit when available.
+                You can edit every important field before confirming it.
               </p>
               {!latestAudit ? (
                 <p className="mt-2 text-sm text-muted">
-                  No completed audit exists yet, so the draft will use the
-                  original input and saved profiles.
+                  No completed audit exists yet. A saved website, when
+                  available, will still be analyzed before the draft is
+                  generated.
                 </p>
               ) : null}
             </div>

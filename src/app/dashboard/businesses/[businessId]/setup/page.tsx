@@ -469,7 +469,7 @@ function ContextStep({
         <EmptyState
           icon={<Sparkles className="size-6" />}
           title="No Business Context yet"
-          description="Generate a draft so the app can understand what your business does."
+          description="Generate a draft from your saved profiles and a bounded public homepage analysis."
           action={
             <form action={regenerateBusinessContext}>
               <input type="hidden" name="businessId" value={business.id} />
@@ -484,7 +484,7 @@ function ContextStep({
       ) : (
         <ReportSection
           title={progress.contextComplete ? "Confirmed context" : "Draft needs review"}
-          description={`${contextConfidenceLabel(business.contextConfidence)} confidence · ${contextSourceLabel(business.contextSource)}`}
+          description={`${contextConfidenceLabel(business.contextConfidence)} · ${contextSourceLabel(business.contextSource)}`}
         >
           <dl className="grid gap-4 md:grid-cols-2">
             {fields.map(([label, value]) => (

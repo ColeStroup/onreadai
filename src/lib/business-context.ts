@@ -61,6 +61,20 @@ export function isContextConfirmed(context: BusinessContextFields) {
   return Boolean(context.contextConfirmedAt);
 }
 
+export function shouldRefreshGeneratedBusinessContext(
+  context: BusinessContextFields,
+) {
+  if (!hasBusinessContext(context)) {
+    return true;
+  }
+
+  return (
+    context.contextSource === "generated" &&
+    !isContextConfirmed(context) &&
+    (normalizeContextConfidence(context.contextConfidence) ?? 0) < 55
+  );
+}
+
 export function normalizeContextConfidence(value?: number | null) {
   if (typeof value !== "number" || Number.isNaN(value)) {
     return null;
