@@ -25,7 +25,11 @@ npm run db:migrate:deploy
 npm run db:status
 ```
 
-The current history is additive and contains 20 migrations. `prisma.config.ts` selects `DIRECT_URL` for migration commands. Take a Render backup before future high-risk schema changes.
+The migration history is additive. `prisma.config.ts` selects `DIRECT_URL` for
+migration commands. The selective AI audit migration adds tenant-scoped page
+analysis cache and internal usage telemetry tables; it does not change scores,
+prices, or entitlements. Take a Render backup before future high-risk schema
+changes.
 
 Prisma connection guidance: [connection management](https://www.prisma.io/docs/orm/prisma-client/setup-and-configuration/databases-connections).
 
@@ -63,7 +67,10 @@ EMAIL_VERIFICATION_SECRET=<independent random secret>
 PASSWORD_RESET_SECRET=<independent random secret>
 RATE_LIMIT_SECRET=<independent random secret>
 OPENAI_API_KEY=<production project key>
-OPENAI_MODEL=gpt-4.1-mini
+OPENAI_MODEL=gpt-5.4-mini
+OPENAI_AUDIT_PAGE_MODEL=gpt-5.4-mini
+OPENAI_AUDIT_SYNTHESIS_MODEL=gpt-5.4-mini
+AI_ASSISTED_AUDITS_ENABLED=false
 STRIPE_MODE=live
 STRIPE_SECRET_KEY=<live secret>
 STRIPE_WEBHOOK_SECRET=<live endpoint signing secret>
@@ -106,9 +113,20 @@ Follow `stripe-setup.md`. Create live products and Prices, activate the live por
 ## 8. Configure AI and Places
 
 1. Use a dedicated OpenAI production project with a hard monthly budget, usage alerts, and a key scoped to this application.
-2. Keep `OPENAI_MODEL` explicit. Chat and content assistance may use AI; audit scoring may not.
+2. Keep `OPENAI_MODEL` explicit. `OPENAI_AUDIT_PAGE_MODEL` and
+   `OPENAI_AUDIT_SYNTHESIS_MODEL` are optional per-task overrides; when omitted,
+   both audit routes inherit `OPENAI_MODEL`. Chat and content assistance may use
+   AI; audit scoring may not.
 3. Configure Google Places quotas and restrictions if listing discovery is enabled.
 4. Verify provider failure states. The app must show unavailable/limited data and never substitute fabricated findings.
+
+Selective AI-assisted audits are additionally gated by
+`AI_ASSISTED_AUDITS_ENABLED`. Keep it `false` for the initial deployment. Follow
+the staged rollout and cost-monitoring checklist in
+[`selective-ai-audit-analysis.md`](./selective-ai-audit-analysis.md) before
+enabling it. Public production startup requires `OPENAI_API_KEY` and resolvable
+page-analysis and synthesis models while the flag is on. The deterministic
+audit remains active while the flag is off.
 
 ## 9. Bootstrap administration and flags
 

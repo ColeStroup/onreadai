@@ -104,6 +104,7 @@ function renderReport(flow: PdfFlow, report: AuditReportViewModel) {
   renderBusinessContext(flow, report);
   renderNextMoves(flow, report);
   renderOverallHealth(flow, report);
+  renderAnalysisCoverage(flow, report);
   renderWebsite(flow, report);
   renderSeo(flow, report);
   renderReviews(flow, report);
@@ -342,6 +343,46 @@ function renderOverallHealth(flow: PdfFlow, report: AuditReportViewModel) {
   flow.note(
     `${report.competitors.methodologyNote} Website and SEO are excluded from the weighted score when no website is supplied.`,
     "Overall Health",
+  );
+}
+
+function renderAnalysisCoverage(
+  flow: PdfFlow,
+  report: AuditReportViewModel,
+) {
+  const analysis = report.aiAnalysis;
+  if (!analysis) return;
+
+  const coverage = analysis.coverage;
+  flow.sectionHeading("Analysis Coverage", { minContentHeight: 115 });
+  flow.keyValueRows(
+    [
+      [
+        "Pages checked technically",
+        String(coverage.pagesCheckedTechnically),
+      ],
+      ["Key pages reviewed by AI", String(coverage.deepReviewedPages)],
+      [
+        "Additional pages covered through technical and site-wide analysis",
+        String(
+          Math.max(
+            0,
+            coverage.pagesCheckedTechnically - coverage.deepReviewedPages,
+          ),
+        ),
+      ],
+      ["Unchanged AI page reviews reused", String(coverage.cacheHits)],
+      ["Selective analysis status", formatStatus(analysis.status)],
+    ],
+    {
+      fill: colors.softBlue,
+      continuationTitle: "Analysis Coverage",
+      compact: true,
+    },
+  );
+  flow.note(
+    "Every successfully crawled page received deterministic checks. Only selected high-value representative pages received AI interpretation; the report does not imply uniform AI review.",
+    "Analysis Coverage",
   );
 }
 
@@ -1082,7 +1123,14 @@ function renderTechnicalAppendix(
   flow.bulletList(
     appendixFindings.map(
       (finding) =>
-        `${categoryLabel(finding.category)} - ${finding.title}: ${finding.description}`,
+        `${finding.sourceLabel ?? "Verified technical issue"} | ${categoryLabel(finding.category)} - ${finding.title}: ${finding.description}${
+          finding.sourceUrl ? ` | Affected page: ${finding.sourceUrl}` : ""
+        }${
+          finding.source === "ai_reviewed_opportunity" &&
+          finding.evidenceSummary
+            ? ` | Evidence: ${finding.evidenceSummary}`
+            : ""
+        }`,
     ),
     "Technical Appendix",
   );
@@ -1097,7 +1145,9 @@ function renderRecommendationCard(
   compact = false,
 ) {
   flow.card({
-    eyebrow: `${index}. ${item.priority} priority | ${item.status.replaceAll("_", " ")} | ${item.sourceCategory}`,
+    eyebrow: `${index}. ${item.priority} priority | ${item.status.replaceAll("_", " ")} | ${item.sourceCategory}${
+      item.sourceLabel ? ` | ${item.sourceLabel}` : ""
+    }`,
     title: item.title,
     meta: `Effort: ${item.estimatedEffort} | Expected impact: ${item.expectedImpact} | Confidence: ${item.confidence} | ${item.freshness}`,
     body: compact

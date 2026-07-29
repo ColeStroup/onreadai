@@ -1,5 +1,6 @@
 import { load, type CheerioAPI } from "cheerio";
 import type { Element } from "domhandler";
+import { createHash } from "node:crypto";
 
 import {
   classifyWebsiteActions,
@@ -69,6 +70,22 @@ export type CrawledPageResult = {
   detectedMapEmbeds: string[];
   detectedLocalBusinessSchema: LocalBusinessSchemaSnapshot[];
   operatingHoursSignals: string[];
+  canonicalUrl?: string | null;
+  h2Text?: string[];
+  h3Text?: string[];
+  navigationLabels?: string[];
+  formLabels?: string[];
+  trustSignals?: string[];
+  imageAltText?: string[];
+  structuredDataTypes?: string[];
+  contentExcerpt?: string | null;
+  analysisContent?: string | null;
+  contentHash?: string | null;
+  metadataHash?: string | null;
+  templateGroup?: string | null;
+  inPrimaryNavigation?: boolean;
+  internalLinkProminence?: number;
+  indexable?: boolean;
 };
 
 export type WebsiteCrawlResult = {
@@ -120,6 +137,7 @@ type CrawlOptions = {
 type CrawledLink = {
   href: string;
   label: string;
+  inPrimaryNavigation: boolean;
 };
 
 type CrawlTarget = {
@@ -139,6 +157,7 @@ const absoluteMaxPages = 150;
 const fetchTimeoutMs = 7000;
 const maxHtmlBytes = 900_000;
 const maxQueuedTargets = 500;
+const maxRetainedAnalysisCharacters = 40_000;
 const ignoredExtensions = new Set([
   ".pdf",
   ".jpg",
@@ -676,6 +695,183 @@ function detectContactSignals({
   return [...signals];
 }
 
+function shortTextList(
+  $: CheerioAPI,
+  selector: string,
+  limit: number,
+  maximumLength = 220,
+) {
+  return unique(
+    $(selector)
+      .map((_, element) => textOf($(element).text()).slice(0, maximumLength))
+      .get()
+      .filter(Boolean),
+  ).slice(0, limit);
+}
+
+function cleanMainContent(html: string) {
+  const content$ = load(html);
+  content$(
+    "script, style, noscript, template, svg, canvas, iframe, nav, footer, aside",
+  ).remove();
+  content$("[hidden], [aria-hidden='true'], input[type='hidden']").remove();
+  content$("*").each((_, element) => {
+    const marker = `${content$(element).attr("id") ?? ""} ${
+      content$(element).attr("class") ?? ""
+    }`.toLowerCase();
+
+    if (/\b(cookie|consent|tracking|gdpr)\b/.test(marker)) {
+      content$(element).remove();
+    }
+  });
+
+  const primary =
+    content$("main").first().length > 0
+      ? content$("main").first()
+      : content$("[role='main']").first().length > 0
+        ? content$("[role='main']").first()
+        : content$("article").first().length > 0
+          ? content$("article").first()
+          : content$("body").first();
+  const fullText = textOf(primary.text());
+
+  return {
+    fullText,
+    retainedText: fullText.slice(0, maxRetainedAnalysisCharacters),
+  };
+}
+
+function extractFormLabels($: CheerioAPI) {
+  return unique([
+    ...shortTextList($, "form label, form legend", 20, 140),
+    ...$("form input, form textarea, form select")
+      .map((_, element) =>
+        textOf(
+          $(element).attr("aria-label") ??
+            $(element).attr("placeholder") ??
+            $(element).attr("name") ??
+            "",
+        ).slice(0, 140),
+      )
+      .get()
+      .filter(Boolean),
+    ...shortTextList(
+      $,
+      "form button, form input[type='submit']",
+      10,
+      140,
+    ),
+  ]).slice(0, 24);
+}
+
+function extractStructuredDataTypes($: CheerioAPI) {
+  const types = new Set<string>();
+
+  function collect(value: unknown) {
+    if (Array.isArray(value)) {
+      for (const item of value) collect(item);
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+
+    const record = value as Record<string, unknown>;
+    const rawType = record["@type"];
+    if (typeof rawType === "string" && rawType.trim()) {
+      types.add(rawType.trim().slice(0, 100));
+    } else if (Array.isArray(rawType)) {
+      for (const item of rawType) {
+        if (typeof item === "string" && item.trim()) {
+          types.add(item.trim().slice(0, 100));
+        }
+      }
+    }
+
+    for (const nested of Object.values(record)) collect(nested);
+  }
+
+  $('script[type="application/ld+json"]').each((_, element) => {
+    const value = $(element).text().trim();
+    if (!value) return;
+    try {
+      collect(JSON.parse(value));
+    } catch {
+      // Invalid structured data is handled as unavailable evidence.
+    }
+  });
+
+  return [...types].slice(0, 20);
+}
+
+function detectTrustSignals({
+  bodyText,
+  structuredDataTypes,
+}: {
+  bodyText: string;
+  structuredDataTypes: string[];
+}) {
+  const signals = new Set<string>();
+  const patterns: Array<[RegExp, string]> = [
+    [/\b(testimonial|testimonials|customer stor(?:y|ies))\b/i, "Testimonials"],
+    [/\b(case study|case studies)\b/i, "Case studies"],
+    [/\b(review|reviews|rated \d|star rating)\b/i, "Reviews or ratings"],
+    [/\b(licensed|insured|bonded|certified|accredited)\b/i, "Credentials"],
+    [/\b(guarantee|warranty|money-back)\b/i, "Guarantee or warranty"],
+    [/\b(years? of experience|since \d{4})\b/i, "Experience claim"],
+    [/\b(secure checkout|secure payment|privacy protected)\b/i, "Security reassurance"],
+  ];
+
+  for (const [pattern, label] of patterns) {
+    if (pattern.test(bodyText)) signals.add(label);
+  }
+
+  if (
+    structuredDataTypes.some((type) =>
+      /review|rating|organization|localbusiness/i.test(type),
+    )
+  ) {
+    signals.add("Relevant structured business data");
+  }
+
+  return [...signals].slice(0, 12);
+}
+
+function resolvedCanonicalUrl($: CheerioAPI, pageUrl: string) {
+  const raw = $('link[rel="canonical"]').first().attr("href")?.trim();
+  if (!raw) return null;
+
+  try {
+    return sanitizeCrawlUrl(new URL(raw, pageUrl)).toString();
+  } catch {
+    return null;
+  }
+}
+
+function sha256(value: string) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function pageTemplateGroup(url: string, pageTypes: string[]) {
+  const representativeType = pageTypes.find((type) =>
+    /Products|Services|Location|Blog|Resources|Use Cases|Gallery/i.test(type),
+  );
+  if (representativeType) {
+    return representativeType.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  }
+
+  try {
+    const segments = new URL(url).pathname
+      .split("/")
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((segment) =>
+        /^\d+$|^[0-9a-f]{8,}$/i.test(segment) ? ":id" : segment.toLowerCase(),
+      );
+    return segments.length > 0 ? segments.join("/") : "homepage";
+  } catch {
+    return "unknown";
+  }
+}
+
 function analyzeHtmlPage({
   url,
   html,
@@ -705,6 +901,8 @@ function analyzeHtmlPage({
     .get()
     .filter(Boolean)
     .slice(0, 8);
+  const h2Text = shortTextList($, "h2", 16);
+  const h3Text = shortTextList($, "h3", 16);
   const links = $("a[href]")
     .map((_, element) => {
       const rawHref = $(element).attr("href") ?? "";
@@ -797,6 +995,29 @@ function analyzeHtmlPage({
     .filter((_, element) => !textOf($(element).attr("alt") ?? ""))
     .length;
   const bodyText = textOf($("body").text());
+  const cleanContent = cleanMainContent(html);
+  const canonicalUrl = resolvedCanonicalUrl($, url);
+  const navigationLabels = unique(
+    links
+      .filter(
+        (link) =>
+          link.domLocation === "navigation" || link.domLocation === "header",
+      )
+      .map((link) => link.label)
+      .filter(Boolean),
+  ).slice(0, 30);
+  const formLabels = extractFormLabels($);
+  const structuredDataTypes = extractStructuredDataTypes($);
+  const trustSignals = detectTrustSignals({
+    bodyText: cleanContent.fullText,
+    structuredDataTypes,
+  });
+  const imageAltText = unique(
+    images
+      .map((_, element) => textOf($(element).attr("alt") ?? "").slice(0, 180))
+      .get()
+      .filter(Boolean),
+  ).slice(0, 30);
   const localBusinessClues = extractLocalBusinessClues({
     $,
     baseUrl: url,
@@ -813,6 +1034,21 @@ function analyzeHtmlPage({
       kind,
     }),
   ]);
+  const contentHash = sha256(cleanContent.fullText);
+  const metadataHash = sha256(
+    JSON.stringify({
+      pageTitle,
+      metaDescription,
+      h1Text,
+      h2Text,
+      h3Text,
+      canonicalUrl,
+      ctaCandidates,
+      formLabels,
+      trustSignals,
+      structuredDataTypes,
+    }),
+  );
 
   if (html.length >= maxHtmlBytes) {
     warnings.push("Page HTML was large, so analysis used the first 900KB.");
@@ -842,6 +1078,24 @@ function analyzeHtmlPage({
     operatingHoursSignals: extractOperatingHoursSignals(
       `${bodyText} ${metaDescription ?? ""}`,
     ),
+    canonicalUrl,
+    h2Text,
+    h3Text,
+    navigationLabels,
+    formLabels,
+    trustSignals,
+    imageAltText,
+    structuredDataTypes,
+    contentExcerpt: cleanContent.fullText.slice(0, 700) || null,
+    analysisContent: cleanContent.retainedText || null,
+    contentHash,
+    metadataHash,
+    templateGroup: pageTemplateGroup(url, finalTypes),
+    inPrimaryNavigation: finalTypes.includes("Homepage"),
+    internalLinkProminence: finalTypes.includes("Homepage") ? 1 : 0,
+    indexable: !/\bnoindex\b/i.test(
+      $('meta[name="robots"]').attr("content") ?? "",
+    ),
     ...localBusinessClues,
   };
 
@@ -853,6 +1107,8 @@ function analyzeHtmlPage({
     internalLinks: internalLinks.map((link) => ({
       href: link.href,
       label: link.label,
+      inPrimaryNavigation:
+        link.domLocation === "navigation" || link.domLocation === "header",
     })),
   };
 }
@@ -1213,6 +1469,8 @@ export async function crawlWebsite(
   const pageResults: CrawledPageResult[] = [];
   const warnings: string[] = [];
   const discoveredImportantMap = new Map<string, InternalImportantRecord>();
+  const incomingLinkCounts = new Map<string, number>([[rootTarget.key, 1]]);
+  const primaryNavigationKeys = new Set<string>([rootTarget.key]);
   let duplicateUrlsSkipped = 0;
   let order = 1;
   let stoppedForTimeBudget = false;
@@ -1306,6 +1564,14 @@ export async function crawlWebsite(
         continue;
       }
 
+      incomingLinkCounts.set(
+        target.key,
+        (incomingLinkCounts.get(target.key) ?? 0) + 1,
+      );
+      if (link.inPrimaryNavigation) {
+        primaryNavigationKeys.add(target.key);
+      }
+
       for (const type of target.pageTypes) {
         discoveredImportantMap.set(`${type}:${target.key}`, {
           type,
@@ -1331,6 +1597,23 @@ export async function crawlWebsite(
         order,
       });
       order += 1;
+    }
+  }
+
+  for (const page of pageResults) {
+    if (page.analysisStatus !== "ANALYZED") continue;
+
+    try {
+      const key = crawlUrlKey(page.url);
+      page.internalLinkProminence = Math.max(
+        page.internalLinkProminence ?? 0,
+        incomingLinkCounts.get(key) ?? 0,
+      );
+      page.inPrimaryNavigation =
+        page.pageTypes.includes("Homepage") ||
+        primaryNavigationKeys.has(key);
+    } catch {
+      // Failed URL normalization does not invalidate the deterministic page result.
     }
   }
 
@@ -1373,4 +1656,17 @@ export async function crawlWebsite(
     scannedKeys,
     auditedHostname: rootHostname,
   });
+}
+
+export function websiteCrawlForAuditSnapshot(
+  crawl: WebsiteCrawlResult,
+): WebsiteCrawlResult {
+  return {
+    ...crawl,
+    pageResults: crawl.pageResults.map((page) => {
+      const snapshotPage = { ...page };
+      delete snapshotPage.analysisContent;
+      return snapshotPage;
+    }),
+  };
 }

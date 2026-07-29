@@ -55,8 +55,28 @@ export const featureFlagInventory = [
     routes: ["/dashboard/admin/partners/payouts"],
     effect: "Allows administrators to prepare, approve, and reconcile manual payouts.",
   },
+  {
+    key: "aiAssistedAudits",
+    environmentVariable: "AI_ASSISTED_AUDITS_ENABLED",
+    developmentDefault: false,
+    productionDefault: false,
+    routes: ["Audit generation"],
+    effect:
+      "Adds bounded AI review of selected crawled pages without changing deterministic audit scores.",
+  },
 ] as const;
 
-export const partnerFeatureEnvironmentVariables = featureFlagInventory.map(
+export const featureFlagEnvironmentVariables = featureFlagInventory.map(
   (flag) => flag.environmentVariable,
 );
+
+export const partnerFeatureEnvironmentVariables =
+  featureFlagEnvironmentVariables.filter((name) =>
+    name.startsWith("PARTNER_"),
+  );
+
+export function isAiAssistedAuditsEnabled(
+  env: Record<string, string | undefined> = process.env,
+) {
+  return env.AI_ASSISTED_AUDITS_ENABLED?.trim().toLowerCase() === "true";
+}

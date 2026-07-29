@@ -29,6 +29,11 @@ import {
 import { getAuditAssessment } from "@/lib/audits/audit-applicability";
 import { readEvidenceIntegrity } from "@/lib/audits/evidence-contracts";
 import { completeEvidenceSummary } from "@/lib/audits/finding-copy";
+import {
+  readAiReviewedOpportunityEvidence,
+  readSelectiveAiAuditSnapshot,
+  type SelectiveAiAuditSnapshot,
+} from "@/lib/audits/selective-ai/types";
 import { businessGoalLabels } from "@/lib/goals";
 import { prisma } from "@/lib/prisma";
 import { aggregateProfileCounts } from "@/lib/profiles/profile-counts";
@@ -80,6 +85,8 @@ type ConsultantContextFinding = {
   severity: FindingSeverity;
   title: string;
   description: string;
+  sourceUrl?: string | null;
+  evidence?: unknown;
 };
 
 type ConsultantContextRecommendation = {
@@ -92,6 +99,8 @@ type ConsultantContextRecommendation = {
   estimatedEffort: string | null;
   impact: string | null;
   effort: string | null;
+  sourceType?: string | null;
+  sourceUrl?: string | null;
   evidence?: unknown;
 };
 
@@ -197,6 +206,13 @@ export async function buildConsultantContext(input: BuildConsultantContextInput)
   const evidenceIntegrity = readEvidenceIntegrity(
     input.latestAudit.analysisSnapshot,
   );
+  const selectiveAiAnalysis = readSelectiveAiAuditSnapshot(
+    input.latestAudit.analysisSnapshot,
+  );
+  const relevantAiPageEvidence = selectRelevantAiPageEvidence(
+    selectiveAiAnalysis,
+    input.question,
+  );
   const website = getWebsiteAnalysis(input.latestAudit.analysisSnapshot);
   const websiteCrawl = getWebsiteCrawl(input.latestAudit.analysisSnapshot);
   const websiteActionSummary =
@@ -288,6 +304,8 @@ export async function buildConsultantContext(input: BuildConsultantContextInput)
   );
   const sortedRecommendations = [...openRecommendations].sort(
     (a, b) =>
+      recommendationQuestionRelevance(b, input.question) -
+        recommendationQuestionRelevance(a, input.question) ||
       statusWeight[a.status] - statusWeight[b.status] ||
       priorityWeight[a.priority] - priorityWeight[b.priority],
   );
@@ -457,6 +475,25 @@ export async function buildConsultantContext(input: BuildConsultantContextInput)
             ),
           }
         : "Legacy audit: no saved evidence-integrity contract is available. Preserve uncertainty and use only explicit analyzer fields.",
+      selectiveAiCoverage: selectiveAiAnalysis
+        ? {
+            status: selectiveAiAnalysis.status,
+            pagesCheckedTechnically:
+              selectiveAiAnalysis.coverage.pagesCheckedTechnically,
+            keyPagesReviewedByAi:
+              selectiveAiAnalysis.coverage.deepReviewedPages,
+            additionalPagesCoveredDeterministically: Math.max(
+              0,
+              selectiveAiAnalysis.coverage.pagesCheckedTechnically -
+                selectiveAiAnalysis.coverage.deepReviewedPages,
+            ),
+            failedAiPages: selectiveAiAnalysis.coverage.failedAiPages,
+            limitations: selectiveAiAnalysis.coverage.limitations.slice(0, 5),
+            interpretationRule:
+              "Only selected key pages received AI review. All successfully crawled pages received deterministic checks. Never imply uniform AI review.",
+          }
+        : "This audit does not contain a selective AI coverage snapshot.",
+      relevantAiPageEvidence,
     },
     actionProgress: {
       completed: completedRecommendations.length,
@@ -473,7 +510,8 @@ export async function buildConsultantContext(input: BuildConsultantContextInput)
         } - ${completeEvidenceSummary(finding.description, 260)}`,
     ),
     topRecommendations: evidenceIntegrity
-      ? evidenceIntegrity.canonicalRecommendations
+      ? [
+          ...evidenceIntegrity.canonicalRecommendations
           .slice(0, 8)
           .map((recommendation) => {
             const tracked = input.recommendations.find(
@@ -484,7 +522,29 @@ export async function buildConsultantContext(input: BuildConsultantContextInput)
             } | Effort ${recommendation.estimatedEffort} | Impact ${
               recommendation.expectedImpact
             }: ${recommendation.title} - ${recommendation.description} Evidence: ${recommendation.reportEvidence}`;
-          })
+          }),
+          ...sortedRecommendations
+            .filter(
+              (recommendation) =>
+                recommendation.sourceType === "ai_reviewed_opportunity",
+            )
+            .slice(0, 4)
+            .map((recommendation) => {
+              const evidence = readAiReviewedOpportunityEvidence(
+                recommendation.evidence,
+              );
+              return `${recommendation.priority} | ${recommendation.status} | ${
+                categoryLabels[recommendation.category]
+              } | AI-reviewed opportunity | Confidence ${
+                evidence?.confidence ?? "LOW"
+              }: ${recommendation.title} - ${completeEvidenceSummary(
+                recommendation.description,
+                220,
+              )} Affected page: ${
+                recommendation.sourceUrl ?? evidence?.sourceUrl ?? "not saved"
+              }. Evidence: ${evidence?.excerpt ?? "No concise excerpt saved."}`;
+            }),
+        ].slice(0, 10)
       : sortedRecommendations.slice(0, 8).map(
           (recommendation) =>
             `${recommendation.priority} | ${recommendation.status} | ${
@@ -862,6 +922,103 @@ function scoreFor(scores: ConsultantContextScore[], category: ScoreCategory) {
   return (
     scores.find((score) => score.category === category && !score.platform)
       ?.score ?? null
+  );
+}
+
+function selectRelevantAiPageEvidence(
+  snapshot: SelectiveAiAuditSnapshot | null,
+  question: string,
+) {
+  if (!snapshot) return [];
+  const terms = meaningfulTerms(question);
+
+  return [...snapshot.selectedPageAnalyses]
+    .map((page) => {
+      const searchable = [
+        page.url,
+        page.pageType,
+        page.analysis.pageSummary,
+        page.analysis.pagePurpose,
+        ...page.analysis.opportunities.flatMap((item) => [
+          item.category,
+          item.title,
+          item.description,
+          item.recommendation,
+        ]),
+      ]
+        .join(" ")
+        .toLowerCase();
+      return {
+        page,
+        relevance: terms.reduce(
+          (score, term) => score + (searchable.includes(term) ? 1 : 0),
+          0,
+        ),
+      };
+    })
+    .sort(
+      (left, right) =>
+        right.relevance - left.relevance ||
+        left.page.url.localeCompare(right.page.url),
+    )
+    .slice(0, terms.length > 0 ? 3 : 2)
+    .map(({ page }) => ({
+      url: page.url,
+      pageType: page.pageType,
+      pageSummary: truncate(page.analysis.pageSummary, 280),
+      pagePurpose: truncate(page.analysis.pagePurpose, 180),
+      strengths: page.analysis.strengths.slice(0, 2).map((item) => ({
+        title: item.title,
+        evidence: truncate(item.evidence, 180),
+        confidence: item.confidence,
+      })),
+      opportunities: page.analysis.opportunities.slice(0, 3).map((item) => ({
+        category: item.category,
+        title: item.title,
+        evidence: truncate(item.evidence, 180),
+        recommendation: truncate(item.recommendation, 220),
+        confidence: item.confidence,
+      })),
+      limitations: page.analysis.limitations.slice(0, 3),
+      contentTruncated: page.contentTruncated,
+    }));
+}
+
+function recommendationQuestionRelevance(
+  recommendation: ConsultantContextRecommendation,
+  question: string,
+) {
+  const searchable =
+    `${recommendation.title} ${recommendation.description} ${recommendation.category}`.toLowerCase();
+  return meaningfulTerms(question).reduce(
+    (score, term) => score + (searchable.includes(term) ? 1 : 0),
+    0,
+  );
+}
+
+function meaningfulTerms(value: string) {
+  return unique(
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .split(" ")
+      .filter(
+        (term) =>
+          term.length >= 4 &&
+          ![
+            "what",
+            "should",
+            "could",
+            "would",
+            "about",
+            "with",
+            "from",
+            "this",
+            "that",
+            "have",
+            "help",
+          ].includes(term),
+      ),
   );
 }
 

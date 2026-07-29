@@ -56,6 +56,23 @@ enum AuditStatus {
   FAILED
 }
 
+enum AiOperationType {
+  PAGE_ANALYSIS
+  AUDIT_SYNTHESIS
+  CONSULTANT_MESSAGE
+  COMPLEX_CONSULTANT_MESSAGE
+  IMPLEMENTATION_DRAFT
+  COMPETITOR_ANALYSIS
+  SOCIAL_ANALYSIS
+}
+
+enum AiUsageStatus {
+  SUCCEEDED
+  FAILED
+  VALIDATION_REJECTED
+  CACHE_HIT
+}
+
 enum ScoreCategory {
   OVERALL
   WEBSITE
@@ -579,6 +596,8 @@ model Business {
   googleBusinessProfiles GoogleBusinessProfile[]
   profileDecisions       BusinessProfileDecision[]
   implementationDrafts   ImplementationDraft[]
+  pageAnalysisCache      PageAnalysisCache[]
+  auditAiUsage           AuditAiUsage[]
 
   @@index([ownerId])
   @@index([status])
@@ -699,9 +718,88 @@ model Audit {
   recommendations      Recommendation[]
   implementationDrafts ImplementationDraft[]
   competitorSnapshots  CompetitorSnapshot[]
+  aiUsage              AuditAiUsage[]
 
   @@index([businessId])
   @@index([status])
+}
+
+model PageAnalysisCache {
+  id                  String   @id @default(cuid())
+  businessId          String
+  normalizedUrl       String
+  canonicalUrl        String?
+  contentHash         String
+  metadataHash        String
+  businessContextHash String
+  goalContextHash     String
+  promptVersion       String
+  schemaVersion       String
+  modelRoute          String
+  model               String
+  cacheKey            String   @unique
+  analysis            Json
+  inputTokens         Int      @default(0)
+  cachedInputTokens   Int      @default(0)
+  outputTokens        Int      @default(0)
+  reasoningTokens     Int      @default(0)
+  totalTokens         Int      @default(0)
+  estimatedCostMicros Int?
+  latencyMs           Int      @default(0)
+  retryCount          Int      @default(0)
+  providerRequestId   String?
+  contentTruncated    Boolean  @default(false)
+  generatedAt         DateTime @default(now())
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  business Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  usage    AuditAiUsage[]
+
+  @@index([businessId])
+  @@index([businessId, normalizedUrl])
+  @@index([businessId, normalizedUrl, contentHash])
+  @@index([businessId, promptVersion, schemaVersion])
+  @@index([generatedAt])
+}
+
+model AuditAiUsage {
+  id                  String          @id @default(cuid())
+  auditId             String
+  businessId          String
+  pageAnalysisCacheId String?
+  operationType       AiOperationType
+  pageUrl             String?
+  provider            String
+  modelRoute          String
+  model               String
+  inputTokens         Int             @default(0)
+  cachedInputTokens   Int             @default(0)
+  outputTokens        Int             @default(0)
+  reasoningTokens     Int             @default(0)
+  totalTokens         Int             @default(0)
+  estimatedCostMicros Int?
+  latencyMs           Int             @default(0)
+  retryCount          Int             @default(0)
+  status              AiUsageStatus
+  cacheHit            Boolean         @default(false)
+  promptVersion       String
+  providerRequestId   String?
+  failureCode         String?
+  planType            PlanType?
+  auditProduct        String?
+  createdAt           DateTime        @default(now())
+
+  audit             Audit              @relation(fields: [auditId], references: [id], onDelete: Cascade)
+  business          Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  pageAnalysisCache PageAnalysisCache? @relation(fields: [pageAnalysisCacheId], references: [id], onDelete: SetNull)
+
+  @@index([auditId])
+  @@index([businessId])
+  @@index([businessId, operationType, createdAt])
+  @@index([operationType, createdAt])
+  @@index([pageAnalysisCacheId])
+  @@index([status, createdAt])
 }
 
 model AuditScore {

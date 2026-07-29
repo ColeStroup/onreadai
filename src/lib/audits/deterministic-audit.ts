@@ -97,6 +97,7 @@ export type DeterministicAuditFinding = {
   title: string;
   description: string;
   severity: FindingSeverity;
+  sourceUrl?: string | null;
   evidence?: Prisma.InputJsonValue;
 };
 
@@ -109,6 +110,7 @@ export type DeterministicAuditRecommendation = {
   expectedImpact: EffortImpact;
   sourceType?: string | null;
   sourceReferenceId?: string | null;
+  sourceUrl?: string | null;
   evidence?: Prisma.InputJsonValue;
   issueKey?: string;
 };

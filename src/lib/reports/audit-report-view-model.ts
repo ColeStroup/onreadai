@@ -31,6 +31,11 @@ import {
   type AuditComparison,
 } from "@/lib/audits/audit-comparison";
 import {
+  readAiReviewedOpportunityEvidence,
+  readSelectiveAiAuditSnapshot,
+  type SelectiveAiAuditSnapshot,
+} from "@/lib/audits/selective-ai/types";
+import {
   readEvidenceIntegrity,
   type AuditEvidenceIntegritySnapshot,
   type PrimaryCtaAssessment,
@@ -124,6 +129,8 @@ export type ReportRecommendation = {
   confidence: "High" | "Medium" | "Low";
   freshness: "Current audit" | "Current live state" | "General best practice";
   technical: boolean;
+  sourceLabel?: "Verified technical issue" | "AI-reviewed opportunity";
+  sourceUrl?: string | null;
 };
 
 export type ReportNextMove = {
@@ -143,7 +150,17 @@ export type ReportFinding = {
   description: string;
   category: ScoreCategory;
   severity: FindingSeverity;
-  source: "selected_audit" | "current_live_state" | "current_comparison";
+  source:
+    | "selected_audit"
+    | "current_live_state"
+    | "current_comparison"
+    | "ai_reviewed_opportunity";
+  sourceLabel?: "Verified technical issue" | "AI-reviewed opportunity";
+  sourceUrl?: string | null;
+  evidenceSummary?: string;
+  confidence?: "High" | "Medium" | "Low";
+  whyItMatters?: string | null;
+  suggestedAction?: string | null;
 };
 
 export type ReportScoringMetadata = {
@@ -272,6 +289,7 @@ export type AuditReportViewModel = {
   };
   scoringMetadata: ReportScoringMetadata;
   evidenceIntegrity: AuditEvidenceIntegritySnapshot;
+  aiAnalysis?: SelectiveAiAuditSnapshot | null;
   dataNotes: string[];
   technicalAppendix: {
     detectedActionLinks: string[];
@@ -398,6 +416,7 @@ export async function buildAuditReportViewModel({
     "seo",
     (value) => typeof value.score === "number",
   );
+  const aiAnalysis = readSelectiveAiAuditSnapshot(audit.analysisSnapshot);
   const social = currentState.currentSocial;
   const reviews = currentState.currentReviews;
   const currentComparison = currentState.comparison;
@@ -608,6 +627,7 @@ export async function buildAuditReportViewModel({
     websiteCrawl,
     currentComparison,
     nextMoves,
+    aiAnalysis,
   });
   const snapshotDate = latestDate(
     currentComparison?.freshness.map((item) => item.scannedAt) ?? [],
@@ -746,6 +766,7 @@ export async function buildAuditReportViewModel({
     },
     scoringMetadata,
     evidenceIntegrity,
+    aiAnalysis,
     dataNotes: evidenceIntegrity.dataConflicts.map(
       (conflict) => `${conflict.explanation} ${conflict.action}`,
     ),
@@ -1000,6 +1021,7 @@ function buildCurrentRecommendations({
     expectedImpact: string | null;
     sourceType: string | null;
     sourceReferenceId: string | null;
+    sourceUrl: string | null;
     evidence: unknown;
   }>;
   auditFindings: Array<{
@@ -1045,10 +1067,21 @@ function buildCurrentRecommendations({
         sourceType: matching?.sourceType ?? "audit_evidence",
         sourceReferenceId:
           canonical.sourceFindingId ?? matching?.sourceReferenceId ?? null,
+        sourceUrl: matching?.sourceUrl ?? null,
         evidence: canonical,
       };
     });
-  const normalized = canonicalAuditRecommendations
+  const aiAuditRecommendations = auditRecommendations.filter(
+    (recommendation) =>
+      recommendation.sourceType === "ai_reviewed_opportunity" &&
+      !canonicalAuditRecommendations.some(
+        (canonical) => canonical.id === recommendation.id,
+      ),
+  );
+  const normalized = [
+    ...canonicalAuditRecommendations,
+    ...aiAuditRecommendations,
+  ]
     .map((recommendation) => {
       let description = recommendation.description;
       let title = recommendation.title;
@@ -1135,6 +1168,7 @@ function buildCurrentRecommendations({
         expectedImpact: "Medium",
         sourceType: "current_live_state",
         sourceReferenceId: null,
+        sourceUrl: null,
         evidence: null,
       },
     ];
@@ -1167,12 +1201,16 @@ function buildCurrentRecommendations({
       expectedImpact: "High",
       sourceType: "current_live_state",
       sourceReferenceId: null,
+      sourceUrl: null,
       evidence: null,
     });
   }
 
   const deduped: ReportRecommendation[] = dedupeRecommendations(compatible).map((recommendation) => {
     const canonicalEvidence = readCanonicalRecommendationEvidence(
+      recommendation.evidence,
+    );
+    const aiEvidence = readAiReviewedOpportunityEvidence(
       recommendation.evidence,
     );
     const relatedFinding =
@@ -1182,8 +1220,12 @@ function buildCurrentRecommendations({
           (canonicalEvidence?.sourceFindingId ??
             recommendation.sourceReferenceId),
       );
-    const technical = isTechnicalRecommendation(recommendation);
-    const evidenceSummary = canonicalEvidence?.reportEvidence ??
+    const technical =
+      recommendation.sourceType === "ai_reviewed_opportunity"
+        ? false
+        : isTechnicalRecommendation(recommendation);
+    const evidenceSummary = aiEvidence?.excerpt ??
+      canonicalEvidence?.reportEvidence ??
       relatedFinding?.description ??
       evidenceForCategory({
         category: recommendation.category,
@@ -1216,7 +1258,9 @@ function buildCurrentRecommendations({
         recommendation.category,
         context,
       ),
-      confidence: canonicalEvidence
+      confidence: aiEvidence
+        ? evidenceConfidenceLabel(aiEvidence.confidence)
+        : canonicalEvidence
         ? evidenceConfidenceLabel(canonicalEvidence.evidenceConfidence)
         : relatedFinding || recommendation.sourceType
           ? "High" as const
@@ -1228,6 +1272,13 @@ function buildCurrentRecommendations({
             ? "Current audit" as const
             : "General best practice" as const,
       technical,
+      sourceLabel:
+        recommendation.sourceType === "ai_reviewed_opportunity"
+          ? "AI-reviewed opportunity" as const
+          : technical
+            ? "Verified technical issue" as const
+            : undefined,
+      sourceUrl: recommendation.sourceUrl ?? aiEvidence?.sourceUrl ?? null,
     };
   });
   const sorted = deduped.sort(recommendationSort);
@@ -1394,6 +1445,7 @@ function buildExecutiveSummary({
   websiteCrawl,
   currentComparison,
   nextMoves,
+  aiAnalysis,
 }: {
   businessName: string;
   overallScore: number;
@@ -1403,7 +1455,14 @@ function buildExecutiveSummary({
   websiteCrawl: WebsiteCrawlResult | null;
   currentComparison: CompetitorComparisonResult | null;
   nextMoves: ReportNextMove[];
+  aiAnalysis: SelectiveAiAuditSnapshot | null;
 }) {
+  if (
+    aiAnalysis?.synthesisSource === "AI_GENERATED" &&
+    aiAnalysis.synthesis?.executiveSummary
+  ) {
+    return cleanReportCopy(aiAnalysis.synthesis.executiveSummary);
+  }
   const scored = scores.filter(
     (item): item is ReportScoreItem & { score: number } =>
       typeof item.score === "number",
@@ -1458,6 +1517,8 @@ function buildCurrentFindings({
     description: string;
     category: ScoreCategory;
     severity: FindingSeverity;
+    evidence: unknown;
+    sourceUrl: string | null;
   }>;
   reviews: ReviewAnalysis;
   social: SocialAnalysis;
@@ -1496,14 +1557,29 @@ function buildCurrentFindings({
     context,
     sourceEvidence,
     diagnosticLabel: "report-findings",
-  }).map<ReportFinding>((finding) => ({
-    id: finding.id,
-    title: normalizeFindingTitle(finding.title),
-    description: normalizeFindingDescription(finding.description),
-    category: finding.category,
-    severity: finding.severity,
-    source: "selected_audit",
-  }));
+  }).map<ReportFinding>((finding) => {
+    const aiEvidence = readAiReviewedOpportunityEvidence(finding.evidence);
+    return {
+      id: finding.id,
+      title: normalizeFindingTitle(finding.title),
+      description: normalizeFindingDescription(finding.description),
+      category: finding.category,
+      severity: finding.severity,
+      source: aiEvidence
+        ? "ai_reviewed_opportunity"
+        : "selected_audit",
+      sourceLabel: aiEvidence
+        ? "AI-reviewed opportunity"
+        : "Verified technical issue",
+      sourceUrl: finding.sourceUrl ?? aiEvidence?.sourceUrl ?? null,
+      evidenceSummary: aiEvidence?.excerpt ?? finding.description,
+      confidence: aiEvidence
+        ? evidenceConfidenceLabel(aiEvidence.confidence)
+        : "High",
+      whyItMatters: aiEvidence?.businessImpact ?? null,
+      suggestedAction: aiEvidence?.suggestedAction ?? null,
+    };
+  });
 
   if (
     reviews.googleBusinessStatus === "confirmed" &&

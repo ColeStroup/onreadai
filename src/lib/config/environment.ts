@@ -1,4 +1,8 @@
-import { partnerFeatureEnvironmentVariables } from "@/lib/features/feature-flags";
+import { getAuditAiModelRoute } from "@/lib/ai/model-routing";
+import {
+  featureFlagEnvironmentVariables,
+  isAiAssistedAuditsEnabled,
+} from "@/lib/features/feature-flags";
 
 type Environment = Record<string, string | undefined>;
 
@@ -84,7 +88,7 @@ export function validateEnvironment(env: Environment = process.env) {
     issues.push("APP_ENVIRONMENT must match VERCEL_ENV on Vercel.");
   }
 
-  for (const name of partnerFeatureEnvironmentVariables) {
+  for (const name of featureFlagEnvironmentVariables) {
     const value = env[name]?.trim().toLowerCase();
     if (value && !booleanValues.has(value)) {
       issues.push(`${name} must be true or false.`);
@@ -117,6 +121,7 @@ export function validateEnvironment(env: Environment = process.env) {
     for (const name of requiredProductionVariables) {
       if (!env[name]?.trim()) issues.push(`${name} is required in production.`);
     }
+    validateAiAssistedAuditConfiguration(env, issues);
 
     if (env.EMAIL_FROM_NAME?.trim() !== "Onread") {
       issues.push('EMAIL_FROM_NAME must be "Onread" in production.');
@@ -155,6 +160,25 @@ export function validateEnvironment(env: Environment = process.env) {
   if (issues.length > 0) throw new EnvironmentValidationError(unique(issues));
 
   return { stage };
+}
+
+function validateAiAssistedAuditConfiguration(
+  env: Environment,
+  issues: string[],
+) {
+  if (!isAiAssistedAuditsEnabled(env)) return;
+
+  if (!env.OPENAI_API_KEY?.trim()) {
+    issues.push("OPENAI_API_KEY is required in production.");
+  }
+
+  for (const task of ["PAGE_ANALYSIS", "AUDIT_SYNTHESIS"] as const) {
+    if (!getAuditAiModelRoute(task, env).model.trim()) {
+      issues.push(
+        `${task} must resolve from its audit-specific model, OPENAI_MODEL, or the application default.`,
+      );
+    }
+  }
 }
 
 function validateStripeConfiguration(

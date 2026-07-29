@@ -12,6 +12,9 @@ Alert on:
 - database connection exhaustion, latency, storage, or backup failure
 - elevated 429/5xx rates
 - Vercel function timeouts and audit records stuck in `PENDING`, `QUEUED`, or `RUNNING`
+- selective audit validation rejections, reduced AI coverage, retry growth,
+  page-review latency, a falling page-analysis cache-hit ratio, and
+  `audit_ai_pricing_unknown`
 
 Do not add a public database health endpoint. Vercel deployment checks plus authenticated smoke tests provide health evidence without exposing a new abuse target.
 
@@ -24,6 +27,24 @@ Audit work is bounded and runs in Vercel `after()`. A refresh or duplicate click
 3. Never edit a completed audit to failed because a later page revalidation failed.
 4. Ask the owner to rerun after the underlying incident is resolved.
 5. For sustained volume or stricter delivery guarantees, move audit orchestration to a durable queue before increasing crawl limits.
+
+For selective AI-assisted audits, also inspect the saved
+`analysisSnapshot.aiAssistedAnalysis` coverage and tenant-scoped
+`AuditAiUsage` rows. A failed page review or synthesis should reduce AI
+coverage while preserving the deterministic audit. If it instead changes a
+numeric score or removes deterministic evidence, disable
+`AI_ASSISTED_AUDITS_ENABLED` and treat that as a release regression.
+
+Do not expose internal token or estimated-cost telemetry to customers. Use it
+to monitor first-audit versus repeated-audit cost, cache reuse, provider
+latency, retries, and validation rejection. See
+[`docs/selective-ai-audit-analysis.md`](./selective-ai-audit-analysis.md) for
+the cache key, model routes, limits, rollout, and troubleshooting steps.
+
+An `audit_ai_pricing_unknown` event means the request still ran and its model
+and token counts were retained, but estimated cost is `null`. Add verified
+pricing for that exact model family before using internal estimates for budget
+decisions; never substitute a different model's rates.
 
 ## Stripe webhook failures
 
@@ -65,6 +86,12 @@ it. Never cancel or fabricate Stripe state as part of the complimentary grant
 transaction.
 
 ## Feature kill switches
+
+`AI_ASSISTED_AUDITS_ENABLED=false` disables new selective page and synthesis
+calls. It does not disable deterministic audits and does not hide historical
+AI-assisted findings already stored in completed audit snapshots. This flag is
+environment-backed rather than part of Partner Program settings, so update the
+server environment and redeploy when using it as an incident switch.
 
 Use `/dashboard/admin/partners/settings` with an authorized admin. Recommended emergency order:
 

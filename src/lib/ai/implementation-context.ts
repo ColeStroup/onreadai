@@ -8,6 +8,7 @@ import {
 } from "@prisma/client";
 
 import { buildCompetitorConsultantContext } from "@/lib/ai/competitor-consultant-context";
+import { readAiReviewedOpportunityEvidence } from "@/lib/audits/selective-ai/types";
 import { businessGoalLabels } from "@/lib/goals";
 import { prisma } from "@/lib/prisma";
 import { parseSocialStrategy } from "@/lib/social-strategy";
@@ -405,6 +406,19 @@ export async function buildImplementationContext({
 }
 
 function recommendationEvidence(value: unknown, sourceUrl: string | null) {
+  const aiEvidence = readAiReviewedOpportunityEvidence(value);
+  if (aiEvidence) {
+    return [
+      {
+        title: "AI-reviewed page evidence",
+        description:
+          aiEvidence.excerpt ??
+          "The selected opportunity was grounded in the affected page analysis.",
+        sourceUrl: aiEvidence.sourceUrl ?? sourceUrl,
+      },
+    ];
+  }
+
   if (!Array.isArray(value)) return [];
 
   return value

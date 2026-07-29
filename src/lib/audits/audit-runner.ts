@@ -19,13 +19,17 @@ import { revalidatePath } from "next/cache";
 import { analyzeReviews } from "@/lib/analyzers/review-analyzer";
 import { analyzeSeo } from "@/lib/analyzers/seo-analyzer";
 import { analyzeSocialProfiles } from "@/lib/analyzers/social-analyzer";
-import { crawlWebsite } from "@/lib/analyzers/website-crawler";
+import {
+  crawlWebsite,
+  websiteCrawlForAuditSnapshot,
+} from "@/lib/analyzers/website-crawler";
 import { analyzeWebsite } from "@/lib/analyzers/website-analyzer";
 import { generateBusinessContextDraft } from "@/lib/ai/business-context-generator";
 import { generateCompetitorIntelligenceSummary } from "@/lib/ai/competitor-intelligence-generator";
 import { generateDeterministicSocialStrategy } from "@/lib/ai/social-strategy-generator";
 import { generateDeterministicAudit } from "@/lib/audits/deterministic-audit";
 import { buildAuditEvidenceIntegrity } from "@/lib/audits/evidence-integrity";
+import { runSelectiveAiAuditAnalysis } from "@/lib/audits/selective-ai/selective-ai-audit";
 import {
   type AuditProgressStage,
   isAuditProgressStage,
@@ -242,6 +246,7 @@ export async function runAuditGeneration({
               description: finding.description,
               severity: finding.severity,
               evidence: finding.evidence,
+              sourceUrl: finding.sourceUrl,
             })),
           },
           recommendations: {
@@ -261,6 +266,7 @@ export async function runAuditGeneration({
               expectedImpact: recommendation.expectedImpact,
               sourceType: recommendation.sourceType,
               sourceReferenceId: recommendation.sourceReferenceId,
+              sourceUrl: recommendation.sourceUrl,
               evidence: recommendation.evidence,
               sortOrder: index + 1,
             })),
@@ -471,6 +477,11 @@ async function buildAuditData({
           businessContext,
       })
     : null;
+  await setAuditProgressStage(
+    businessId,
+    auditId,
+    "CHECKING_TECHNICAL_ISSUES",
+  );
   const seoAnalysis = websiteAnalysis
     ? await analyzeSeo(websiteAnalysis.normalizedUrl, websiteAnalysis)
     : null;
@@ -901,11 +912,6 @@ async function buildAuditData({
         snapshots: competitor.snapshots,
       })),
     });
-  await setAuditProgressStage(
-    businessId,
-    auditId,
-    "PRIORITIZING_RECOMMENDATIONS",
-  );
   const evidenceIntegrityResult = buildAuditEvidenceIntegrity({
     website: websiteAnalysis,
     websiteCrawl,
@@ -955,6 +961,45 @@ async function buildAuditData({
       code: warning.code,
     });
   }
+  const selectiveAiResult = await runSelectiveAiAuditAnalysis({
+    auditId,
+    businessId,
+    businessName: business.name,
+    planType: plan,
+    websiteCrawl,
+    businessContext: effectiveBusinessContext,
+    goals: business.goals,
+    primaryGoal: business.primaryGoal,
+    deterministicAudit: auditResult,
+    socialEvidence: socialAnalysis,
+    reviewEvidence: reviewAnalysis,
+    competitorEvidence: competitorIntelligence,
+    onProgress: (stage) => setAuditProgressStage(businessId, auditId, stage),
+  });
+  auditResult.findings.push(
+    ...selectiveAiResult.findings.map((finding) => ({
+      ...finding,
+      evidence: toJsonValue(finding.evidence),
+    })),
+  );
+  auditResult.recommendations.push(
+    ...selectiveAiResult.recommendations.map((recommendation) => ({
+      ...recommendation,
+      evidence: toJsonValue(recommendation.evidence),
+    })),
+  );
+  if (
+    selectiveAiResult.snapshot.synthesisSource === "AI_GENERATED" &&
+    selectiveAiResult.snapshot.synthesis?.executiveSummary
+  ) {
+    auditResult.summary =
+      selectiveAiResult.snapshot.synthesis.executiveSummary;
+  }
+  await setAuditProgressStage(
+    businessId,
+    auditId,
+    "PRIORITIZING_RECOMMENDATIONS",
+  );
   const reportSocialStrategy = generateDeterministicSocialStrategy({
     businessName: business.name,
     initialInput: business.initialInput,
@@ -994,6 +1039,8 @@ async function buildAuditData({
           ? "homepage_only"
           : "not_applicable",
     },
+    selectiveAiCoverage: selectiveAiResult.snapshot.coverage,
+    selectiveAiStatus: selectiveAiResult.snapshot.status,
     competitorSnapshotIds: competitorIntelligence.snapshotIds,
     competitorComparisonGeneratedAt: competitorIntelligence.generatedAt,
     googleBusinessStatus: reviewAnalysis.googleBusinessStatus,
@@ -1009,10 +1056,13 @@ async function buildAuditData({
       ...(websiteAnalysis
         ? {
             website: websiteAnalysis,
-            websiteCrawl,
+            websiteCrawl: websiteCrawl
+              ? websiteCrawlForAuditSnapshot(websiteCrawl)
+              : null,
             seo: seoAnalysis,
           }
         : {}),
+      aiAssistedAnalysis: selectiveAiResult.snapshot,
       social: socialAnalysis,
       reviews: reviewAnalysis,
       auditSources: {

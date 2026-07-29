@@ -26,6 +26,7 @@ function productionEnvironment() {
     PASSWORD_RESET_SECRET: secret,
     RATE_LIMIT_SECRET: secret,
     OPENAI_API_KEY: "sk-example",
+    OPENAI_MODEL: "gpt-5.4-mini",
     STRIPE_MODE: "live",
     STRIPE_SECRET_KEY: "sk_live_example",
     STRIPE_WEBHOOK_SECRET: "whsec_example",
@@ -40,6 +41,31 @@ test("accepts a complete public production configuration", () => {
   assert.deepEqual(validateEnvironment(productionEnvironment()), {
     stage: "production",
   });
+});
+
+test("AI-assisted audits accept OPENAI_MODEL without audit-specific overrides", () => {
+  assert.deepEqual(
+    validateEnvironment({
+      ...productionEnvironment(),
+      AI_ASSISTED_AUDITS_ENABLED: "true",
+    }),
+    { stage: "production" },
+  );
+});
+
+test("AI-assisted audits require an OpenAI key in public production", () => {
+  const env = {
+    ...productionEnvironment(),
+    AI_ASSISTED_AUDITS_ENABLED: "true",
+    OPENAI_API_KEY: " ",
+  };
+
+  assert.throws(
+    () => validateEnvironment(env),
+    (error) =>
+      error instanceof EnvironmentValidationError &&
+      error.issues.includes("OPENAI_API_KEY is required in production."),
+  );
 });
 
 test("rejects test Stripe credentials in public production", () => {

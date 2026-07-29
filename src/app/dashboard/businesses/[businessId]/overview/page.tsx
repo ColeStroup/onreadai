@@ -14,6 +14,7 @@ import {
   MonitorPlay,
   RefreshCw,
   Share2,
+  Sparkles,
   Star,
   Swords,
 } from "lucide-react";
@@ -249,6 +250,19 @@ export default async function BusinessOverviewPage({
     (item) => [item.category, item.score] as const,
   );
   const executiveSummary = report.audit.executiveSummary;
+  const aiAnalysis = report.aiAnalysis;
+  const aiCoverage = aiAnalysis?.coverage;
+  const reportRecommendationById = new Map(
+    report.recommendations.all.map((recommendation) => [
+      recommendation.id,
+      recommendation,
+    ]),
+  );
+  const evidenceFindings = [
+    ...report.findings.warnings,
+    ...report.findings.opportunities,
+    ...report.findings.strengths,
+  ].slice(0, 6);
   const suggestedQuestions = getSuggestedQuestionsForGoals(
     business.goals,
     business.primaryGoal,
@@ -389,6 +403,52 @@ export default async function BusinessOverviewPage({
         </div>
       </Card>
 
+      {aiAnalysis ? (
+        <ReportSection
+          title="Analysis coverage"
+          description="Technical checks cover every successfully crawled page. AI review is reserved for the most important representative pages."
+          action={<Sparkles className="size-5 text-accent" />}
+        >
+          <div className="grid gap-3 sm:grid-cols-3">
+            <CompactMetricCard
+              label="Checked technically"
+              value={aiCoverage?.pagesCheckedTechnically ?? 0}
+            />
+            <CompactMetricCard
+              label="Key pages reviewed by AI"
+              value={aiCoverage?.deepReviewedPages ?? 0}
+            />
+            <CompactMetricCard
+              label="Technical + site-wide only"
+              value={Math.max(
+                0,
+                (aiCoverage?.pagesCheckedTechnically ?? 0) -
+                  (aiCoverage?.deepReviewedPages ?? 0),
+              )}
+            />
+          </div>
+          <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-muted">
+            <span className="rounded-full border border-border bg-background px-2.5 py-1 font-semibold">
+              {aiAnalysis.status.replaceAll("_", " ").toLowerCase()}
+            </span>
+            {(aiCoverage?.cacheHits ?? 0) > 0 ? (
+              <span>
+                {aiCoverage?.cacheHits} unchanged page{" "}
+                {aiCoverage?.cacheHits === 1 ? "review was" : "reviews were"}{" "}
+                reused.
+              </span>
+            ) : null}
+            {(aiCoverage?.failedAiPages ?? 0) > 0 ? (
+              <span>
+                {aiCoverage?.failedAiPages} selected page{" "}
+                {aiCoverage?.failedAiPages === 1 ? "was" : "were"} unavailable
+                for deep review; deterministic checks still completed.
+              </span>
+            ) : null}
+          </div>
+        </ReportSection>
+      ) : null}
+
       <ReportSection
         title="Your next three moves"
         description="The highest-priority open work, ordered by impact, effort, goals, and audit priority."
@@ -403,7 +463,11 @@ export default async function BusinessOverviewPage({
         }
       >
         <div className="divide-y divide-border">
-          {nextMoves.map((recommendation, index) => (
+          {nextMoves.map((recommendation, index) => {
+            const reportRecommendation = reportRecommendationById.get(
+              recommendation.id,
+            );
+            return (
             <article
               key={recommendation.id}
               className="grid gap-4 py-5 first:pt-0 last:pb-0 lg:grid-cols-[2rem_minmax(0,1fr)_10rem] lg:items-start lg:gap-x-8"
@@ -432,11 +496,35 @@ export default async function BusinessOverviewPage({
                   >
                     {recommendationStatusLabels[recommendation.status]}
                   </span>
+                  {reportRecommendation?.sourceLabel ? (
+                    <span className="rounded-full border border-accent/30 bg-accent/10 px-2.5 py-1 text-xs font-semibold text-accent">
+                      {reportRecommendation.sourceLabel}
+                    </span>
+                  ) : null}
                 </div>
                 <h4 className="mt-3 font-semibold">{recommendation.title}</h4>
                 <p className="mt-1 text-sm leading-6 text-muted">
                   {recommendation.description}
                 </p>
+                {reportRecommendation?.sourceLabel ===
+                "AI-reviewed opportunity" ? (
+                  <div className="mt-3 space-y-1 text-xs leading-5 text-muted">
+                    {reportRecommendation.sourceUrl ? (
+                      <p>
+                        <strong className="text-foreground">Affected page:</strong>{" "}
+                        {reportRecommendation.sourceUrl}
+                      </p>
+                    ) : null}
+                    <p>
+                      <strong className="text-foreground">Evidence:</strong>{" "}
+                      {reportRecommendation.evidenceSummary}
+                    </p>
+                    <p>
+                      <strong className="text-foreground">Confidence:</strong>{" "}
+                      {reportRecommendation.confidence}
+                    </p>
+                  </div>
+                ) : null}
                 <RecommendationLearnWhy category={recommendation.category} />
               </div>
               <TaskActionRail
@@ -450,9 +538,70 @@ export default async function BusinessOverviewPage({
                 implementationLabel={/canonical|robots|sitemap|alt text/i.test(recommendation.title) ? "Show Implementation Steps" : "Generate Fix"}
               />
             </article>
-          ))}
+            );
+          })}
         </div>
       </ReportSection>
+
+      {evidenceFindings.length > 0 ? (
+        <ReportSection
+          title="Evidence-backed findings"
+          description="Measured technical facts and interpretive opportunities are labeled separately."
+        >
+          <div className="divide-y divide-border">
+            {evidenceFindings.map((finding) => (
+              <article key={finding.id} className="py-5 first:pt-0 last:pb-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span
+                    className={cn(
+                      "rounded-full border px-2.5 py-1 text-xs font-semibold",
+                      finding.sourceLabel === "AI-reviewed opportunity"
+                        ? "border-accent/30 bg-accent/10 text-accent"
+                        : "border-border bg-background text-muted",
+                    )}
+                  >
+                    {finding.sourceLabel ?? "Verified technical issue"}
+                  </span>
+                  <span className="rounded-full border border-border bg-background px-2.5 py-1 text-xs font-semibold text-muted">
+                    {recommendationCategoryLabels[finding.category]}
+                  </span>
+                  {finding.confidence ? (
+                    <span className="text-xs text-muted">
+                      {finding.confidence} confidence
+                    </span>
+                  ) : null}
+                </div>
+                <h4 className="mt-3 font-semibold">{finding.title}</h4>
+                <p className="mt-1 text-sm leading-6 text-muted">
+                  {finding.description}
+                </p>
+                {finding.sourceUrl ? (
+                  <p className="mt-2 break-all text-xs text-muted">
+                    <strong className="text-foreground">Affected page:</strong>{" "}
+                    {finding.sourceUrl}
+                  </p>
+                ) : null}
+                {finding.source === "ai_reviewed_opportunity" ? (
+                  <div className="mt-3 grid gap-2 text-xs leading-5 text-muted md:grid-cols-3">
+                    <p>
+                      <strong className="text-foreground">Evidence:</strong>{" "}
+                      {finding.evidenceSummary}
+                    </p>
+                    <p>
+                      <strong className="text-foreground">Why it matters:</strong>{" "}
+                      {finding.whyItMatters}
+                    </p>
+                    <p>
+                      <strong className="text-foreground">Suggested action:</strong>{" "}
+                      {finding.suggestedAction}
+                    </p>
+                  </div>
+                ) : null}
+              </article>
+            ))}
+          </div>
+        </ReportSection>
+      ) : null}
 
       <div className="grid gap-4 lg:grid-cols-[1.2fr_1fr]">
         <ReportSection title="Action progress" description={`${progress.completed} of ${progress.total} recommendations completed.`}>
