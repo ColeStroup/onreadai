@@ -18,6 +18,11 @@ import {
 } from "@/app/dashboard/businesses/[businessId]/audit/run/actions";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  auditProgressStageLabels,
+  auditProgressStages,
+  type AuditProgressStage,
+} from "@/lib/audits/audit-progress";
 import { cn } from "@/lib/utils";
 
 type RunStatus = "pending" | "running" | "completed" | "failed";
@@ -27,51 +32,37 @@ type AuditRunPanelProps = {
   businessName: string;
   initialAuditId?: string;
   initialStatus?: RunStatus;
+  initialProgressStage?: AuditProgressStage;
   completionHref?: string;
   hasWebsite: boolean;
 };
-
-const websiteSteps = [
-  "Preparing business profile",
-  "Analyzing website",
-  "Checking SEO basics",
-  "Reviewing social presence",
-  "Analyzing competitors",
-  "Generating recommendations",
-  "Saving report",
-];
-
-const socialFirstSteps = [
-  "Preparing business profile",
-  "Reviewing Business Context",
-  "Reviewing social presence",
-  "Checking conversion paths",
-  "Analyzing trust and competitors",
-  "Generating recommendations",
-  "Saving report",
-];
 
 export function AuditRunPanel({
   businessId,
   businessName,
   initialAuditId,
   initialStatus = "pending",
+  initialProgressStage = "PREPARING_BUSINESS_INFORMATION",
   completionHref,
   hasWebsite,
 }: AuditRunPanelProps) {
-  const steps = hasWebsite ? websiteSteps : socialFirstSteps;
+  const steps = auditProgressStages;
   const [auditId, setAuditId] = useState(initialAuditId ?? "");
   const [status, setStatus] = useState<RunStatus>(
     initialStatus === "completed" ? "completed" : "running",
   );
-  const [activeStep, setActiveStep] = useState(
-    initialStatus === "completed" ? steps.length : 0,
+  const [progressStage, setProgressStage] = useState<AuditProgressStage>(
+    initialProgressStage,
   );
   const [error, setError] = useState("");
   const [isPending, startTransition] = useTransition();
   const startedRef = useRef(false);
   const resultHref =
     completionHref ?? `/dashboard/businesses/${businessId}/overview`;
+  const activeStep =
+    status === "completed"
+      ? steps.length
+      : Math.max(0, steps.indexOf(progressStage));
 
   const statusCopy = useMemo(() => {
     if (status === "completed") {
@@ -98,18 +89,6 @@ export function AuditRunPanel({
   }, [hasWebsite, status]);
 
   useEffect(() => {
-    if (status !== "running") {
-      return;
-    }
-
-    const interval = window.setInterval(() => {
-      setActiveStep((current) => Math.min(current + 1, steps.length - 1));
-    }, 700);
-
-    return () => window.clearInterval(interval);
-  }, [status, steps.length]);
-
-  useEffect(() => {
     if (startedRef.current || initialStatus === "completed") {
       return;
     }
@@ -122,10 +101,10 @@ export function AuditRunPanel({
       });
 
       setAuditId(result.auditId);
+      if (result.progressStage) setProgressStage(result.progressStage);
 
       if (result.status === "completed") {
         setStatus("completed");
-        setActiveStep(steps.length);
         return;
       }
 
@@ -137,7 +116,7 @@ export function AuditRunPanel({
 
       setStatus("running");
     });
-  }, [businessId, initialAuditId, initialStatus, steps.length]);
+  }, [businessId, initialAuditId, initialStatus]);
 
   useEffect(() => {
     if (status !== "running" || !auditId) {
@@ -149,10 +128,10 @@ export function AuditRunPanel({
         businessId,
         auditId,
       });
+      if (result.progressStage) setProgressStage(result.progressStage);
 
       if (result.status === "completed") {
         setStatus("completed");
-        setActiveStep(steps.length);
       }
 
       if (result.status === "failed") {
@@ -162,7 +141,7 @@ export function AuditRunPanel({
     }, 1200);
 
     return () => window.clearInterval(interval);
-  }, [auditId, businessId, status, steps.length]);
+  }, [auditId, businessId, status]);
 
   useEffect(() => {
     if (status !== "completed") {
@@ -179,7 +158,7 @@ export function AuditRunPanel({
   function retryAudit() {
     setStatus("running");
     setError("");
-    setActiveStep(0);
+    setProgressStage("PREPARING_BUSINESS_INFORMATION");
 
     startTransition(async () => {
       const result = await startAuditRun({
@@ -188,10 +167,10 @@ export function AuditRunPanel({
       });
 
       setAuditId(result.auditId);
+      if (result.progressStage) setProgressStage(result.progressStage);
 
       if (result.status === "completed") {
         setStatus("completed");
-        setActiveStep(steps.length);
         return;
       }
 
@@ -204,7 +183,10 @@ export function AuditRunPanel({
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
-      <Card className="overflow-hidden">
+      <Card
+        className="overflow-hidden"
+        aria-busy={status === "running" || isPending}
+      >
         <CardContent className="grid gap-8 p-6 lg:grid-cols-[1fr_320px] lg:p-8">
           <div className="space-y-6">
             <div>
@@ -257,14 +239,19 @@ export function AuditRunPanel({
                   onClick={retryAudit}
                   disabled={isPending}
                   className={buttonVariants({ variant: "primary" })}
+                  aria-busy={isPending}
                 >
-                  <RefreshCw className="size-4" />
-                  Try again
+                  {isPending ? (
+                    <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <RefreshCw className="size-4" aria-hidden="true" />
+                  )}
+                  {isPending ? "Retrying..." : "Try again"}
                 </button>
               ) : null}
 
               <Link
-                href={`/dashboard/businesses/${businessId}/confirm`}
+                href={`/dashboard/businesses/${businessId}/setup?step=profiles`}
                 className={buttonVariants({ variant: "secondary" })}
               >
                 Review profiles
@@ -274,7 +261,7 @@ export function AuditRunPanel({
 
           <div className="rounded-lg border border-border bg-background p-5">
             <div className="mb-5 flex items-center justify-between">
-              <p className="font-medium">Audit Progress</p>
+              <p className="font-medium">Audit progress</p>
               {status === "running" ? (
                 <Loader2 className="size-4 animate-spin text-accent" />
               ) : null}
@@ -325,7 +312,7 @@ export function AuditRunPanel({
                           !isActive && !isComplete && !isFailed && "text-muted",
                         )}
                       >
-                        {step}
+                        {auditProgressStageLabels[step]}
                       </p>
                       {isActive ? (
                         <p className="text-xs text-muted">In progress</p>
@@ -335,6 +322,12 @@ export function AuditRunPanel({
                 );
               })}
             </div>
+            {status === "running" ? (
+              <p className="mt-5 text-xs leading-5 text-muted" role="status" aria-live="polite">
+                The audit is running in the background. You can leave this page
+                and return; refreshing will resume from the latest saved stage.
+              </p>
+            ) : null}
           </div>
         </CardContent>
       </Card>

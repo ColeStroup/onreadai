@@ -3,7 +3,7 @@ import { defineConfig } from "@playwright/test";
 
 nextEnv.loadEnvConfig(process.cwd());
 
-const port = 3020;
+const port = 3021;
 const baseURL = `http://127.0.0.1:${port}`;
 const databaseUrl = process.env.PRODUCTION_FLOW_TEST_DATABASE_URL;
 
@@ -18,7 +18,7 @@ process.env.DIRECT_URL = databaseUrl;
 
 export default defineConfig({
   testDir: "./tests",
-  testMatch: "production-business-flow.spec.ts",
+  testMatch: "guided-setup-profiles.spec.ts",
   timeout: 180_000,
   expect: { timeout: 30_000 },
   fullyParallel: false,
@@ -26,9 +26,9 @@ export default defineConfig({
   reporter: "line",
   use: {
     baseURL,
-    colorScheme: "light",
+    colorScheme: "dark",
     locale: "en-US",
-    userAgent: "Onread Production Flow E2E",
+    userAgent: "Onread Guided Setup E2E",
     viewport: { width: 1440, height: 900 },
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
@@ -52,6 +52,7 @@ export default defineConfig({
       RESEND_API_KEY: "",
       GOOGLE_CLIENT_ID: "",
       GOOGLE_CLIENT_SECRET: "",
+      GOOGLE_PLACES_API_KEY: "",
     },
   },
 });

@@ -1,6 +1,6 @@
 import {
   AuditStatus,
-  BusinessProfileStatus,
+  PlanType,
   type Prisma,
   ScoreCategory,
 } from "@prisma/client";
@@ -11,24 +11,16 @@ import {
   BookOpenText,
   Check,
   ClipboardCheck,
-  ExternalLink,
   ListChecks,
   RefreshCw,
-  SearchCheck,
   Sparkles,
   Target,
-  Trash2,
   TriangleAlert,
 } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import {
-  confirmProfile,
-  prepareAuditRun,
-  removeProfile,
-  updateProfile,
-} from "@/app/dashboard/businesses/[businessId]/confirm/actions";
+import { prepareAuditRun } from "@/app/dashboard/businesses/[businessId]/confirm/actions";
 import {
   confirmBusinessContext,
   regenerateBusinessContext,
@@ -47,9 +39,9 @@ import {
   ReportSection,
   SummaryStrip,
 } from "@/components/dashboard/report-ui";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { GuidedProfileManager } from "@/components/onboarding/guided-profile-manager";
+import { buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { SubmitButton } from "@/components/ui/submit-button";
 import { getPlanEntitlements, getPlanDefinition } from "@/lib/billing/plans";
 import { getUserPlan } from "@/lib/billing/entitlements";
@@ -57,7 +49,6 @@ import {
   contextConfidenceLabel,
   contextSourceLabel,
 } from "@/lib/business-context";
-import { platformLabels } from "@/lib/profiles/platforms";
 import {
   businessGoalDescriptions,
   businessGoalLabels,
@@ -71,6 +62,10 @@ import {
   previousBusinessSetupStep,
   type BusinessSetupStep,
 } from "@/lib/onboarding/business-setup";
+import {
+  deriveAuditSourceReadiness,
+  type AuditSourceReadiness,
+} from "@/lib/onboarding/audit-source-readiness";
 import { prisma } from "@/lib/prisma";
 import { sortRecommendations } from "@/lib/recommendations/utils";
 import { requireUser } from "@/lib/session";
@@ -87,9 +82,9 @@ const stepDetails: Record<
 > = {
   profiles: {
     label: "Profiles",
-    title: "Confirm Online Profiles",
+    title: "Confirm your online profiles",
     description:
-      "Confirm the profiles that belong to your business and remove anything inaccurate.",
+      "Review what we found and add anything missing. Onread will use only the profiles you confirm in your audit.",
   },
   context: {
     label: "Context",
@@ -141,8 +136,17 @@ export default async function BusinessSetupPage({
       },
       googleBusinessProfiles: {
         where: { status: { not: "removed" } },
-        select: { status: true },
+        select: {
+          id: true,
+          displayName: true,
+          formattedAddress: true,
+          googleMapsUri: true,
+          matchConfidence: true,
+          status: true,
+          source: true,
+        },
       },
+      profileDecisions: true,
       audits: {
         where: { status: AuditStatus.COMPLETED },
         orderBy: { createdAt: "desc" },
@@ -158,6 +162,7 @@ export default async function BusinessSetupPage({
   if (!business) notFound();
 
   const progress = deriveBusinessSetupProgress(business);
+  const sourceReadiness = deriveAuditSourceReadiness(business);
   const requestedStep = typeof query.step === "string" ? query.step : "";
   const savedStep = business.onboardingLastStep ?? "";
   const step = isBusinessSetupStep(requestedStep)
@@ -181,9 +186,13 @@ export default async function BusinessSetupPage({
           <form action={dismissBusinessSetup}>
             <input type="hidden" name="businessId" value={business.id} />
             <input type="hidden" name="step" value={step} />
-            <Button type="submit" variant="outline" size="sm">
+            <SubmitButton
+              variant="outline"
+              size="sm"
+              pendingLabel="Saving..."
+            >
               Finish later
-            </Button>
+            </SubmitButton>
           </form>
         }
       />
@@ -213,6 +222,8 @@ export default async function BusinessSetupPage({
         <AuditStep
           business={business}
           progress={progress}
+          sourceReadiness={sourceReadiness}
+          plan={plan}
           planName={planDefinition.name}
           crawlLimit={entitlements.maxCrawlPages}
         />
@@ -294,7 +305,18 @@ function SetupStepper({
 type SetupBusiness = Prisma.BusinessGetPayload<{
   include: {
     profiles: true;
-    googleBusinessProfiles: { select: { status: true } };
+    googleBusinessProfiles: {
+      select: {
+        id: true;
+        displayName: true;
+        formattedAddress: true;
+        googleMapsUri: true;
+        matchConfidence: true;
+        status: true;
+        source: true;
+      };
+    };
+    profileDecisions: true;
     audits: { include: { scores: true; recommendations: true } };
   };
 }>;
@@ -306,117 +328,15 @@ function ProfilesStep({
   business: NonNullable<SetupBusiness>;
   progress: ReturnType<typeof deriveBusinessSetupProgress>;
 }) {
-  const attention = business.profiles.filter(
-    (profile) => profile.status === BusinessProfileStatus.PENDING,
-  );
-
   return (
-    <div className="space-y-5">
-      {!progress.hasConfirmedWebsite ? (
-        <DataSourceNotice>
-          <strong>No website? That&apos;s okay.</strong> We can create a
-          social-first growth assessment using confirmed profiles, Business
-          Context, goals, reviews, and competitors. Confirm at least one real
-          social profile and remove any discovered website that is not yours.
-        </DataSourceNotice>
-      ) : null}
-
-      <section className="grid gap-3 sm:grid-cols-3">
-        <CompactMetricCard label="Confirmed" value={progress.profileCounts.confirmed} tone="good" />
-        <CompactMetricCard label="Awaiting review" value={progress.profileCounts.pending} tone={progress.profileCounts.pending ? "warning" : "default"} />
-        <CompactMetricCard label="Removed" value={progress.profileCounts.removed} />
-      </section>
-
-      {attention.length > 0 ? (
-        <ReportSection
-          title="Profiles requiring attention"
-          description="We found possible profiles. Confirm the ones that belong to your business so the audit uses accurate information."
-        >
-          <div className="grid gap-3 lg:grid-cols-2">
-            {attention.map((profile) => (
-              <Card key={profile.id} className="p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <span className="rounded-full border border-border px-2.5 py-1 text-xs font-semibold">
-                      {platformLabels[profile.platform]}
-                    </span>
-                    <p className="mt-3 break-all text-sm text-muted">
-                      {profile.url || profile.handle || "No URL or handle saved"}
-                    </p>
-                  </div>
-                  <span className="text-sm font-semibold text-amber-700 dark:text-amber-200">
-                    {profile.confidenceScore}%
-                  </span>
-                </div>
-                <div className="mt-4 flex flex-wrap gap-2">
-                  <form action={confirmProfile}>
-                    <input type="hidden" name="businessId" value={business.id} />
-                    <input type="hidden" name="profileId" value={profile.id} />
-                    <input type="hidden" name="returnTo" value="setup" />
-                    <Button type="submit" variant="primary" size="sm">
-                      <BadgeCheck className="size-4" />
-                      Confirm
-                    </Button>
-                  </form>
-                  <details className="group">
-                    <summary className={cn(buttonVariants({ variant: "secondary", size: "sm" }), "cursor-pointer list-none")}>
-                      Edit
-                    </summary>
-                    <form action={updateProfile} className="mt-2 flex min-w-64 gap-2">
-                      <input type="hidden" name="businessId" value={business.id} />
-                      <input type="hidden" name="profileId" value={profile.id} />
-                      <input type="hidden" name="returnTo" value="setup" />
-                      <Input
-                        name="profileValue"
-                        defaultValue={profile.url || profile.handle || ""}
-                        aria-label={`Edit ${platformLabels[profile.platform]} URL or handle`}
-                        required
-                      />
-                      <Button type="submit" variant="secondary" size="sm">Save</Button>
-                    </form>
-                  </details>
-                  <form action={removeProfile}>
-                    <input type="hidden" name="businessId" value={business.id} />
-                    <input type="hidden" name="profileId" value={profile.id} />
-                    <input type="hidden" name="returnTo" value="setup" />
-                    <Button type="submit" variant="outline" size="sm">
-                      <Trash2 className="size-4" />
-                      Remove
-                    </Button>
-                  </form>
-                </div>
-              </Card>
-            ))}
-          </div>
-        </ReportSection>
-      ) : progress.profileCounts.confirmed > 0 ? (
-        <Card className="flex items-start gap-3 border-teal-200 bg-teal-50 p-5 dark:border-teal-900 dark:bg-teal-950/30">
-          <BadgeCheck className="mt-0.5 size-5 text-teal-700 dark:text-teal-200" />
-          <div>
-            <p className="font-semibold">Profiles are ready</p>
-            <p className="mt-1 text-sm leading-6 text-muted">
-              Only confirmed sources will be treated as belonging to your business.
-            </p>
-          </div>
-        </Card>
-      ) : (
-        <EmptyState
-          icon={<SearchCheck className="size-6" />}
-          title="No confirmed profiles"
-          description="We found possible profiles. Confirm the ones that belong to your business so the audit uses accurate information."
-          action={
-            <Link href={`/dashboard/businesses/${business.id}/confirm`} className={buttonVariants({ variant: "primary" })}>
-              Add or review profiles
-            </Link>
-          }
-        />
-      )}
-
-      <Link href={`/dashboard/businesses/${business.id}/confirm`} className={buttonVariants({ variant: "secondary" })}>
-        <ExternalLink className="size-4" />
-        Open full profile review
-      </Link>
-    </div>
+    <GuidedProfileManager
+      businessId={business.id}
+      profiles={business.profiles}
+      googleCandidates={business.googleBusinessProfiles}
+      decisions={business.profileDecisions}
+      profilesComplete={progress.profilesComplete}
+      hasConfirmedWebsite={progress.hasConfirmedWebsite}
+    />
   );
 }
 
@@ -474,10 +394,13 @@ function ContextStep({
             <form action={regenerateBusinessContext}>
               <input type="hidden" name="businessId" value={business.id} />
               <input type="hidden" name="returnTo" value="setup" />
-              <Button type="submit" variant="primary">
+              <SubmitButton
+                variant="primary"
+                pendingLabel="Generating context..."
+              >
                 <Sparkles className="size-4" />
                 Generate context
-              </Button>
+              </SubmitButton>
             </form>
           }
         />
@@ -499,10 +422,14 @@ function ContextStep({
               <form action={confirmBusinessContext}>
                 <input type="hidden" name="businessId" value={business.id} />
                 <input type="hidden" name="returnTo" value="setup" />
-                <Button type="submit" variant="primary" size="sm">
+                <SubmitButton
+                  variant="primary"
+                  size="sm"
+                  pendingLabel="Confirming..."
+                >
                   <BadgeCheck className="size-4" />
                   Confirm This Looks Right
-                </Button>
+                </SubmitButton>
               </form>
             ) : null}
             <Link href={`/dashboard/businesses/${business.id}/context`} className={buttonVariants({ variant: "secondary", size: "sm" })}>
@@ -511,10 +438,14 @@ function ContextStep({
             <form action={regenerateBusinessContext}>
               <input type="hidden" name="businessId" value={business.id} />
               <input type="hidden" name="returnTo" value="setup" />
-              <Button type="submit" variant="secondary" size="sm">
+              <SubmitButton
+                variant="secondary"
+                size="sm"
+                pendingLabel="Regenerating..."
+              >
                 <RefreshCw className="size-4" />
                 Regenerate
-              </Button>
+              </SubmitButton>
             </form>
           </div>
         </ReportSection>
@@ -580,18 +511,21 @@ function GoalsStep({ business }: { business: NonNullable<SetupBusiness> }) {
 function AuditStep({
   business,
   progress,
+  sourceReadiness,
+  plan,
   planName,
   crawlLimit,
 }: {
   business: NonNullable<SetupBusiness>;
   progress: ReturnType<typeof deriveBusinessSetupProgress>;
+  sourceReadiness: AuditSourceReadiness;
+  plan: PlanType;
   planName: string;
   crawlLimit: number;
 }) {
-  const canRunAudit =
-    progress.profilesComplete &&
-    (!progress.socialFirst ||
-      (progress.contextComplete && progress.contextHasCoreDetails));
+  const canRunAudit = progress.profilesComplete;
+  const requiresSourceAcknowledgement =
+    plan !== PlanType.FREE && sourceReadiness.requiresAcknowledgement;
   const readiness = [
     ["Profiles ready", progress.profilesComplete, `${progress.profileCounts.confirmed} confirmed`],
     [
@@ -646,31 +580,96 @@ function AuditStep({
         />
       </section>
 
+      {sourceReadiness.missingSources.length > 0 ? (
+        <Card
+          className={cn(
+            "p-5",
+            requiresSourceAcknowledgement
+              ? "border-amber-300 bg-amber-50/70 dark:border-amber-900 dark:bg-amber-950/25"
+              : "",
+          )}
+        >
+          <div className="flex items-start gap-3">
+            <TriangleAlert
+              className="mt-0.5 size-5 shrink-0 text-amber-700 dark:text-amber-200"
+              aria-hidden="true"
+            />
+            <div className="min-w-0">
+              <h3 className="font-semibold">Some sources have not been added</h3>
+              <p className="mt-1 text-sm leading-6 text-muted">
+                Your audit can still run, but results for unavailable sources
+                may be limited. Only confirmed profiles will be analyzed as
+                belonging to your business.
+              </p>
+            </div>
+          </div>
+          <ul className="mt-4 space-y-2">
+            {sourceReadiness.missingSources.map((source) => (
+              <li
+                key={source.code}
+                className="rounded-lg border border-border/80 bg-background/80 p-3"
+              >
+                <p className="text-sm font-semibold">{source.label}</p>
+                <p className="mt-1 text-sm leading-5 text-muted">
+                  {source.limitation}
+                </p>
+              </li>
+            ))}
+          </ul>
+          {sourceReadiness.acknowledged ? (
+            <p className="mt-4 text-sm font-medium text-teal-700 dark:text-teal-200">
+              You already chose to continue with this source set. We will ask
+              again only if these inputs change.
+            </p>
+          ) : null}
+        </Card>
+      ) : null}
+
       <Card className="p-5">
         <h3 className="font-semibold">What this audit analyzes</h3>
         <p className="mt-2 text-sm leading-6 text-muted">
           {progress.socialFirst
-            ? "Confirmed and pending social profiles, Business Context, platform coverage, social strategy readiness, conversion paths, reviews, goals, competitors, and a prioritized action plan. Website and SEO will be marked not provided."
+            ? "Confirmed social profiles, Business Context, platform coverage, social strategy readiness, conversion paths, reviews, goals, competitors, and a prioritized action plan. Website and SEO will be marked not provided."
             : "Confirmed profiles, website pages, SEO basics, review and trust coverage, social presence, goals, competitors, and a prioritized action plan."}
         </p>
-        <form action={prepareAuditRun} className="mt-5">
-          <input type="hidden" name="businessId" value={business.id} />
-          <input type="hidden" name="returnTo" value="setup" />
-          <Button
-            type="submit"
-            variant="primary"
-            size="lg"
-            disabled={!canRunAudit}
-          >
-            Run My First Audit
-            <ArrowRight className="size-4" />
-          </Button>
-        </form>
+        <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center">
+          {requiresSourceAcknowledgement ? (
+            <Link
+              href={`/dashboard/businesses/${business.id}/setup?step=${sourceReadiness.missingSources.at(0)?.returnStep ?? "profiles"}`}
+              className={buttonVariants({ variant: "secondary", size: "lg" })}
+            >
+              Add missing sources
+            </Link>
+          ) : null}
+          <form action={prepareAuditRun}>
+            <input type="hidden" name="businessId" value={business.id} />
+            <input type="hidden" name="returnTo" value="setup" />
+            {requiresSourceAcknowledgement ? (
+              <input
+                type="hidden"
+                name="acknowledgeMissingSources"
+                value="1"
+              />
+            ) : null}
+            <SubmitButton
+              variant="primary"
+              size="lg"
+              pendingLabel="Starting audit..."
+              disabled={!canRunAudit}
+              className="w-full sm:w-auto"
+            >
+              {requiresSourceAcknowledgement
+                ? "Continue with available information"
+                : "Run My First Audit"}
+              <ArrowRight className="size-4" />
+            </SubmitButton>
+          </form>
+        </div>
         {!canRunAudit ? (
           <p className="mt-3 text-sm text-muted">
-            {progress.profilesComplete
-              ? "Confirm the core Business Context above before running a social-first audit."
-              : "Confirm at least one website, social, or Google Business profile before running the audit."}
+            Confirm at least one website, social, or Google Business profile,
+            resolve every discovered match, and review the Google Business
+            source before running the audit.
           </p>
         ) : null}
       </Card>
@@ -731,25 +730,40 @@ function ResultsStep({ business }: { business: NonNullable<SetupBusiness> }) {
         <form action={completeBusinessSetup}>
           <input type="hidden" name="businessId" value={business.id} />
           <input type="hidden" name="destination" value="action-plan" />
-          <Button type="submit" variant="primary" size="lg" className="w-full sm:w-auto">
+          <SubmitButton
+            variant="primary"
+            size="lg"
+            pendingLabel="Opening action plan..."
+            className="w-full sm:w-auto"
+          >
             Open My Action Plan
             <ArrowRight className="size-4" />
-          </Button>
+          </SubmitButton>
         </form>
         <form action={completeBusinessSetup}>
           <input type="hidden" name="businessId" value={business.id} />
           <input type="hidden" name="destination" value="chat" />
-          <Button type="submit" variant="secondary" size="lg" className="w-full sm:w-auto">
+          <SubmitButton
+            variant="secondary"
+            size="lg"
+            pendingLabel="Opening consultant..."
+            className="w-full sm:w-auto"
+          >
             <Sparkles className="size-4" />
             Ask the AI Consultant
-          </Button>
+          </SubmitButton>
         </form>
         <form action={completeBusinessSetup}>
           <input type="hidden" name="businessId" value={business.id} />
           <input type="hidden" name="destination" value="overview" />
-          <Button type="submit" variant="outline" size="lg" className="w-full sm:w-auto">
+          <SubmitButton
+            variant="outline"
+            size="lg"
+            pendingLabel="Opening report..."
+            className="w-full sm:w-auto"
+          >
             View full report
-          </Button>
+          </SubmitButton>
         </form>
       </div>
     </div>
@@ -767,6 +781,7 @@ function SetupControls({
 }) {
   const previous = previousBusinessSetupStep(step);
   const next = nextBusinessSetupStep(step);
+  const canSkip = step === "context" || step === "goals";
 
   return (
     <Card className="sticky bottom-4 z-10 flex flex-col gap-3 bg-card/95 p-4 shadow-lg backdrop-blur sm:flex-row sm:items-center sm:justify-between">
@@ -774,31 +789,35 @@ function SetupControls({
         <form action={goToBusinessSetupStep}>
           <input type="hidden" name="businessId" value={businessId} />
           <input type="hidden" name="step" value={previous} />
-          <Button type="submit" variant="secondary">
+          <SubmitButton variant="secondary" pendingLabel="Going back...">
             <ArrowLeft className="size-4" />
             Back
-          </Button>
+          </SubmitButton>
         </form>
       ) : (
         <span />
       )}
       <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center">
-        {!canContinue ? (
+        {!canContinue && canSkip ? (
           <form action={goToBusinessSetupStep}>
             <input type="hidden" name="businessId" value={businessId} />
             <input type="hidden" name="step" value={next} />
-            <Button type="submit" variant="ghost">
+            <SubmitButton variant="ghost" pendingLabel="Saving...">
               Skip for now
-            </Button>
+            </SubmitButton>
           </form>
         ) : null}
         <form action={goToBusinessSetupStep}>
           <input type="hidden" name="businessId" value={businessId} />
           <input type="hidden" name="step" value={next} />
-          <Button type="submit" variant="primary" disabled={!canContinue}>
+          <SubmitButton
+            variant="primary"
+            pendingLabel="Saving..."
+            disabled={!canContinue}
+          >
             Continue
             <ArrowRight className="size-4" />
-          </Button>
+          </SubmitButton>
         </form>
       </div>
     </Card>

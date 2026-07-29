@@ -1,6 +1,9 @@
 "use server";
 
-import { BusinessInputType } from "@prisma/client";
+import {
+  BusinessInputType,
+  BusinessProfileSource,
+} from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
@@ -8,8 +11,14 @@ import { canCreateBusiness } from "@/lib/billing/entitlements";
 import { discoverSubmittedProfiles } from "@/lib/discovery/submitted-profile-discovery";
 import { discoverGoogleBusinessProfiles } from "@/lib/google/google-business-discovery";
 import { prisma } from "@/lib/prisma";
-import { logError } from "@/lib/observability/log";
+import { logError, logInfo } from "@/lib/observability/log";
 import { requireUser } from "@/lib/session";
+import { platformForSubmittedUrl } from "@/lib/profiles/platforms";
+import {
+  normalizeProfileUrlSyntax,
+  ProfileUrlError,
+  profileUrlComparisonKey,
+} from "@/lib/profiles/profile-url";
 import {
   currentRequestRateLimitIdentifier,
   enforceRateLimit,
@@ -29,7 +38,10 @@ function classifyInput(input: string) {
     "pinterest.com",
   ];
 
-  if (socialHosts.some((host) => value.includes(host))) {
+  if (
+    socialHosts.some((host) => value.includes(host)) ||
+    platformForSubmittedUrl(value)
+  ) {
     return BusinessInputType.SOCIAL_PROFILE;
   }
 
@@ -111,7 +123,28 @@ export async function createBusiness(formData: FormData) {
   const inputType = classifyInput(rawInput);
   const websiteUrl =
     inputType === BusinessInputType.WEBSITE ? normalizeUrl(rawInput) : null;
-  const discoveredProfiles = discoverSubmittedProfiles(rawInput, inputType);
+  let discoveredProfiles;
+  try {
+    discoveredProfiles = discoverSubmittedProfiles(rawInput, inputType).map(
+      (profile) => {
+        const normalized = profile.url
+          ? normalizeProfileUrlSyntax(profile.url, profile.platform)
+          : null;
+        return {
+          ...profile,
+          url: normalized?.url ?? null,
+          normalizedUrl: normalized
+            ? profileUrlComparisonKey(normalized.url, profile.platform)
+            : null,
+        };
+      },
+    );
+  } catch (error) {
+    if (error instanceof ProfileUrlError) {
+      redirect("/dashboard/businesses/new?error=invalid_source");
+    }
+    throw error;
+  }
 
   const business = await prisma.business.create({
     data: {
@@ -126,13 +159,23 @@ export async function createBusiness(formData: FormData) {
           displayName: profile.label,
           url: profile.url,
           handle: profile.handle,
+          normalizedUrl: profile.normalizedUrl,
           confidenceScore: profile.confidenceScore,
           status: profile.status,
+          source: BusinessProfileSource.SUBMITTED,
           discoveredAt: new Date(),
         })),
       },
     },
   });
+
+  for (const profile of discoveredProfiles) {
+    logInfo("guided_profile_discovered", {
+      businessId: business.id,
+      platform: profile.platform,
+      source: BusinessProfileSource.SUBMITTED,
+    });
+  }
 
   try {
     await discoverGoogleBusinessProfiles({
@@ -146,5 +189,5 @@ export async function createBusiness(formData: FormData) {
 
   revalidatePath("/dashboard");
   revalidatePath("/dashboard/businesses");
-  redirect(`/dashboard/businesses/${business.id}/setup`);
+  redirect(`/dashboard/businesses/${business.id}/setup?step=profiles`);
 }

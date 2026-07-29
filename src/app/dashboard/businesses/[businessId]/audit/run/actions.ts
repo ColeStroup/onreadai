@@ -10,6 +10,7 @@ import {
   runAuditGeneration,
   type AuditRunResult,
 } from "@/lib/audits/audit-runner";
+import { isAuditProgressStage } from "@/lib/audits/audit-progress";
 import { canRunAudit } from "@/lib/billing/entitlements";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
@@ -67,6 +68,7 @@ export async function startAuditRun({
         select: {
           id: true,
           status: true,
+          progressStage: true,
         },
       })
     : await createPendingAuditRun(businessId);
@@ -80,7 +82,11 @@ export async function startAuditRun({
   }
 
   if (audit.status === AuditStatus.COMPLETED) {
-    return { auditId: audit.id, status: "completed" };
+    return {
+      auditId: audit.id,
+      status: "completed",
+      progressStage: "PREPARING_RESULTS",
+    };
   }
 
   after(async () => {
@@ -90,6 +96,9 @@ export async function startAuditRun({
   return {
     auditId: audit.id,
     status: audit.status === AuditStatus.RUNNING ? "running" : "pending",
+    progressStage: isAuditProgressStage(audit.progressStage)
+      ? audit.progressStage
+      : "PREPARING_BUSINESS_INFORMATION",
   };
 }
 
@@ -111,6 +120,7 @@ export async function getAuditRunStatus({
       id: true,
       status: true,
       summary: true,
+      progressStage: true,
       updatedAt: true,
     },
   });
@@ -150,6 +160,9 @@ export async function getAuditRunStatus({
   return {
     auditId: audit.id,
     status: toRunStatus(audit.status),
+    progressStage: isAuditProgressStage(audit.progressStage)
+      ? audit.progressStage
+      : "PREPARING_BUSINESS_INFORMATION",
     error: audit.status === AuditStatus.FAILED ? audit.summary ?? undefined : undefined,
   };
 }

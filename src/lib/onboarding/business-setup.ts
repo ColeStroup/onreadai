@@ -1,6 +1,8 @@
 import {
   AuditStatus,
+  BusinessProfileSource,
   BusinessProfileStatus,
+  ProfileReviewDecision,
   type BusinessGoal,
   type ProfilePlatform,
 } from "@prisma/client";
@@ -26,6 +28,7 @@ export type BusinessSetupSource = {
     platform: ProfilePlatform;
     url?: string | null;
     handle?: string | null;
+    source?: BusinessProfileSource;
   }>;
   description?: string | null;
   targetAudience?: string | null;
@@ -43,6 +46,10 @@ export type BusinessSetupSource = {
   }>;
   onboardingCompletedAt?: Date | null;
   googleBusinessProfiles?: Array<{ status: string }>;
+  profileDecisions?: Array<{
+    platform: ProfilePlatform;
+    decision: ProfileReviewDecision;
+  }>;
 };
 
 export type BusinessSetupProgress = {
@@ -50,8 +57,12 @@ export type BusinessSetupProgress = {
     confirmed: number;
     pending: number;
     removed: number;
+    manuallyAdded: number;
+    skipped: number;
+    notUsed: number;
   };
   profilesComplete: boolean;
+  googleReviewed: boolean;
   hasConfirmedWebsite: boolean;
   socialFirst: boolean;
   contextHasCoreDetails: boolean;
@@ -82,6 +93,15 @@ export function deriveBusinessSetupProgress(
   const removedProfiles = business.profiles.filter(
     (profile) => profile.status === BusinessProfileStatus.REMOVED,
   );
+  const manuallyAddedProfiles = business.profiles.filter(
+    (profile) =>
+      profile.source === BusinessProfileSource.MANUAL &&
+      profile.status !== BusinessProfileStatus.REMOVED,
+  );
+  const pendingGoogleBusinessProfiles =
+    business.googleBusinessProfiles?.filter(
+      (profile) => profile.status.toLowerCase() === "pending",
+    ) ?? [];
   const hasConfirmedGoogleBusiness = Boolean(
     business.googleBusinessProfiles?.some(
       (profile) => profile.status.toLowerCase() === "confirmed",
@@ -90,13 +110,32 @@ export function deriveBusinessSetupProgress(
   const confirmedGoogleAlreadyCounted = confirmedProfiles.some(
     (profile) => profile.platform === "GOOGLE_BUSINESS",
   );
+  const googleDecision = business.profileDecisions?.find(
+    (decision) => decision.platform === "GOOGLE_BUSINESS",
+  )?.decision;
+  const googleReviewed =
+    hasConfirmedGoogleBusiness ||
+    confirmedGoogleAlreadyCounted ||
+    googleDecision === ProfileReviewDecision.SKIPPED ||
+    googleDecision === ProfileReviewDecision.NOT_USED;
+  const skippedDecisions =
+    business.profileDecisions?.filter(
+      (decision) => decision.decision === ProfileReviewDecision.SKIPPED,
+    ).length ?? 0;
+  const notUsedDecisions =
+    business.profileDecisions?.filter(
+      (decision) => decision.decision === ProfileReviewDecision.NOT_USED,
+    ).length ?? 0;
   const websiteConfirmed = hasConfirmedWebsite(business.profiles);
   const confirmedSocialCount = confirmedSocialProfiles(
     business.profiles,
   ).length;
   const socialFirst = !websiteConfirmed && confirmedSocialCount > 0;
   const profilesComplete =
-    confirmedProfiles.length > 0 || hasConfirmedGoogleBusiness;
+    (confirmedProfiles.length > 0 || hasConfirmedGoogleBusiness) &&
+    pendingProfiles.length === 0 &&
+    pendingGoogleBusinessProfiles.length === 0 &&
+    googleReviewed;
   const contextHasCoreDetails = Boolean(
     business.description?.trim() &&
       business.targetAudience?.trim() &&
@@ -139,10 +178,15 @@ export function deriveBusinessSetupProgress(
       confirmed:
         confirmedProfiles.length +
         (hasConfirmedGoogleBusiness && !confirmedGoogleAlreadyCounted ? 1 : 0),
-      pending: pendingProfiles.length,
+      pending:
+        pendingProfiles.length + pendingGoogleBusinessProfiles.length,
       removed: removedProfiles.length,
+      manuallyAdded: manuallyAddedProfiles.length,
+      skipped: skippedDecisions,
+      notUsed: notUsedDecisions,
     },
     profilesComplete,
+    googleReviewed,
     hasConfirmedWebsite: websiteConfirmed,
     socialFirst,
     contextHasCoreDetails,

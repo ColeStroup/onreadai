@@ -38,6 +38,19 @@ test("social submission preserves only the submitted social profile", () => {
   assert.equal(profiles.length, 1);
   assert.equal(profiles[0]?.platform, ProfilePlatform.INSTAGRAM);
   assert.equal(profiles[0]?.url, "https://instagram.com/example");
+  assert.equal(profiles[0]?.status, BusinessProfileStatus.PENDING);
+  assert.equal(profiles[0]?.confidenceScore, 100);
+});
+
+test("a submitted Google Maps link is recognized but still awaits confirmation", () => {
+  const profiles = discoverSubmittedProfiles(
+    "https://www.google.com/maps/place/Example",
+    BusinessInputType.SOCIAL_PROFILE,
+  );
+
+  assert.equal(profiles.length, 1);
+  assert.equal(profiles[0]?.platform, ProfilePlatform.GOOGLE_BUSINESS);
+  assert.equal(profiles[0]?.status, BusinessProfileStatus.PENDING);
 });
 
 test("a business name does not fabricate profiles", () => {

@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 
 import { AuditRunPanel } from "@/app/dashboard/businesses/[businessId]/audit/run/audit-run-panel";
 import { hasConfirmedWebsite } from "@/lib/audits/audit-applicability";
+import { isAuditProgressStage } from "@/lib/audits/audit-progress";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
 
@@ -47,6 +48,7 @@ export default async function AuditRunPage({
             select: {
               id: true,
               status: true,
+              progressStage: true,
             },
             take: 1,
           }
@@ -70,6 +72,11 @@ export default async function AuditRunPage({
       businessName={business.name}
       initialAuditId={audit?.id}
       initialStatus={audit ? toRunStatus(audit.status) : "pending"}
+      initialProgressStage={
+        isAuditProgressStage(audit?.progressStage)
+          ? audit.progressStage
+          : "PREPARING_BUSINESS_INFORMATION"
+      }
       hasWebsite={hasConfirmedWebsite(business.profiles)}
       completionHref={
         returnToSetup

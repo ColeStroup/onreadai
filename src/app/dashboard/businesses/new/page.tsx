@@ -43,11 +43,11 @@ export default async function NewBusinessPage({
       <div>
         <p className="text-sm font-medium text-muted">Add Business</p>
         <h1 className="mt-1 text-3xl font-semibold tracking-normal">
-          Start with one smart input
+          Start with your primary business link
         </h1>
         <p className="mt-2 max-w-2xl text-sm leading-6 text-muted">
-          Paste a website, social profile, or business name to create a business
-          workspace.
+          Enter your website or one social profile. You&apos;ll be able to add
+          and confirm the rest during setup.
         </p>
       </div>
 
@@ -69,14 +69,15 @@ export default async function NewBusinessPage({
           </div>
           <CardTitle>Business input</CardTitle>
           <CardDescription>
-            Creates a business workspace from the source you provide.
+            This is your starting source. Automatic discovery may not find
+            every profile.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <form action={createBusiness} className="space-y-5">
             <div className="space-y-2">
               <Label htmlFor="businessInput">
-                Paste a website, social profile, or business name
+                Start with your primary business link
               </Label>
               <Input
                 id="businessInput"
@@ -86,6 +87,10 @@ export default async function NewBusinessPage({
                 defaultValue={initialBusinessInput}
                 placeholder="harborandpine.com"
               />
+              <p className="text-sm leading-6 text-muted">
+                Enter your website or one social profile. You&apos;ll be able
+                to add and confirm the rest during setup.
+              </p>
             </div>
 
             {params.error === "missing" ? (
@@ -97,6 +102,13 @@ export default async function NewBusinessPage({
             {params.error === "business_limit" ? (
               <p className="text-sm font-medium text-rose-600">
                 Your current plan has reached the business workspace limit.
+              </p>
+            ) : null}
+
+            {params.error === "invalid_source" ? (
+              <p className="text-sm font-medium text-rose-600">
+                Enter a valid public website or profile URL, or use the business
+                name instead.
               </p>
             ) : null}
 

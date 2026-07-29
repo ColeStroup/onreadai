@@ -8,6 +8,7 @@ import {
   CompetitorStatus,
   FindingSeverity,
   ProfilePlatform,
+  ProfileReviewDecision,
   RecommendationPriority,
   ScoreCategory,
   type Prisma,
@@ -25,6 +26,11 @@ import { generateCompetitorIntelligenceSummary } from "@/lib/ai/competitor-intel
 import { generateDeterministicSocialStrategy } from "@/lib/ai/social-strategy-generator";
 import { generateDeterministicAudit } from "@/lib/audits/deterministic-audit";
 import { buildAuditEvidenceIntegrity } from "@/lib/audits/evidence-integrity";
+import {
+  type AuditProgressStage,
+  isAuditProgressStage,
+} from "@/lib/audits/audit-progress";
+import { approvedBusinessProfilesForAudit } from "@/lib/audits/audit-sources";
 import { getUserPlan } from "@/lib/billing/entitlements";
 import { getPlanEntitlements } from "@/lib/billing/plans";
 import { shouldRefreshGeneratedBusinessContext } from "@/lib/business-context";
@@ -50,6 +56,7 @@ export const activeRunWindowMs = 14 * 60 * 1000;
 export type AuditRunResult = {
   auditId: string;
   status: "pending" | "running" | "completed" | "failed";
+  progressStage?: AuditProgressStage;
   error?: string;
 };
 
@@ -82,14 +89,18 @@ export async function createPendingAuditRun(businessId: string) {
         updatedAt: { gte: activeSince },
       },
       orderBy: { createdAt: "desc" },
-      select: { id: true, status: true },
+      select: { id: true, status: true, progressStage: true },
     });
 
     if (existingRun) return existingRun;
 
     return transaction.audit.create({
-      data: { businessId, status: AuditStatus.PENDING },
-      select: { id: true, status: true },
+      data: {
+        businessId,
+        status: AuditStatus.PENDING,
+        progressStage: "PREPARING_BUSINESS_INFORMATION",
+      },
+      select: { id: true, status: true, progressStage: true },
     });
   });
 }
@@ -111,6 +122,7 @@ export async function runAuditGeneration({
     select: {
       id: true,
       status: true,
+      progressStage: true,
     },
   });
 
@@ -126,6 +138,7 @@ export async function runAuditGeneration({
     return {
       auditId,
       status: "completed",
+      progressStage: "PREPARING_RESULTS",
     };
   }
 
@@ -133,6 +146,9 @@ export async function runAuditGeneration({
     return {
       auditId,
       status: "running",
+      progressStage: isAuditProgressStage(audit.progressStage)
+        ? audit.progressStage
+        : "PREPARING_BUSINESS_INFORMATION",
     };
   }
 
@@ -150,6 +166,7 @@ export async function runAuditGeneration({
       startedAt,
       completedAt: null,
       summary: null,
+      progressStage: "PREPARING_BUSINESS_INFORMATION",
     },
   });
 
@@ -161,6 +178,7 @@ export async function runAuditGeneration({
       },
       select: {
         status: true,
+        progressStage: true,
       },
     });
 
@@ -170,6 +188,9 @@ export async function runAuditGeneration({
         currentAudit?.status === AuditStatus.COMPLETED
           ? "completed"
           : "running",
+      progressStage: isAuditProgressStage(currentAudit?.progressStage)
+        ? currentAudit.progressStage
+        : "PREPARING_BUSINESS_INFORMATION",
     };
   }
 
@@ -200,6 +221,7 @@ export async function runAuditGeneration({
         },
         data: {
           status: AuditStatus.COMPLETED,
+          progressStage: "PREPARING_RESULTS",
           overallScore: auditData.auditResult.overallScore,
           summary: auditData.auditResult.summary,
           analysisSnapshot: auditData.analysisSnapshot,
@@ -287,6 +309,7 @@ export async function runAuditGeneration({
     return {
       auditId,
       status: "completed",
+      progressStage: "PREPARING_RESULTS",
     };
   } catch (error) {
     logError("audit_generation_failed", error, { businessId, auditId });
@@ -361,6 +384,7 @@ async function buildAuditData({
       profiles: {
         orderBy: [{ status: "asc" }, { confidenceScore: "desc" }],
       },
+      profileDecisions: true,
       competitors: {
         where: {
           status: CompetitorStatus.ACTIVE,
@@ -406,6 +430,19 @@ async function buildAuditData({
     throw new Error("Business was not found.");
   }
 
+  await setAuditProgressStage(
+    businessId,
+    auditId,
+    "REVIEWING_CONFIRMED_PROFILES",
+  );
+  const approvedProfiles = approvedBusinessProfilesForAudit(business.profiles);
+  const googleBusinessDecision = business.profileDecisions.find(
+    (decision) => decision.platform === ProfilePlatform.GOOGLE_BUSINESS,
+  )?.decision;
+  const googleDiscoveryIntentionallyDisabled =
+    googleBusinessDecision === ProfileReviewDecision.SKIPPED ||
+    googleBusinessDecision === ProfileReviewDecision.NOT_USED;
+
   const plan = await getUserPlan(business.ownerId);
   const entitlements = getPlanEntitlements(plan);
   const businessContext = {
@@ -416,12 +453,12 @@ async function buildAuditData({
     businessType: business.businessType,
     primaryConversionGoal: business.primaryConversionGoal,
   };
-  const websiteProfile = business.profiles.find(
+  const websiteProfile = approvedProfiles.find(
     (profile) =>
       profile.platform === ProfilePlatform.WEBSITE &&
-      profile.status === BusinessProfileStatus.CONFIRMED &&
       Boolean(profile.url),
   );
+  await setAuditProgressStage(businessId, auditId, "ANALYZING_WEBSITE");
   const websiteAnalysis = websiteProfile?.url
     ? await analyzeWebsite(websiteProfile.url, {
         businessContext,
@@ -443,7 +480,7 @@ async function buildAuditData({
         initialInput: business.initialInput,
         websiteAnalysis,
         websiteCrawl,
-        profiles: business.profiles,
+        profiles: approvedProfiles,
         goals: business.goals,
         primaryGoal: business.primaryGoal,
       })
@@ -473,38 +510,59 @@ async function buildAuditData({
         contextSource: business.contextSource ?? "generated",
         contextConfirmedAt: business.contextConfirmedAt,
       };
-  const googleBusinessDiscovery = await discoverGoogleBusinessProfiles({
-    business,
-    websiteAnalysis,
-    websiteCrawl,
-  }).catch((error) => {
-    logError("audit_google_business_discovery_failed", error, {
-      businessId,
-      auditId,
-    });
+  await setAuditProgressStage(
+    businessId,
+    auditId,
+    "REVIEWING_LOCAL_VISIBILITY",
+  );
+  const googleBusinessDiscovery = googleDiscoveryIntentionallyDisabled
+    ? {
+        apiConfigured: Boolean(process.env.GOOGLE_PLACES_API_KEY),
+        searched: false,
+        error: undefined,
+        candidatesSaved: 0,
+        bestConfidence: null,
+        source: "none" as const,
+        profileIds: [] as string[],
+        detectedAddress: websiteAnalysis?.detectedAddress ?? null,
+        detectedPhone: websiteAnalysis?.detectedPhone ?? null,
+        detectedGoogleMapsLinks:
+          websiteAnalysis?.detectedGoogleMapsLinks ?? [],
+        detectedMapEmbeds: websiteAnalysis?.detectedMapEmbeds ?? [],
+        detectedLocalBusinessSchemaCount:
+          websiteAnalysis?.detectedLocalBusinessSchema.length ?? 0,
+      }
+    : await discoverGoogleBusinessProfiles({
+        business,
+        websiteAnalysis,
+        websiteCrawl,
+      }).catch((error) => {
+        logError("audit_google_business_discovery_failed", error, {
+          businessId,
+          auditId,
+        });
 
-    return {
-      apiConfigured: false,
-      searched: false,
-      error: "Google Business discovery failed.",
-      candidatesSaved: 0,
-      bestConfidence: null,
-      source: "none" as const,
-      profileIds: [],
-      detectedAddress: websiteAnalysis?.detectedAddress ?? null,
-      detectedPhone: websiteAnalysis?.detectedPhone ?? null,
-      detectedGoogleMapsLinks: websiteAnalysis?.detectedGoogleMapsLinks ?? [],
-      detectedMapEmbeds: websiteAnalysis?.detectedMapEmbeds ?? [],
-      detectedLocalBusinessSchemaCount:
-        websiteAnalysis?.detectedLocalBusinessSchema.length ?? 0,
-    };
-  });
+        return {
+          apiConfigured: false,
+          searched: false,
+          error: "Google Business discovery failed.",
+          candidatesSaved: 0,
+          bestConfidence: null,
+          source: "none" as const,
+          profileIds: [],
+          detectedAddress: websiteAnalysis?.detectedAddress ?? null,
+          detectedPhone: websiteAnalysis?.detectedPhone ?? null,
+          detectedGoogleMapsLinks:
+            websiteAnalysis?.detectedGoogleMapsLinks ?? [],
+          detectedMapEmbeds: websiteAnalysis?.detectedMapEmbeds ?? [],
+          detectedLocalBusinessSchemaCount:
+            websiteAnalysis?.detectedLocalBusinessSchema.length ?? 0,
+        };
+      });
   const googleBusinessProfiles = await prisma.googleBusinessProfile.findMany({
     where: {
       businessId,
-      status: {
-        not: "removed",
-      },
+      status: "confirmed",
     },
     orderBy: [
       {
@@ -515,8 +573,13 @@ async function buildAuditData({
       },
     ],
   });
+  await setAuditProgressStage(
+    businessId,
+    auditId,
+    "EVALUATING_SOCIAL_PRESENCE",
+  );
   const socialAnalysis = analyzeSocialProfiles({
-    businessProfiles: business.profiles.map((profile) => ({
+    businessProfiles: approvedProfiles.map((profile) => ({
       platform: profile.platform,
       status: profile.status,
       label: profile.displayName,
@@ -534,7 +597,7 @@ async function buildAuditData({
     primaryGoal: business.primaryGoal,
   });
   const reviewAnalysis = analyzeReviews({
-    businessProfiles: business.profiles.map((profile) => ({
+    businessProfiles: approvedProfiles.map((profile) => ({
       platform: profile.platform,
       status: profile.status,
       label: profile.displayName,
@@ -588,6 +651,11 @@ async function buildAuditData({
       ),
     };
   });
+  await setAuditProgressStage(
+    businessId,
+    auditId,
+    "COMPARING_COMPETITORS",
+  );
   const competitorScanResults = await analyzeBusinessCompetitors({
     userId: business.ownerId,
     businessId,
@@ -655,10 +723,11 @@ async function buildAuditData({
           snapshot.status === CompetitorSnapshotStatus.PARTIAL,
       ),
   );
+  await setAuditProgressStage(businessId, auditId, "BUILDING_FINDINGS");
   const auditResult = generateDeterministicAudit({
     businessName: business.name,
     initialInput: business.initialInput,
-    profiles: business.profiles.map((profile) => ({
+    profiles: approvedProfiles.map((profile) => ({
       platform: profile.platform,
       status: profile.status,
       confidenceScore: profile.confidenceScore,
@@ -719,7 +788,7 @@ async function buildAuditData({
     },
     currentReviews: reviewAnalysis,
     currentSocial: socialAnalysis,
-    confirmedProfiles: business.profiles.map((profile) => ({
+    confirmedProfiles: approvedProfiles.map((profile) => ({
       platform: profile.platform,
       status: profile.status,
     })),
@@ -802,7 +871,7 @@ async function buildAuditData({
     businessContext: effectiveBusinessContext,
     goals: business.goals,
     primaryGoal: business.primaryGoal,
-    profiles: business.profiles.map((profile) => ({
+    profiles: approvedProfiles.map((profile) => ({
       id: profile.id,
       platform: profile.platform,
       status: profile.status,
@@ -832,6 +901,11 @@ async function buildAuditData({
         snapshots: competitor.snapshots,
       })),
     });
+  await setAuditProgressStage(
+    businessId,
+    auditId,
+    "PRIORITIZING_RECOMMENDATIONS",
+  );
   const evidenceIntegrityResult = buildAuditEvidenceIntegrity({
     website: websiteAnalysis,
     websiteCrawl,
@@ -839,7 +913,7 @@ async function buildAuditData({
     social: socialAnalysis,
     reviews: reviewAnalysis,
     businessContext: effectiveBusinessContext,
-    businessProfiles: business.profiles.map((profile) => ({
+    businessProfiles: approvedProfiles.map((profile) => ({
       id: profile.id,
       platform: profile.platform,
       status: profile.status,
@@ -887,7 +961,7 @@ async function buildAuditData({
     businessContext: effectiveBusinessContext,
     goals: business.goals,
     primaryGoal: business.primaryGoal,
-    profiles: business.profiles,
+    profiles: approvedProfiles,
     competitors: business.competitors,
     socialAnalysis,
     reviewAnalysis,
@@ -926,6 +1000,8 @@ async function buildAuditData({
     generatedAt: new Date().toISOString(),
   };
 
+  await setAuditProgressStage(businessId, auditId, "PREPARING_RESULTS");
+
   return {
     auditResult,
     businessContextDraft,
@@ -939,6 +1015,22 @@ async function buildAuditData({
         : {}),
       social: socialAnalysis,
       reviews: reviewAnalysis,
+      auditSources: {
+        includedProfiles: approvedProfiles.map((profile) => ({
+          id: profile.id,
+          platform: profile.platform,
+          source: profile.source,
+        })),
+        excludedProfiles: {
+          pending: business.profiles.filter(
+            (profile) => profile.status === BusinessProfileStatus.PENDING,
+          ).length,
+          removed: business.profiles.filter(
+            (profile) => profile.status === BusinessProfileStatus.REMOVED,
+          ).length,
+        },
+        googleBusinessDecision: googleBusinessDecision ?? null,
+      },
       googleBusinessDiscovery,
       competitors: competitorProfileSummary,
       competitorIntelligence,
@@ -968,4 +1060,21 @@ async function buildAuditData({
       evidenceIntegrity: evidenceIntegrityResult.snapshot,
     }),
   };
+}
+
+async function setAuditProgressStage(
+  businessId: string,
+  auditId: string,
+  progressStage: AuditProgressStage,
+) {
+  await prisma.audit.updateMany({
+    where: {
+      id: auditId,
+      businessId,
+      status: AuditStatus.RUNNING,
+    },
+    data: {
+      progressStage,
+    },
+  });
 }

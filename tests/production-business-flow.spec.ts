@@ -63,15 +63,18 @@ test("a verified user completes a social-first audit without website penalties",
 
   await page.goto("/dashboard/businesses/new");
   await page
-    .getByLabel("Paste a website, social profile, or business name")
+    .getByLabel("Start with your primary business link")
     .fill(`https://instagram.com/${handle}`);
   await page.getByRole("button", { name: "Continue" }).click();
-  await expect(page).toHaveURL(/\/dashboard\/businesses\/[^/]+\/setup$/);
+  await expect(page).toHaveURL(
+    /\/dashboard\/businesses\/[^/]+\/setup\?step=profiles$/,
+  );
 
   const businessId = new URL(page.url()).pathname.split("/")[3];
   expect(businessId).toBeTruthy();
   await page.getByRole("button", { name: "Confirm", exact: true }).click();
-  await expect(page.getByText("Profiles are ready")).toBeVisible();
+  await page.getByRole("button", { name: "Skip for now", exact: true }).click();
+  await expect(page.getByText("Your audit sources are ready")).toBeVisible();
 
   await page.goto(`/dashboard/businesses/${businessId}/context`);
   await page

@@ -14,6 +14,10 @@ export const platformLabels: Record<ProfilePlatform, string> = {
 };
 
 const socialHosts: Array<[string, ProfilePlatform]> = [
+  ["google.com", ProfilePlatform.GOOGLE_BUSINESS],
+  ["maps.google.com", ProfilePlatform.GOOGLE_BUSINESS],
+  ["maps.app.goo.gl", ProfilePlatform.GOOGLE_BUSINESS],
+  ["g.page", ProfilePlatform.GOOGLE_BUSINESS],
   ["instagram.com", ProfilePlatform.INSTAGRAM],
   ["facebook.com", ProfilePlatform.FACEBOOK],
   ["tiktok.com", ProfilePlatform.TIKTOK],
@@ -32,9 +36,24 @@ export function normalizeSubmittedUrl(input: string) {
 
 export function platformForSubmittedUrl(input: string) {
   try {
-    const hostname = new URL(normalizeSubmittedUrl(input)).hostname
+    const url = new URL(normalizeSubmittedUrl(input));
+    const hostname = url.hostname
       .toLowerCase()
       .replace(/^www\./, "");
+
+    if (
+      hostname === "google.com" ||
+      hostname.endsWith(".google.com") ||
+      hostname === "maps.app.goo.gl" ||
+      hostname === "g.page" ||
+      hostname.endsWith(".g.page")
+    ) {
+      const homepageOnly =
+        (hostname === "google.com" || hostname.endsWith(".google.com")) &&
+        (url.pathname === "" || url.pathname === "/") &&
+        !url.search;
+      return homepageOnly ? null : ProfilePlatform.GOOGLE_BUSINESS;
+    }
 
     return (
       socialHosts.find(

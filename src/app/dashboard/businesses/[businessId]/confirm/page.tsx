@@ -1,5 +1,6 @@
 import { BusinessProfileStatus, ProfilePlatform } from "@prisma/client";
 import {
+  ArrowLeft,
   ArrowRight,
   BadgeCheck,
   ExternalLink,
@@ -30,13 +31,12 @@ import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SubmitButton } from "@/components/ui/submit-button";
 import { platformLabels } from "@/lib/profiles/platforms";
 import {
-  confirmedSocialProfiles,
   hasConfirmedAuditablePresence,
   hasConfirmedWebsite,
 } from "@/lib/audits/audit-applicability";
-import { hasCoreBusinessContext } from "@/lib/business-context";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
 import { cn } from "@/lib/utils";
@@ -73,6 +73,12 @@ function getProfileValue(profile: Pick<ProfileView, "url" | "handle">) {
   return profile.url || profile.handle || "";
 }
 
+function confidenceLabel(score: number) {
+  if (score >= 80) return "High-confidence match";
+  if (score >= 50) return "Possible match";
+  return "Low-confidence match";
+}
+
 function ProfileEditForm({
   businessId,
   profile,
@@ -83,28 +89,29 @@ function ProfileEditForm({
   return (
     <DisclosureSection
       title="Edit profile"
-      description="Update the saved URL or handle. Edited profiles return to review."
+      description="Update the saved public URL. Edited discovered profiles return to review."
       compact
     >
       <form action={updateProfile} className="space-y-3">
         <input type="hidden" name="businessId" value={businessId} />
         <input type="hidden" name="profileId" value={profile.id} />
         <div className="space-y-2">
-          <Label htmlFor={`profileValue-${profile.id}`}>URL or handle</Label>
+          <Label htmlFor={`profileValue-${profile.id}`}>Public profile URL</Label>
           <Input
             id={`profileValue-${profile.id}`}
             name="profileValue"
             defaultValue={getProfileValue(profile)}
-            placeholder="https://example.com or @handle"
+            placeholder="https://example.com/profile"
             required
           />
         </div>
-        <button
-          type="submit"
-          className={buttonVariants({ variant: "primary", size: "sm" })}
+        <SubmitButton
+          variant="primary"
+          size="sm"
+          pendingLabel="Saving..."
         >
           Save changes
-        </button>
+        </SubmitButton>
       </form>
     </DisclosureSection>
   );
@@ -152,9 +159,9 @@ function ProfileCard({
           </div>
           {isPending ? (
             <div className="shrink-0 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
-              <span className="block text-xs">Discovery confidence</span>
-              <span className="text-lg font-semibold">
-                {profile.confidenceScore}%
+              <span className="block text-xs">Automated match</span>
+              <span className="text-sm font-semibold">
+                {confidenceLabel(profile.confidenceScore)}
               </span>
             </div>
           ) : null}
@@ -176,44 +183,43 @@ function ProfileCard({
             <form action={confirmProfile}>
               <input type="hidden" name="businessId" value={businessId} />
               <input type="hidden" name="profileId" value={profile.id} />
-              <button
-                type="submit"
-                className={buttonVariants({ variant: "primary", size: "sm" })}
+              <SubmitButton
+                variant="primary"
+                size="sm"
+                pendingLabel="Confirming..."
               >
                 <BadgeCheck className="size-4" />
                 Confirm
-              </button>
+              </SubmitButton>
             </form>
           ) : null}
           {isRemoved ? (
             <form action={restoreProfile}>
               <input type="hidden" name="businessId" value={businessId} />
               <input type="hidden" name="profileId" value={profile.id} />
-              <button
-                type="submit"
-                className={buttonVariants({ variant: "secondary", size: "sm" })}
+              <SubmitButton
+                variant="secondary"
+                size="sm"
+                pendingLabel="Restoring..."
               >
                 <RotateCcw className="size-4" />
                 Restore
-              </button>
+              </SubmitButton>
             </form>
           ) : null}
           {!isRemoved ? (
             <form action={removeProfile}>
               <input type="hidden" name="businessId" value={businessId} />
               <input type="hidden" name="profileId" value={profile.id} />
-              <button
-                type="submit"
-                className={buttonVariants({
-                  variant: "outline",
-                  size: "sm",
-                  className:
-                    "border-rose-200 text-rose-700 hover:bg-rose-50 dark:border-rose-900 dark:text-rose-200 dark:hover:bg-rose-950/30",
-                })}
+              <SubmitButton
+                variant="outline"
+                size="sm"
+                pendingLabel="Removing..."
+                className="border-rose-200 text-rose-700 hover:bg-rose-50 dark:border-rose-900 dark:text-rose-200 dark:hover:bg-rose-950/30"
               >
                 <Trash2 className="size-4" />
                 Remove
-              </button>
+              </SubmitButton>
             </form>
           ) : null}
         </div>
@@ -266,22 +272,23 @@ export default async function ConfirmBusinessPage({
     (profile) => profile.status === BusinessProfileStatus.REMOVED,
   );
   const websiteConfirmed = hasConfirmedWebsite(business.profiles);
-  const confirmedSocialCount = confirmedSocialProfiles(
-    business.profiles,
-  ).length;
-  const socialFirst = !websiteConfirmed && confirmedSocialCount > 0;
-  const socialFirstContextReady =
-    hasCoreBusinessContext(business) && Boolean(business.contextConfirmedAt);
-  const canRunAudit =
-    hasConfirmedAuditablePresence(business.profiles) &&
-    (!socialFirst || socialFirstContextReady);
+  const canRunAudit = hasConfirmedAuditablePresence(business.profiles);
 
   return (
     <div className="space-y-6">
       <PageIntro
-        title="Confirm your online presence"
-        description="Review what we found, confirm profiles that belong to your business, and set aside anything that does not."
+        title="Advanced profile management"
+        description="Review and maintain saved sources outside the guided setup flow."
         icon={SearchCheck}
+        actions={
+          <Link
+            href={`/dashboard/businesses/${business.id}/setup?step=profiles`}
+            className={buttonVariants({ variant: "secondary", size: "sm" })}
+          >
+            <ArrowLeft className="size-4" />
+            Return to guided setup
+          </Link>
+        }
       />
 
       <SummaryStrip>
@@ -398,25 +405,23 @@ export default async function ConfirmBusinessPage({
             </select>
           </div>
           <div className="space-y-2">
-            <Label htmlFor="manualProfileValue">URL or handle</Label>
+            <Label htmlFor="manualProfileValue">Public profile URL</Label>
             <Input
               id="manualProfileValue"
               name="profileValue"
-              placeholder="https://example.com or @handle"
+              placeholder="https://example.com/profile"
               required
             />
           </div>
           <div className="flex items-end">
-            <button
-              type="submit"
-              className={buttonVariants({
-                variant: "secondary",
-                className: "w-full md:w-auto",
-              })}
+            <SubmitButton
+              variant="secondary"
+              pendingLabel="Adding profile..."
+              className="w-full md:w-auto"
             >
               <Plus className="size-4" />
               Add profile
-            </button>
+            </SubmitButton>
           </div>
         </form>
       </DisclosureSection>
@@ -429,31 +434,18 @@ export default async function ConfirmBusinessPage({
               {confirmedProfiles.length} confirmed · {pendingProfiles.length} awaiting review · {removedProfiles.length} removed
             </p>
           </div>
-          {socialFirst && !socialFirstContextReady ? (
-            <Link
-              href={`/dashboard/businesses/${business.id}/setup?step=context&socialFirst=1`}
-              className={buttonVariants({ variant: "primary", size: "lg" })}
+          <form action={prepareAuditRun}>
+            <input type="hidden" name="businessId" value={business.id} />
+            <SubmitButton
+              variant="primary"
+              size="lg"
+              pendingLabel="Starting audit..."
+              disabled={!canRunAudit}
             >
-              Review Business Context
+              Run Audit
               <ArrowRight className="size-4" />
-            </Link>
-          ) : (
-            <form action={prepareAuditRun}>
-              <input type="hidden" name="businessId" value={business.id} />
-              <button
-                type="submit"
-                disabled={!canRunAudit}
-                className={buttonVariants({
-                  variant: "primary",
-                  size: "lg",
-                  className: "disabled:pointer-events-none disabled:opacity-50",
-                })}
-              >
-                Run Audit
-                <ArrowRight className="size-4" />
-              </button>
-            </form>
-          )}
+            </SubmitButton>
+          </form>
         </div>
       </div>
     </div>

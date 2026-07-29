@@ -37,6 +37,17 @@ enum BusinessProfileStatus {
   REMOVED
 }
 
+enum BusinessProfileSource {
+  SUBMITTED
+  DISCOVERED
+  MANUAL
+}
+
+enum ProfileReviewDecision {
+  SKIPPED
+  NOT_USED
+}
+
 enum AuditStatus {
   PENDING
   QUEUED
@@ -529,34 +540,36 @@ model VerificationToken {
 }
 
 model Business {
-  id                    String            @id @default(cuid())
-  ownerId               String
-  name                  String
-  initialInput          String
-  inputType             BusinessInputType @default(BUSINESS_NAME)
-  websiteUrl            String?
-  industry              String?
-  description           String?
-  targetAudience        String?
-  mainOffer             String?
-  businessType          String?
-  primaryConversionGoal String?
-  brandTone             String?
-  contextConfidence     Int?
-  contextSource         String?
-  contextConfirmedAt    DateTime?
-  contextUpdatedAt      DateTime?
-  location              String?
-  status                BusinessStatus    @default(DRAFT)
-  goals                 BusinessGoal[]    @default([])
-  primaryGoal           BusinessGoal?
-  onboardingCompletedAt DateTime?
-  onboardingDismissedAt DateTime?
-  onboardingLastStep    String?
-  createdAt             DateTime          @default(now())
-  updatedAt             DateTime          @updatedAt
+  id                             String            @id @default(cuid())
+  ownerId                        String
+  name                           String
+  initialInput                   String
+  inputType                      BusinessInputType @default(BUSINESS_NAME)
+  websiteUrl                     String?
+  industry                       String?
+  description                    String?
+  targetAudience                 String?
+  mainOffer                      String?
+  businessType                   String?
+  primaryConversionGoal          String?
+  brandTone                      String?
+  contextConfidence              Int?
+  contextSource                  String?
+  contextConfirmedAt             DateTime?
+  contextUpdatedAt               DateTime?
+  location                       String?
+  status                         BusinessStatus    @default(DRAFT)
+  goals                          BusinessGoal[]    @default([])
+  primaryGoal                    BusinessGoal?
+  onboardingCompletedAt          DateTime?
+  onboardingDismissedAt          DateTime?
+  onboardingLastStep             String?
+  auditSourceAcknowledgementHash String?
+  auditSourceAcknowledgedAt      DateTime?
+  createdAt                      DateTime          @default(now())
+  updatedAt                      DateTime          @updatedAt
 
-  owner                  User                    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  owner                  User                      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   profiles               BusinessProfile[]
   audits                 Audit[]
   recommendations        Recommendation[]
@@ -564,6 +577,7 @@ model Business {
   chatThreads            ChatThread[]
   socialStrategies       SocialStrategy[]
   googleBusinessProfiles GoogleBusinessProfile[]
+  profileDecisions       BusinessProfileDecision[]
   implementationDrafts   ImplementationDraft[]
 
   @@index([ownerId])
@@ -596,20 +610,42 @@ model BusinessProfile {
   businessId      String
   platform        ProfilePlatform
   url             String?
+  normalizedUrl   String?
   handle          String?
   displayName     String?
   confidenceScore Int                   @default(0)
   status          BusinessProfileStatus @default(PENDING)
+  source          BusinessProfileSource @default(DISCOVERED)
   isConfirmed     Boolean               @default(false)
   discoveredAt    DateTime?
+  manuallyAddedAt DateTime?
+  confirmedAt     DateTime?
   createdAt       DateTime              @default(now())
   updatedAt       DateTime              @updatedAt
 
   business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
 
   @@unique([businessId, platform, url])
+  @@unique([businessId, normalizedUrl])
   @@index([businessId])
   @@index([platform])
+  @@index([businessId, source])
+}
+
+model BusinessProfileDecision {
+  id         String                @id @default(cuid())
+  businessId String
+  platform   ProfilePlatform
+  decision   ProfileReviewDecision
+  decidedAt  DateTime              @default(now())
+  createdAt  DateTime              @default(now())
+  updatedAt  DateTime              @updatedAt
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, platform])
+  @@index([businessId])
+  @@index([platform, decision])
 }
 
 model GoogleBusinessProfile {
@@ -648,6 +684,7 @@ model Audit {
   id               String      @id @default(cuid())
   businessId       String
   status           AuditStatus @default(PENDING)
+  progressStage    String?
   overallScore     Int?
   summary          String?
   analysisSnapshot Json?
