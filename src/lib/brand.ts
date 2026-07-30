@@ -4,6 +4,8 @@ export const brand = {
   name: "Onread AI",
   shortName: "Onread",
   mobileName: "Onread",
+  logoPath: "/onread-logo.png",
+  touchIconPath: "/onread-icon-192.png",
   productionOrigin: "https://onread.ai",
   description:
     "An evidence-backed business growth audit with prioritized actions, implementation help, and an AI Consultant grounded in saved business data.",

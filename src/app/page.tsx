@@ -43,7 +43,7 @@ function homepageStructuredData() {
         "@id": `${homepage.href}#organization`,
         name: brand.name,
         url: homepage.href,
-        logo: new URL("/favicon.ico", publicUrl).href,
+        logo: new URL(brand.logoPath, publicUrl).href,
       },
       {
         "@type": "WebApplication",

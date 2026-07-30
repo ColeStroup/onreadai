@@ -23,7 +23,15 @@ export const metadata: Metadata = {
     template: `%s | ${brand.name}`,
   },
   description: brand.description,
-  icons: { icon: "/favicon.ico" },
+  icons: {
+    icon: [
+      { url: "/favicon.ico", sizes: "64x64", type: "image/x-icon" },
+      { url: brand.logoPath, sizes: "512x512", type: "image/png" },
+    ],
+    apple: [
+      { url: brand.touchIconPath, sizes: "192x192", type: "image/png" },
+    ],
+  },
   formatDetection: {
     email: false,
     address: false,

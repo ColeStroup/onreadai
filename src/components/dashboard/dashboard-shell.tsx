@@ -10,13 +10,13 @@ import {
   KeyRound,
   Plus,
   Settings,
-  Sparkles,
 } from "lucide-react";
 import { signOut } from "next-auth/react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 
+import { BrandLogo } from "@/components/brand-logo";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -72,9 +72,7 @@ export function DashboardShell({
       <aside className="sticky top-0 hidden h-screen min-h-0 border-r border-border bg-card md:flex md:flex-col">
         <div className="shrink-0 border-b border-border p-5">
           <Link href="/dashboard" className="flex items-center gap-3 font-semibold">
-            <span className="flex size-9 items-center justify-center rounded-lg bg-foreground text-background">
-              <Sparkles className="size-4" />
-            </span>
+            <BrandLogo size={36} eager />
             <span>Onread AI</span>
           </Link>
         </div>
@@ -126,9 +124,7 @@ export function DashboardShell({
         <header className="sticky top-0 z-20 border-b border-border bg-background/95 px-4 py-3 backdrop-blur md:hidden">
           <div className="flex items-center justify-between gap-3">
             <Link href="/dashboard" className="flex items-center gap-2 font-semibold">
-              <span className="flex size-8 items-center justify-center rounded-lg bg-foreground text-background">
-                <Sparkles className="size-4" />
-              </span>
+              <BrandLogo size={32} eager />
               <span>Onread</span>
             </Link>
             <Link

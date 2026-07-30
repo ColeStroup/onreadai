@@ -40,6 +40,13 @@ test("marketing homepage is accurate, accessible, and responsive", async ({
 
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await expect(page.locator("main")).toBeVisible();
+  const brandLogo = page.locator("[data-onread-logo]").first();
+  await expect(brandLogo).toBeVisible();
+  expect(
+    await brandLogo.evaluate(
+      (image) => (image as HTMLImageElement).naturalWidth,
+    ),
+  ).toBeGreaterThan(0);
 
   await expect(page.locator("h1")).toHaveCount(1);
   await expect(page.locator("h1")).toContainText("holding your business back");
@@ -131,6 +138,10 @@ test("marketing homepage is accurate, accessible, and responsive", async ({
       | { mainEntity?: Array<{ name: string; acceptedAnswer: { text: string } }> }
       | undefined;
     expect(organization).toBeTruthy();
+    expect(organization).toHaveProperty(
+      "logo",
+      `${canonicalOrigin}/onread-logo.png`,
+    );
     expect(organization).not.toHaveProperty("aggregateRating");
     expect(organization).not.toHaveProperty("sameAs");
     expect(organization).not.toHaveProperty("contactPoint");
@@ -177,6 +188,7 @@ test("marketing homepage is accurate, accessible, and responsive", async ({
 
     await page.goto("/dashboard", { waitUntil: "domcontentloaded" });
     await expect(page).toHaveURL(/\/signin/);
+    await expect(page.locator("[data-onread-logo]").first()).toBeVisible();
     await expect(page.locator('meta[name="robots"]')).toHaveAttribute("content", /noindex/);
   }
 

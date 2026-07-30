@@ -1,7 +1,8 @@
-import { CheckCircle2, Sparkles } from "lucide-react";
+import { CheckCircle2 } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
 
+import { BrandLogo } from "@/components/brand-logo";
 import { brand } from "@/lib/brand";
 
 type AuthShellProps = {
@@ -24,9 +25,7 @@ function AuthLogo() {
       aria-label={`${brand.name} home`}
       className="inline-flex items-center gap-2.5 rounded-md text-white outline-none focus-visible:ring-2 focus-visible:ring-teal-300"
     >
-      <span className="flex size-10 items-center justify-center rounded-lg border border-teal-200/30 bg-teal-300 text-[#062421]">
-        <Sparkles className="size-4" aria-hidden="true" />
-      </span>
+      <BrandLogo size={40} eager />
       <span className="font-semibold">{brand.name}</span>
     </Link>
   );

@@ -1,6 +1,6 @@
-import { Sparkles } from "lucide-react";
 import Link from "next/link";
 
+import { BrandLogo } from "@/components/brand-logo";
 import { brand } from "@/lib/brand";
 import { cn } from "@/lib/utils";
 
@@ -14,9 +14,7 @@ export function BrandMark({ className }: { className?: string }) {
         className,
       )}
     >
-      <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-teal-300/30 bg-teal-300 text-[#062421]">
-        <Sparkles className="size-4" aria-hidden="true" />
-      </span>
+      <BrandLogo size={36} eager />
       <span className="text-sm sm:text-base">
         <span className="hidden sm:inline">{brand.name}</span>
         <span className="hidden min-[430px]:inline sm:hidden">{brand.mobileName}</span>

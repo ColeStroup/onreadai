@@ -1,3 +1,7 @@
+/* eslint-disable @next/next/no-img-element */
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+
 import { ImageResponse } from "next/og";
 
 import { brand } from "@/lib/brand";
@@ -5,8 +9,12 @@ import { brand } from "@/lib/brand";
 export const alt = `${brand.name}: see what is holding your business back and know what to do next`;
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
+export const runtime = "nodejs";
 
-export default function OpenGraphImage() {
+export default async function OpenGraphImage() {
+  const logo = await readFile(join(process.cwd(), "public", "onread-logo.png"));
+  const logoSrc = `data:image/png;base64,${logo.toString("base64")}`;
+
   return new ImageResponse(
     (
       <div
@@ -22,22 +30,18 @@ export default function OpenGraphImage() {
       >
         <div style={{ display: "flex", flexDirection: "column", width: "62%" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "16px", fontSize: "24px", fontWeight: 700 }}>
-            <div
+            <img
+              src={logoSrc}
+              alt=""
+              width={50}
+              height={50}
               style={{
                 width: "50px",
                 height: "50px",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
                 borderRadius: "8px",
-                background: "#5eead4",
-                color: "#052b27",
-                fontSize: "18px",
-                fontWeight: 700,
+                objectFit: "cover",
               }}
-            >
-              AI
-            </div>
+            />
             {brand.name}
           </div>
           <div style={{ marginTop: "72px", fontSize: "58px", lineHeight: 1.08, fontWeight: 700, letterSpacing: "0px" }}>
