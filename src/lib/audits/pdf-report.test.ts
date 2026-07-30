@@ -31,6 +31,7 @@ const standardFixtures: ReportFixtureKind[] = [
   "saas",
   "local_service",
   "social_only",
+  "cottage_regression",
   "no_competitor",
   "stale_strategy",
 ];
@@ -122,6 +123,23 @@ test("hospitality PDF contains every required section and no contradictory leaka
   assert.match(
     pdf.text,
     /Reviews[\s\S]*Not comparable|Not comparable[\s\S]*Reviews/i,
+  );
+});
+
+test("cottage regression PDF preserves page-specific evidence and limited review scope", async () => {
+  const pdf = await inspectFixture("cottage_regression");
+
+  assert.match(pdf.text, /PIE POCKETS/i);
+  assert.match(pdf.text, /menu page.*(?:missing|no).*main (?:heading|headline)/i);
+  assert.match(pdf.text, /listing presence|limited evidence|rating.*unavailable/i);
+  assert.match(pdf.text, /preorder|pickup|delivery/i);
+  assert.doesNotMatch(
+    pdf.text,
+    /\batmosphere\b|\bdine[- ]?in\b|\bdirections\b|\bguest experience\b/i,
+  );
+  assert.doesNotMatch(
+    pdf.text,
+    /homepage (?:is|has|was).{0,24}(?:missing|no).{0,16}(?:h1|main heading)|homepage (?:h1|main heading).{0,24}(?:missing|not present)/i,
   );
 });
 

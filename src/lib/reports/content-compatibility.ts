@@ -1,13 +1,22 @@
 import type { ScoreCategory } from "@prisma/client";
 
+import {
+  classifyBusinessModel,
+  supportsCustomerVisitLanguage,
+  type BusinessModelClassification,
+} from "@/lib/business-model";
 import { logWarn } from "@/lib/observability/log";
 
 export type ReportBusinessArchetype =
   | "restaurant_hospitality"
+  | "cottage_food"
   | "saas_software"
   | "local_service"
+  | "appointment_business"
+  | "mobile_business"
   | "ecommerce"
   | "creator_community"
+  | "nonprofit"
   | "professional_service"
   | "general";
 
@@ -45,6 +54,9 @@ const archetypeSignals: Record<
     /\b(food|dining|menu|takeout|bar|grill|cafe|brewery|pub)\b/i,
     /\b(venue|tourism|guest|reservations?)\b/i,
   ],
+  cottage_food: [
+    /\b(cottage food|cottage bakery|home[- ]based (?:bakery|food)|home baker|pre[- ]?order)\b/i,
+  ],
   saas_software: [
     /\bsaas\b/i,
     /\bsoftware\b/i,
@@ -57,6 +69,12 @@ const archetypeSignals: Record<
     /\b(salon|clinic|dentist|attorney|repair service)\b/i,
     /\b(estimate|service call|book an appointment)\b/i,
   ],
+  appointment_business: [
+    /\b(appointment[- ]based|salon|spa|clinic|book an appointment|schedule an appointment)\b/i,
+  ],
+  mobile_business: [
+    /\b(mobile business|mobile service|food truck|we come to you|on[- ]site only)\b/i,
+  ],
   ecommerce: [
     /\b(ecommerce|e-commerce|online store|retail store)\b/i,
     /\b(add to cart|checkout|product catalog|shipping|returns)\b/i,
@@ -65,6 +83,9 @@ const archetypeSignals: Record<
     /\b(discord|guild|twitch|streamer|gaming audience)\b/i,
     /\b(content creator|creator business|creator community)\b/i,
     /\b(server owners?|community managers?)\b/i,
+  ],
+  nonprofit: [
+    /\b(nonprofit|non-profit|charity|foundation|community organization)\b/i,
   ],
   professional_service: [
     /\b(consultant|consulting|agency|freelancer|professional services?)\b/i,
@@ -80,6 +101,13 @@ const incompatibleLanguage: Partial<
     { pattern: /\b(developer community|software demo|free trial|saas)\b/i, label: "software terminology" },
     { pattern: /\b(b2b lead generation|product onboarding)\b/i, label: "B2B software terminology" },
   ],
+  cottage_food: [
+    {
+      pattern:
+        /\b(atmosphere|dine[- ]?in|dining room|guest experience|reasons? to visit|plan (?:a|your) visit|check (?:our )?hours|get directions)\b/i,
+      label: "storefront hospitality terminology",
+    },
+  ],
   saas_software: [
     { pattern: /\b(menu specials?|table reservations?|dining room|happy hour|beach atmosphere)\b/i, label: "hospitality terminology" },
     { pattern: /\b(service area|request an estimate|service call)\b/i, label: "local-service terminology" },
@@ -88,12 +116,21 @@ const incompatibleLanguage: Partial<
     { pattern: /\b(free trial|software demo|product onboarding|developer community)\b/i, label: "software terminology" },
     { pattern: /\b(menu specials?|table reservations?|dining room|happy hour)\b/i, label: "hospitality terminology" },
   ],
+  appointment_business: [
+    { pattern: /\b(dine[- ]?in|menu specials?|guest atmosphere)\b/i, label: "hospitality terminology" },
+  ],
+  mobile_business: [
+    { pattern: /\b(visit our storefront|dine[- ]?in|store hours|guest atmosphere)\b/i, label: "fixed-location terminology" },
+  ],
   ecommerce: [
     { pattern: /\b(request an estimate|service area|service call)\b/i, label: "local-service terminology" },
     { pattern: /\b(table reservations?|menu specials?|dining room)\b/i, label: "hospitality terminology" },
   ],
   creator_community: [
     { pattern: /\b(table reservations?|menu specials?|service area|request an estimate)\b/i, label: "unrelated local-business terminology" },
+  ],
+  nonprofit: [
+    { pattern: /\b(add to cart|free trial|table reservation)\b/i, label: "commercial template terminology" },
   ],
   professional_service: [
     { pattern: /\b(table reservations?|menu specials?|gaming audiences?|discord server)\b/i, label: "unrelated business-type terminology" },
@@ -111,6 +148,25 @@ const unsupportedObservationPatterns = [
 export function classifyReportBusiness(
   context: ReportBusinessContext,
 ): ReportBusinessArchetype {
+  const normalized = classifyBusinessModel({ context });
+  const mapped: Partial<Record<typeof normalized.model, ReportBusinessArchetype>> = {
+    RESTAURANT: "restaurant_hospitality",
+    CAFE: "restaurant_hospitality",
+    COTTAGE_FOOD: "cottage_food",
+    LOCAL_RETAIL: "ecommerce",
+    ECOMMERCE: "ecommerce",
+    PROFESSIONAL_SERVICE: "professional_service",
+    HOME_SERVICE: "local_service",
+    APPOINTMENT_BUSINESS: "appointment_business",
+    MOBILE_BUSINESS: "mobile_business",
+    CREATOR: "creator_community",
+    NONPROFIT: "nonprofit",
+    SAAS: "saas_software",
+  };
+  if (mapped[normalized.model]) {
+    return mapped[normalized.model]!;
+  }
+
   const weightedFields = [
     [context.businessType, 5],
     [context.industry, 4],
@@ -146,12 +202,16 @@ export function validateBusinessCompatibleContent({
   item,
   context,
   sourceEvidence = "",
+  businessModel,
 }: {
   item: ContentItem;
   context: ReportBusinessContext;
   sourceEvidence?: string;
+  businessModel?: BusinessModelClassification;
 }): CompatibilityResult {
   const archetype = classifyReportBusiness(context);
+  const normalizedBusinessModel =
+    businessModel ?? classifyBusinessModel({ context });
   const text = `${item.title} ${item.description}`;
   const reasons: string[] = [];
 
@@ -165,6 +225,17 @@ export function validateBusinessCompatibleContent({
 
   if (hasUnsupportedObservationClaim(text)) {
     reasons.push("Claims social or content performance data that was not analyzed.");
+  }
+
+  if (
+    !supportsCustomerVisitLanguage(normalizedBusinessModel) &&
+    /\b(guest atmosphere|guest experience|dine[- ]?in|dining room|reasons? to visit|plan (?:a|your) visit|visit us|check (?:our )?hours|get directions)\b/i.test(
+      text,
+    )
+  ) {
+    reasons.push(
+      "Uses customer-visit or storefront language without a confirmed public customer-facing location.",
+    );
   }
 
   return {
@@ -218,8 +289,16 @@ export function deterministicSocialRecommendation(
   context: ReportBusinessContext,
 ) {
   const archetype = classifyReportBusiness(context);
+  const businessModel = classifyBusinessModel({ context });
 
   if (archetype === "restaurant_hospitality") {
+    if (!supportsCustomerVisitLanguage(businessModel)) {
+      return {
+        title: "Build product and ordering content around the confirmed path",
+        description:
+          "Create short-form content around specific products, preparation, founder perspective, customer proof, and the confirmed ordering or contact process. Keep every next step tied to the saved inquiry, pickup, delivery, or fulfillment path.",
+      };
+    }
     const offer = context.mainOffer?.trim();
     return {
       title: "Build a visual hospitality content rhythm",
@@ -231,6 +310,14 @@ export function deterministicSocialRecommendation(
     };
   }
 
+  if (archetype === "cottage_food") {
+    return {
+      title: "Build product and preorder content around the real buying path",
+      description:
+        "Create short-form content around products, flavors, seasonal releases, preparation, founder perspective, ingredient or allergen information, customer proof, and clear ordering, pickup, or delivery instructions. Point each post only to a confirmed preorder, inquiry, profile, or delivery path.",
+    };
+  }
+
   if (archetype === "saas_software") {
     return {
       title: "Turn product value into repeatable educational content",
@@ -239,7 +326,11 @@ export function deterministicSocialRecommendation(
     };
   }
 
-  if (archetype === "local_service") {
+  if (
+    archetype === "local_service" ||
+    archetype === "appointment_business" ||
+    archetype === "mobile_business"
+  ) {
     return {
       title: "Publish local proof and useful service guidance",
       description:

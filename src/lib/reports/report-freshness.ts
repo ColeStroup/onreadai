@@ -2,12 +2,14 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 
-export const REPORT_VIEW_MODEL_VERSION = "audit-report-v2-evidence";
-export const SOCIAL_STRATEGY_GENERATOR_VERSION = "social-strategy-v2";
+export const REPORT_VIEW_MODEL_VERSION = "audit-report-v3-normalized-facts";
+export const SOCIAL_STRATEGY_GENERATOR_VERSION =
+  "social-strategy-v3-business-model";
 export const COMPETITOR_COMPARISON_VERSION = "competitor-comparison-v2";
-export const SCORING_ENGINE_VERSION = "growth-score-v3-evidence";
-export const WEBSITE_ANALYZER_VERSION = "website-analyzer-v3-cta-evidence";
-export const SEO_ANALYZER_VERSION = "seo-analyzer-v2";
+export const SCORING_ENGINE_VERSION = "growth-score-v4-data-sufficiency";
+export const WEBSITE_ANALYZER_VERSION =
+  "website-analyzer-v4-content-quality";
+export const SEO_ANALYZER_VERSION = "seo-analyzer-v3-guideline-quality";
 
 export type DerivedFreshnessStatus =
   | "CURRENT"

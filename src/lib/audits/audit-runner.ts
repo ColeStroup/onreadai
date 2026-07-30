@@ -27,8 +27,10 @@ import { analyzeWebsite } from "@/lib/analyzers/website-analyzer";
 import { generateBusinessContextDraft } from "@/lib/ai/business-context-generator";
 import { generateCompetitorIntelligenceSummary } from "@/lib/ai/competitor-intelligence-generator";
 import { generateDeterministicSocialStrategy } from "@/lib/ai/social-strategy-generator";
+import { validateAuditConsistency } from "@/lib/audits/audit-consistency";
 import { generateDeterministicAudit } from "@/lib/audits/deterministic-audit";
 import { buildAuditEvidenceIntegrity } from "@/lib/audits/evidence-integrity";
+import { buildNormalizedAuditFacts } from "@/lib/audits/normalized-audit-facts";
 import { runSelectiveAiAuditAnalysis } from "@/lib/audits/selective-ai/selective-ai-audit";
 import {
   type AuditProgressStage,
@@ -43,7 +45,7 @@ import { compareBusinessToCompetitors } from "@/lib/competitors/competitor-compa
 import type { AuditCompetitorIntelligence } from "@/lib/competitors/competitor-types";
 import { discoverGoogleBusinessProfiles } from "@/lib/google/google-business-discovery";
 import { prisma } from "@/lib/prisma";
-import { logError, logWarn } from "@/lib/observability/log";
+import { logError, logInfo, logWarn } from "@/lib/observability/log";
 import {
   COMPETITOR_COMPARISON_VERSION,
   buildCompetitorComparisonDependencyFingerprint,
@@ -477,6 +479,17 @@ async function buildAuditData({
           businessContext,
       })
     : null;
+  if (websiteCrawl) {
+    logInfo("audit_content_quality_analysis", {
+      businessId,
+      auditId,
+      thinPages: websiteCrawl.thinPages?.length ?? 0,
+      duplicateGroups: websiteCrawl.duplicateContentGroups?.length ?? 0,
+      acceptedCopyFindings: websiteCrawl.copyQualityFindings?.length ?? 0,
+      orderingFrictionPages:
+        websiteCrawl.orderingFrictionPages?.length ?? 0,
+    });
+  }
   await setAuditProgressStage(
     businessId,
     auditId,
@@ -590,7 +603,7 @@ async function buildAuditData({
     "EVALUATING_SOCIAL_PRESENCE",
   );
   const socialAnalysis = analyzeSocialProfiles({
-    businessProfiles: approvedProfiles.map((profile) => ({
+    businessProfiles: business.profiles.map((profile) => ({
       platform: profile.platform,
       status: profile.status,
       label: profile.displayName,
@@ -608,7 +621,7 @@ async function buildAuditData({
     primaryGoal: business.primaryGoal,
   });
   const reviewAnalysis = analyzeReviews({
-    businessProfiles: approvedProfiles.map((profile) => ({
+    businessProfiles: business.profiles.map((profile) => ({
       platform: profile.platform,
       status: profile.status,
       label: profile.displayName,
@@ -644,6 +657,15 @@ async function buildAuditData({
     primaryGoal: business.primaryGoal,
     businessContext: effectiveBusinessContext,
   });
+  if (!reviewAnalysis.dataRequirementsMet) {
+    logInfo("audit_review_score_limited_insufficient_data", {
+      businessId,
+      auditId,
+      score: reviewAnalysis.score,
+      evidenceCompleteness: reviewAnalysis.evidenceCompleteness,
+      missingMetricCount: reviewAnalysis.missingInputs.length,
+    });
+  }
   const competitorProfileSummary = business.competitors.map((competitor) => {
     const confirmedProfiles = competitor.discoveredProfiles.filter(
       (profile) => profile.status === BusinessProfileStatus.CONFIRMED,
@@ -738,7 +760,7 @@ async function buildAuditData({
   const auditResult = generateDeterministicAudit({
     businessName: business.name,
     initialInput: business.initialInput,
-    profiles: approvedProfiles.map((profile) => ({
+    profiles: business.profiles.map((profile) => ({
       platform: profile.platform,
       status: profile.status,
       confidenceScore: profile.confidenceScore,
@@ -912,14 +934,14 @@ async function buildAuditData({
         snapshots: competitor.snapshots,
       })),
     });
-  const evidenceIntegrityResult = buildAuditEvidenceIntegrity({
+  const preliminaryEvidenceIntegrityResult = buildAuditEvidenceIntegrity({
     website: websiteAnalysis,
     websiteCrawl,
     seo: seoAnalysis,
     social: socialAnalysis,
     reviews: reviewAnalysis,
     businessContext: effectiveBusinessContext,
-    businessProfiles: approvedProfiles.map((profile) => ({
+    businessProfiles: business.profiles.map((profile) => ({
       id: profile.id,
       platform: profile.platform,
       status: profile.status,
@@ -944,16 +966,17 @@ async function buildAuditData({
     sourceVersions: {
       website: WEBSITE_ANALYZER_VERSION,
       seo: SEO_ANALYZER_VERSION,
-      social: "social-analyzer-v2",
-      reviews: "review-analyzer-v2",
+      social: "social-analyzer-v3-coverage",
+      reviews: "review-analyzer-v3-data-sufficiency",
       competitors: COMPETITOR_COMPARISON_VERSION,
       scoring: SCORING_ENGINE_VERSION,
     },
   });
-  auditResult.findings = evidenceIntegrityResult.findings;
-  auditResult.recommendations = evidenceIntegrityResult.recommendations;
+  auditResult.findings = preliminaryEvidenceIntegrityResult.findings;
+  auditResult.recommendations =
+    preliminaryEvidenceIntegrityResult.recommendations;
 
-  for (const warning of evidenceIntegrityResult.snapshot.validationWarnings) {
+  for (const warning of preliminaryEvidenceIntegrityResult.snapshot.validationWarnings) {
     logWarn("audit_evidence_validation_warning", {
       businessId,
       auditId,
@@ -1016,14 +1039,144 @@ async function buildAuditData({
       status: "TODO" as const,
     })),
   });
+  const scoreValues = Object.fromEntries(
+    auditResult.scores.map((score) => [score.category, score.score]),
+  ) as Partial<Record<ScoreCategory, number>>;
+  const normalizedFacts = buildNormalizedAuditFacts({
+    website: websiteAnalysis,
+    websiteCrawl,
+    seo: seoAnalysis,
+    social: socialAnalysis,
+    reviews: reviewAnalysis,
+    selectiveAi: selectiveAiResult.snapshot,
+    businessProfiles: business.profiles.map((profile) => ({
+      platform: profile.platform,
+      status: profile.status,
+    })),
+    businessContext: effectiveBusinessContext,
+    competitorConfigured: business.competitors.length > 0,
+    competitorAnalyzed: comparison.analyzedCompetitorCount > 0,
+    scoreValues,
+  });
+  const postAiEvidenceIntegrityResult = buildAuditEvidenceIntegrity({
+    website: websiteAnalysis,
+    websiteCrawl,
+    seo: seoAnalysis,
+    social: socialAnalysis,
+    reviews: reviewAnalysis,
+    businessContext: effectiveBusinessContext,
+    businessProfiles: business.profiles.map((profile) => ({
+      id: profile.id,
+      platform: profile.platform,
+      status: profile.status,
+    })),
+    competitors: business.competitors.map((competitor) => ({
+      id: competitor.id,
+      name: competitor.name,
+      profiles: competitor.discoveredProfiles.map((profile) => ({
+        id: profile.id,
+        platform: profile.platform,
+        status: profile.status,
+      })),
+    })),
+    competitorComparison: comparison,
+    findings: auditResult.findings.map((finding) => ({
+      ...finding,
+      id: finding.id ?? randomUUID(),
+    })),
+    recommendations: auditResult.recommendations,
+    scoreBreakdowns: auditResult.scoreBreakdowns,
+    observedAt: new Date(),
+    sourceVersions: {
+      website: WEBSITE_ANALYZER_VERSION,
+      seo: SEO_ANALYZER_VERSION,
+      social: "social-analyzer-v3-coverage",
+      reviews: "review-analyzer-v3-data-sufficiency",
+      competitors: COMPETITOR_COMPARISON_VERSION,
+      scoring: SCORING_ENGINE_VERSION,
+    },
+  });
+  const consistencyResult = validateAuditConsistency({
+    facts: normalizedFacts,
+    findings: postAiEvidenceIntegrityResult.findings,
+    recommendations: postAiEvidenceIntegrityResult.recommendations,
+    summary: auditResult.summary,
+    businessName: business.name,
+  });
+  auditResult.findings = consistencyResult.findings;
+  auditResult.recommendations = consistencyResult.recommendations;
+  auditResult.summary = consistencyResult.summary;
+
+  for (const issue of consistencyResult.snapshot.issues) {
+    const details = {
+      businessId,
+      auditId,
+      severity: issue.severity,
+      code: issue.code,
+      sourceId: issue.sourceId,
+    };
+    if (issue.severity === "ERROR") {
+      logWarn("audit_consistency_validation_failure", details);
+    } else if (issue.code === "DUPLICATE_ROOT_CAUSE_REJECTED") {
+      logWarn("audit_duplicate_recommendation_merged", details);
+    } else if (issue.code === "KNOWN_VALUE_RESTORED") {
+      logWarn("audit_known_value_regression_prevented", details);
+    } else if (issue.code === "BUSINESS_MODEL_MISMATCH_REJECTED") {
+      logWarn("audit_strategy_business_model_mismatch_rejected", details);
+    } else if (issue.code === "SAFE_SUMMARY_FALLBACK") {
+      logWarn("audit_safe_report_wording_used", details);
+    }
+  }
+
+  const evidenceIntegrityResult = buildAuditEvidenceIntegrity({
+    website: websiteAnalysis,
+    websiteCrawl,
+    seo: seoAnalysis,
+    social: socialAnalysis,
+    reviews: reviewAnalysis,
+    businessContext: effectiveBusinessContext,
+    businessProfiles: business.profiles.map((profile) => ({
+      id: profile.id,
+      platform: profile.platform,
+      status: profile.status,
+    })),
+    competitors: business.competitors.map((competitor) => ({
+      id: competitor.id,
+      name: competitor.name,
+      profiles: competitor.discoveredProfiles.map((profile) => ({
+        id: profile.id,
+        platform: profile.platform,
+        status: profile.status,
+      })),
+    })),
+    competitorComparison: comparison,
+    findings: auditResult.findings.map((finding) => ({
+      ...finding,
+      id: finding.id ?? randomUUID(),
+    })),
+    recommendations: auditResult.recommendations,
+    scoreBreakdowns: auditResult.scoreBreakdowns,
+    observedAt: new Date(),
+    sourceVersions: {
+      website: WEBSITE_ANALYZER_VERSION,
+      seo: SEO_ANALYZER_VERSION,
+      social: "social-analyzer-v3-coverage",
+      reviews: "review-analyzer-v3-data-sufficiency",
+      competitors: COMPETITOR_COMPARISON_VERSION,
+      scoring: SCORING_ENGINE_VERSION,
+    },
+  });
+  auditResult.findings = evidenceIntegrityResult.findings;
+  auditResult.recommendations = evidenceIntegrityResult.recommendations;
+
   const scoringMetadata = {
     scoringEngineVersion: SCORING_ENGINE_VERSION,
     reportViewModelVersion: REPORT_VIEW_MODEL_VERSION,
     analyzerVersions: {
       website: WEBSITE_ANALYZER_VERSION,
       seo: SEO_ANALYZER_VERSION,
-      social: "social-analyzer-v2",
-      reviews: "review-analyzer-v2",
+      social: "social-analyzer-v3-coverage",
+      reviews: "review-analyzer-v3-data-sufficiency",
       competitors: COMPETITOR_COMPARISON_VERSION,
     },
     categoryWeights: auditResult.assessment.scoreWeights,
@@ -1107,6 +1260,9 @@ async function buildAuditData({
       },
       scoringMetadata,
       assessment: auditResult.assessment,
+      normalizedFacts,
+      coverage: normalizedFacts.coverage,
+      consistencyValidation: consistencyResult.snapshot,
       evidenceIntegrity: evidenceIntegrityResult.snapshot,
     }),
   };

@@ -5,9 +5,18 @@ import { createHash } from "node:crypto";
 import {
   classifyWebsiteActions,
   emptyWebsiteActionSummary,
-  matchesActionCandidate,
   type WebsiteActionSummary,
 } from "@/lib/analyzers/action-classifier";
+import {
+  analyzeConversionProcess,
+  assessThinContent,
+  detectCopyQualityIssues,
+  detectDuplicateContentGroups,
+  type ConversionProcessAssessment,
+  type CopyQualityIssue,
+  type DuplicateContentGroup,
+  type ThinContentAssessment,
+} from "@/lib/analyzers/content-quality";
 import {
   emptyLocalBusinessClues,
   extractLocalBusinessClues,
@@ -59,6 +68,10 @@ export type CrawledPageResult = {
   ctaCandidates: string[];
   actionSummary: WebsiteActionSummary;
   wordCount: number;
+  mainContentWordCount?: number;
+  thinContent?: ThinContentAssessment;
+  copyQualityIssues?: CopyQualityIssue[];
+  conversionProcess?: ConversionProcessAssessment;
   warnings: string[];
   score: number;
   pageTypes: string[];
@@ -117,6 +130,14 @@ export type WebsiteCrawlResult = {
   crawlLimitReached: boolean;
   businessTypeUsed: CrawlBusinessKind;
   pageResults: CrawledPageResult[];
+  thinPages?: Array<{ url: string; wordCount: number; status: "THIN" | "EMPTY" }>;
+  duplicateContentGroups?: DuplicateContentGroup[];
+  copyQualityFindings?: CopyQualityIssue[];
+  orderingFrictionPages?: Array<{
+    url: string;
+    frictionLevel: "LOW" | "MODERATE" | "HIGH";
+    evidence: string[];
+  }>;
   warnings: string[];
 };
 
@@ -196,73 +217,6 @@ const blockedPathTerms = [
   "download",
   "downloads",
 ];
-const generalCtaTerms = [
-  "get started",
-  "book",
-  "contact",
-  "schedule",
-  "buy",
-  "sign up",
-  "start",
-  "request quote",
-  "learn more",
-  "call now",
-  "email",
-];
-
-const ctaTermsByKind: Record<CrawlBusinessKind, string[]> = {
-  restaurant: [
-    "view menu",
-    "menu",
-    "get directions",
-    "directions",
-    "call now",
-    "hours",
-    "order online",
-    "order",
-    "takeout",
-    "reservation",
-    "reservations",
-    "book a table",
-    "events",
-    "gift cards",
-    "store",
-  ],
-  saas: [
-    "start free trial",
-    "free trial",
-    "book demo",
-    "request demo",
-    "get started",
-    "view pricing",
-    "pricing",
-    "contact sales",
-    "sign up",
-    "create account",
-  ],
-  local_service: [
-    "get quote",
-    "request quote",
-    "call now",
-    "book appointment",
-    "schedule service",
-    "request estimate",
-    "free estimate",
-    "contact",
-  ],
-  ecommerce: [
-    "shop now",
-    "shop",
-    "view products",
-    "products",
-    "add to cart",
-    "subscribe",
-    "buy now",
-    "collections",
-  ],
-  general: [],
-};
-
 const importantPageMatchers = [
   { type: "Homepage", terms: ["home"] },
   { type: "About", terms: ["about", "our story", "who we are"] },
@@ -484,10 +438,6 @@ function inferBusinessKind(context?: CrawlBusinessContext | null): CrawlBusiness
   }
 
   return "general";
-}
-
-function ctaTermsForKind(kind: CrawlBusinessKind) {
-  return unique([...generalCtaTerms, ...ctaTermsByKind[kind]]);
 }
 
 function relevantImportantTypes(kind: CrawlBusinessKind) {
@@ -959,7 +909,6 @@ function analyzeHtmlPage({
       return false;
     }
   });
-  const ctaTerms = ctaTermsForKind(kind);
   const buttonCandidates = $("button, [role='button']")
     .map((_, element) => ({
       label: textOf($(element).text()),
@@ -968,22 +917,7 @@ function analyzeHtmlPage({
     }))
     .get()
     .filter((button) => Boolean(button.label));
-  const rawActionCandidates = [
-    ...links.filter((link) =>
-      matchesActionCandidate({
-        label: link.label,
-        href: link.href,
-        terms: ctaTerms,
-      }),
-    ),
-    ...buttonCandidates.filter((button) =>
-      matchesActionCandidate({
-        label: button.label,
-        href: button.href,
-        terms: ctaTerms,
-      }),
-    ),
-  ].slice(0, 40);
+  const rawActionCandidates = [...links, ...buttonCandidates].slice(0, 120);
   const actionSummary = classifyWebsiteActions({
     candidates: rawActionCandidates,
     businessKind: kind,
@@ -1034,6 +968,22 @@ function analyzeHtmlPage({
       kind,
     }),
   ]);
+  const mainContentWordCount = cleanContent.fullText
+    ? cleanContent.fullText.split(/\s+/).length
+    : 0;
+  const thinContent = assessThinContent({
+    mainContentWordCount,
+    pageTypes: finalTypes,
+  });
+  const copyQualityIssues = detectCopyQualityIssues({
+    url,
+    text: cleanContent.fullText,
+  });
+  const conversionProcess = analyzeConversionProcess({
+    text: cleanContent.fullText,
+    formLabels,
+    actionTypes: actionSummary.detectedActionTypes,
+  });
   const contentHash = sha256(cleanContent.fullText);
   const metadataHash = sha256(
     JSON.stringify({
@@ -1071,6 +1021,10 @@ function analyzeHtmlPage({
     ctaCandidates,
     actionSummary,
     wordCount: bodyText ? bodyText.split(/\s+/).length : 0,
+    mainContentWordCount,
+    thinContent,
+    copyQualityIssues,
+    conversionProcess,
     warnings,
     pageTypes: finalTypes,
     hasContactInfo: contactSignals.length > 0,
@@ -1350,6 +1304,43 @@ function summarizeCrawl({
   const missingImportantPageTypes = reportableTypes
     .filter((type) => type !== "Homepage")
     .filter((type) => !discoveredTypes.has(type));
+  const thinPages = successfulPages
+    .filter(
+      (page) =>
+        page.thinContent?.status === "THIN" ||
+        page.thinContent?.status === "EMPTY",
+    )
+    .map((page) => ({
+      url: page.url,
+      wordCount: page.mainContentWordCount ?? page.wordCount,
+      status: page.thinContent!.status as "THIN" | "EMPTY",
+    }));
+  const duplicateContentGroups = detectDuplicateContentGroups(
+    successfulPages.map((page) => ({
+      url: page.url,
+      content: page.analysisContent ?? null,
+      contentHash: page.contentHash,
+      mainContentWordCount: page.mainContentWordCount ?? page.wordCount,
+    })),
+  );
+  const copyQualityFindings = successfulPages
+    .flatMap((page) => page.copyQualityIssues ?? [])
+    .slice(0, 10);
+  const orderingFrictionPages = successfulPages
+    .filter(
+      (page) =>
+        page.conversionProcess?.frictionLevel === "LOW" ||
+        page.conversionProcess?.frictionLevel === "MODERATE" ||
+        page.conversionProcess?.frictionLevel === "HIGH",
+    )
+    .map((page) => ({
+      url: page.url,
+      frictionLevel: page.conversionProcess!.frictionLevel as
+        | "LOW"
+        | "MODERATE"
+        | "HIGH",
+      evidence: page.conversionProcess!.evidence,
+    }));
 
   return {
     normalizedUrl,
@@ -1410,6 +1401,10 @@ function summarizeCrawl({
     crawlLimitReached,
     businessTypeUsed,
     pageResults,
+    thinPages,
+    duplicateContentGroups,
+    copyQualityFindings,
+    orderingFrictionPages,
     warnings,
   };
 }

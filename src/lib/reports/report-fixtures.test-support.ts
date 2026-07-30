@@ -10,7 +10,10 @@ import {
 
 import { analyzeReviews } from "@/lib/analyzers/review-analyzer";
 import { analyzeSocialProfiles } from "@/lib/analyzers/social-analyzer";
-import { getPrimaryCtaAssessment } from "@/lib/analyzers/action-classifier";
+import {
+  classifyWebsiteActions,
+  getPrimaryCtaAssessment,
+} from "@/lib/analyzers/action-classifier";
 import type { SeoAnalysis } from "@/lib/analyzers/seo-analyzer";
 import type {
   CrawledPageResult,
@@ -21,6 +24,7 @@ import { generateDeterministicSocialStrategy } from "@/lib/ai/social-strategy-ge
 import { buildAuditAssessment } from "@/lib/audits/audit-applicability";
 import type { AuditComparison } from "@/lib/audits/audit-comparison";
 import { EVIDENCE_CONTRACT_VERSION } from "@/lib/audits/evidence-contracts";
+import { buildNormalizedAuditFacts } from "@/lib/audits/normalized-audit-facts";
 import type {
   AuditCompetitorIntelligence,
   CompetitorComparisonResult,
@@ -40,6 +44,7 @@ export type ReportFixtureKind =
   | "saas"
   | "local_service"
   | "social_only"
+  | "cottage_regression"
   | "no_competitor"
   | "stale_strategy";
 
@@ -57,7 +62,9 @@ type FixtureConfig = {
   goal: BusinessGoal;
   hasWebsite: boolean;
   socialPlatforms: ProfilePlatform[];
+  detectedSocialPlatforms?: ProfilePlatform[];
   googleBusiness: boolean;
+  reviewMetricsAvailable?: boolean;
   competitor: boolean;
 };
 
@@ -134,6 +141,33 @@ const fixtureConfigs: Record<ReportFixtureKind, FixtureConfig> = {
     hasWebsite: false,
     socialPlatforms: [ProfilePlatform.INSTAGRAM, ProfilePlatform.TIKTOK],
     googleBusiness: false,
+    competitor: false,
+  },
+  cottage_regression: {
+    name: "Sunrise Pocket Bakery",
+    initialInput: "https://sunrise-pocket.example/",
+    archetype: "cottage_food",
+    description:
+      "A home-based cottage-food bakery taking preorders for local pickup or delivery with no public storefront.",
+    targetAudience:
+      "Local families and event hosts ordering seasonal handheld pastries.",
+    mainOffer:
+      "Seasonal pastry pockets available through a manual preorder inquiry.",
+    industry: "Cottage food",
+    businessType: "Home-based cottage-food preorder business",
+    conversionGoal:
+      "Submit an order inquiry for pickup or local delivery.",
+    brandTone: "Warm, practical, and product-focused.",
+    goal: BusinessGoal.MORE_CUSTOMERS,
+    hasWebsite: true,
+    socialPlatforms: [ProfilePlatform.INSTAGRAM],
+    detectedSocialPlatforms: [
+      ProfilePlatform.INSTAGRAM,
+      ProfilePlatform.FACEBOOK,
+      ProfilePlatform.TIKTOK,
+    ],
+    googleBusiness: true,
+    reviewMetricsAvailable: false,
     competitor: false,
   },
   no_competitor: {
@@ -218,7 +252,7 @@ export function createReportFixture(
   const websiteCrawl = config.hasWebsite
     ? createCrawl(config, options?.stress)
     : null;
-  const seo = config.hasWebsite ? createSeo() : null;
+  const seo = config.hasWebsite ? createSeo(config) : null;
   const social = analyzeSocialProfiles({
     businessProfiles: profileRecords,
     goals: [config.goal],
@@ -232,8 +266,10 @@ export function createReportFixture(
             id: "google-fixture",
             displayName: config.name,
             googleMapsUri: "https://maps.google.com/?cid=fixture",
-            rating: 4.7,
-            reviewCount: 1240,
+            rating:
+              config.reviewMetricsAvailable === false ? null : 4.7,
+            reviewCount:
+              config.reviewMetricsAvailable === false ? null : 1240,
             matchConfidence: 96,
             status: "confirmed",
             source: "places_api",
@@ -283,30 +319,111 @@ export function createReportFixture(
     : null;
   const recommendations = createRecommendations(config, options?.stress);
   const findings = createFindings(config, options?.stress);
-  const overallScore = config.hasWebsite ? 76 : 79;
+  const overallScore =
+    config.archetype === "cottage_food"
+      ? 61
+      : config.hasWebsite
+        ? 76
+        : 79;
   const scoreItems: AuditReportViewModel["scores"] = [
     {
       category: ScoreCategory.WEBSITE,
       label: "Website",
-      score: config.hasWebsite ? 78 : null,
+      score: config.hasWebsite ? website?.score ?? 78 : null,
       status: config.hasWebsite ? "scored" : "not_provided",
+      confidence: config.hasWebsite ? "High" : "Low",
+      evidenceCompleteness: config.hasWebsite ? 100 : 0,
+      dataRequirementsMet: config.hasWebsite,
+      missingInputs: config.hasWebsite ? [] : ["Confirmed website profile"],
     },
     {
       category: ScoreCategory.SEO,
       label: "SEO",
-      score: config.hasWebsite ? 71 : null,
+      score: config.hasWebsite ? seo?.score ?? 71 : null,
       status: config.hasWebsite ? "scored" : "not_applicable",
+      confidence: config.hasWebsite ? "High" : "Low",
+      evidenceCompleteness: config.hasWebsite ? 100 : 0,
+      dataRequirementsMet: config.hasWebsite,
+      missingInputs: config.hasWebsite ? [] : ["Confirmed website profile"],
     },
-    { category: ScoreCategory.BRANDING, label: "Branding", score: 82, status: "scored" },
-    { category: ScoreCategory.SOCIAL, label: "Social", score: social.score, status: "scored" },
-    { category: ScoreCategory.REVIEWS, label: "Reviews & Trust", score: reviews.score, status: "scored" },
+    {
+      category: ScoreCategory.BRANDING,
+      label: "Branding",
+      score: config.archetype === "cottage_food" ? 66 : 82,
+      status: "scored",
+      confidence: "Medium",
+      evidenceCompleteness: 75,
+      dataRequirementsMet: true,
+      missingInputs: [],
+    },
+    {
+      category: ScoreCategory.SOCIAL,
+      label: "Social profile coverage",
+      score: social.score,
+      status: "partial",
+      confidence: social.scoreConfidence === "HIGH" ? "High" : social.scoreConfidence === "MEDIUM" ? "Medium" : "Low",
+      evidenceCompleteness: social.evidenceCompleteness,
+      dataRequirementsMet: social.dataRequirementsMet,
+      missingInputs: ["Profile content", "Posting activity", "Engagement and performance"],
+    },
+    {
+      category: ScoreCategory.REVIEWS,
+      label: reviews.dataRequirementsMet
+        ? "Reviews & Trust"
+        : "Reviews / listing presence",
+      score: reviews.score,
+      status: reviews.dataRequirementsMet ? "scored" : "partial",
+      confidence: reviews.scoreConfidence === "HIGH" ? "High" : reviews.scoreConfidence === "MEDIUM" ? "Medium" : "Low",
+      evidenceCompleteness: reviews.evidenceCompleteness,
+      dataRequirementsMet: reviews.dataRequirementsMet,
+      missingInputs: reviews.missingInputs,
+    },
     {
       category: ScoreCategory.COMPETITORS,
       label: "Competitive Position",
       score: competitorComparison ? 63 : null,
       status: competitorComparison ? "scored" : "not_configured",
+      confidence: competitorComparison ? "Medium" : "Low",
+      evidenceCompleteness: competitorComparison ? 100 : 0,
+      dataRequirementsMet: Boolean(competitorComparison),
+      missingInputs: competitorComparison
+        ? []
+        : ["Saved competitors", "Completed public competitor analysis"],
     },
   ];
+  const normalizedFacts = buildNormalizedAuditFacts({
+    website,
+    websiteCrawl,
+    seo,
+    social,
+    reviews,
+    selectiveAi: null,
+    businessProfiles: profileRecords.map((profile) => ({
+      platform: profile.platform,
+      status: profile.status,
+    })),
+    businessContext: {
+      name: config.name,
+      description: config.description,
+      targetAudience: config.targetAudience,
+      mainOffer: config.mainOffer,
+      industry: config.industry,
+      businessType: config.businessType,
+      primaryConversionGoal: config.conversionGoal,
+      brandTone: config.brandTone,
+    },
+    competitorConfigured: Boolean(competitorComparison),
+    competitorAnalyzed: Boolean(competitorComparison),
+    scoreValues: {
+      [ScoreCategory.OVERALL]: overallScore,
+      ...Object.fromEntries(
+        scoreItems.flatMap((item) =>
+          item.score === null ? [] : [[item.category, item.score]],
+        ),
+      ),
+    },
+    generatedAt: auditDate.toISOString(),
+  });
   const report: AuditReportViewModel = {
     business: {
       id: `business-${kind}`,
@@ -421,9 +538,25 @@ export function createReportFixture(
       },
     },
     findings: {
-      strengths: findings.filter((item) => item.severity === FindingSeverity.INFO),
-      warnings: findings.filter((item) => item.severity === FindingSeverity.HIGH),
-      opportunities: findings.filter((item) => item.severity === FindingSeverity.MEDIUM),
+      strengths: findings.filter(
+        (item) =>
+          item.findingType === "VERIFIED_STRENGTH" ||
+          (!item.findingType && item.severity === FindingSeverity.INFO),
+      ),
+      warnings: findings.filter(
+        (item) =>
+          item.findingType === "VERIFIED_TECHNICAL_ISSUE" ||
+          item.findingType === "LIMITATION" ||
+          (!item.findingType && item.severity === FindingSeverity.HIGH),
+      ),
+      opportunities: findings.filter(
+        (item) =>
+          item.findingType === "AI_REVIEWED_OPPORTUNITY" ||
+          item.findingType === "COVERAGE_INFORMATION" ||
+          item.findingType === "OBSERVATION" ||
+          (!item.findingType &&
+            item.severity === FindingSeverity.MEDIUM),
+      ),
       all: findings,
     },
     recommendations: {
@@ -508,6 +641,8 @@ export function createReportFixture(
         report: REPORT_VIEW_MODEL_VERSION,
       },
     },
+    normalizedFacts,
+    coverage: normalizedFacts.coverage,
     dataNotes: [],
     technicalAppendix: {
       detectedActionLinks: website?.actionSummary.rawCandidates ?? [],
@@ -540,12 +675,57 @@ function createWebsite(config: FixtureConfig, stress = false): WebsiteAnalysis {
   const longPath = stress
     ? `/resources/${"a-very-long-but-valid-url-segment-".repeat(8)}final`
     : "/contact";
+  const cottageRegression = config.archetype === "cottage_food";
+  const detectedSocialLinks = (
+    config.detectedSocialPlatforms ?? [ProfilePlatform.INSTAGRAM]
+  ).map(
+    (platform) =>
+      `https://${platform.toLowerCase()}.com/${slug(config.name)}`,
+  );
+  const actionSummary = cottageRegression
+    ? classifyWebsiteActions({
+        businessKind: "general",
+        candidates: [
+          {
+            label: "Order Inquiries",
+            href: `${config.initialInput}order-inquiries`,
+            domLocation: "main",
+          },
+          {
+            label: "Email orders",
+            href: "mailto:orders@sunrise-pocket.example",
+            domLocation: "main",
+          },
+          {
+            label: "Join the newsletter",
+            href: `${config.initialInput}newsletter`,
+            domLocation: "footer",
+          },
+          ...detectedSocialLinks.map((href) => ({
+            label: href.includes("instagram")
+              ? "Instagram"
+              : href.includes("facebook")
+                ? "Facebook"
+                : "TikTok",
+            href,
+            domLocation: "footer" as const,
+          })),
+        ],
+      })
+    : fixtureActionSummary([config.conversionGoal], [
+        config.conversionGoal,
+        longPath,
+        "About",
+        "Instagram",
+      ]);
   return {
     normalizedUrl: config.initialInput,
-    pageTitle: `${config.name} | ${config.mainOffer}`,
-    metaDescription: config.description,
+    pageTitle: cottageRegression
+      ? `Home | ${config.name}`
+      : `${config.name} | ${config.mainOffer}`,
+    metaDescription: cottageRegression ? null : config.description,
     h1Count: 1,
-    h1Text: [config.mainOffer],
+    h1Text: [cottageRegression ? "PIE POCKETS" : config.mainOffer],
     hasViewportMeta: true,
     hasCanonical: true,
     internalLinksCount: 18,
@@ -556,26 +736,28 @@ function createWebsite(config: FixtureConfig, stress = false): WebsiteAnalysis {
     hasPricingLink: config.archetype === "saas_software",
     hasBlogLink: true,
     hasSocialLinks: true,
-    detectedSocialLinks: ["https://instagram.com/fixture"],
+    detectedSocialLinks,
     detectedAddress: null,
     detectedPhone: null,
     detectedGoogleMapsLinks: [],
     detectedMapEmbeds: [],
     detectedLocalBusinessSchema: [],
     operatingHoursSignals: [],
-    ctaCandidates: [config.conversionGoal, longPath],
-    actionSummary: fixtureActionSummary([config.conversionGoal], [
-      config.conversionGoal,
-      longPath,
-      "About",
-      "Instagram",
-    ]),
-    warnings: ["Two images are missing alt text."],
-    score: 78,
+    ctaCandidates: cottageRegression
+      ? ["Order Inquiries", "Email orders", "Join the newsletter"]
+      : [config.conversionGoal, longPath],
+    actionSummary,
+    warnings: cottageRegression
+      ? ["The homepage meta description is missing."]
+      : ["Two images are missing alt text."],
+    score: cottageRegression ? 64 : 78,
   };
 }
 
 function createCrawl(config: FixtureConfig, stress = false): WebsiteCrawlResult {
+  if (config.archetype === "cottage_food") {
+    return createCottageRegressionCrawl(config);
+  }
   const pageCount = stress ? 18 : 5;
   const pages = Array.from({ length: pageCount }, (_, index) =>
     createPage(config, index, stress),
@@ -627,6 +809,383 @@ function createCrawl(config: FixtureConfig, stress = false): WebsiteCrawlResult 
             ? "local_service"
             : "general",
     pageResults: pages,
+    warnings: [],
+  };
+}
+
+function createCottageRegressionCrawl(
+  config: FixtureConfig,
+): WebsiteCrawlResult {
+  const baseUrl = config.initialInput.replace(/\/$/, "");
+  const socialLinks = (
+    config.detectedSocialPlatforms ?? [ProfilePlatform.INSTAGRAM]
+  ).map(
+    (platform) =>
+      `https://${platform.toLowerCase()}.com/${slug(config.name)}`,
+  );
+  const homepageActions = classifyWebsiteActions({
+    businessKind: "general",
+    candidates: [
+      {
+        label: "Order Inquiries",
+        href: `${baseUrl}/order-inquiries`,
+        domLocation: "main",
+      },
+      {
+        label: "Email orders",
+        href: "mailto:orders@sunrise-pocket.example",
+        domLocation: "main",
+      },
+      {
+        label: "Join the newsletter",
+        href: `${baseUrl}/newsletter`,
+        domLocation: "footer",
+      },
+      ...socialLinks.map((href) => ({
+        label: href.includes("instagram")
+          ? "Instagram"
+          : href.includes("facebook")
+            ? "Facebook"
+            : "TikTok",
+        href,
+        domLocation: "footer" as const,
+      })),
+    ],
+  });
+  const orderActions = classifyWebsiteActions({
+    businessKind: "general",
+    candidates: [
+      {
+        label: "Email your order",
+        href: "mailto:orders@sunrise-pocket.example",
+        domLocation: "main",
+      },
+    ],
+  });
+  const pages: CrawledPageResult[] = [
+    {
+      url: config.initialInput,
+      statusCode: 200,
+      analysisStatus: "ANALYZED",
+      title: `Home | ${config.name}`,
+      metaDescription: null,
+      h1Count: 1,
+      h1Text: ["PIE POCKETS"],
+      hasCanonical: true,
+      hasViewportMeta: true,
+      imageCount: 8,
+      imagesMissingAltCount: 2,
+      internalLinksCount: 9,
+      externalLinksCount: socialLinks.length,
+      ctaCandidates: ["Order Inquiries", "Email orders"],
+      actionSummary: homepageActions,
+      wordCount: 310,
+      mainContentWordCount: 220,
+      thinContent: {
+        status: "SUFFICIENT",
+        mainContentWordCount: 220,
+        reason: null,
+      },
+      copyQualityIssues: [],
+      conversionProcess: {
+        applicable: true,
+        conversionMethod: "EMAIL",
+        estimatedManualSteps: 2,
+        formAvailable: false,
+        emailOnly: true,
+        phoneOnly: false,
+        delayedConfirmation: false,
+        externalInvoice: false,
+        pricingClarity: "UNCLEAR",
+        fulfillmentClarity: "CLEAR",
+        frictionLevel: "LOW",
+        evidence: [
+          "Ordering appears to rely on email rather than a structured form.",
+        ],
+        confidence: "MEDIUM",
+      },
+      warnings: ["Meta description missing."],
+      score: 66,
+      pageTypes: ["Homepage"],
+      hasContactInfo: true,
+      contactSignals: ["Email orders"],
+      detectedAddress: null,
+      detectedPhone: null,
+      detectedGoogleMapsLinks: [],
+      detectedMapEmbeds: [],
+      detectedLocalBusinessSchema: [],
+      operatingHoursSignals: [],
+    },
+    {
+      url: `${baseUrl}/menu`,
+      statusCode: 200,
+      analysisStatus: "ANALYZED",
+      title: "Menu | Sunrise Pocket Bakery",
+      metaDescription: null,
+      h1Count: 0,
+      h1Text: [],
+      hasCanonical: true,
+      hasViewportMeta: true,
+      imageCount: 6,
+      imagesMissingAltCount: 1,
+      internalLinksCount: 5,
+      externalLinksCount: 0,
+      ctaCandidates: ["Order Inquiries"],
+      actionSummary: classifyWebsiteActions({
+        businessKind: "general",
+        candidates: [
+          {
+            label: "Order Inquiries",
+            href: `${baseUrl}/order-inquiries`,
+            domLocation: "main",
+          },
+        ],
+      }),
+      wordCount: 180,
+      mainContentWordCount: 145,
+      thinContent: {
+        status: "SUFFICIENT",
+        mainContentWordCount: 145,
+        reason: null,
+      },
+      copyQualityIssues: [
+        {
+          url: `${baseUrl}/menu`,
+          issueType: "LIKELY_SPELLING",
+          excerpt: "Please recieve confirmation before pickup.",
+          suggestedCorrection: "receive",
+          confidence: "HIGH",
+        },
+      ],
+      warnings: [
+        "Meta description missing.",
+        "No H1 heading was detected.",
+      ],
+      score: 55,
+      pageTypes: ["Menu"],
+      hasContactInfo: false,
+      contactSignals: [],
+      detectedAddress: null,
+      detectedPhone: null,
+      detectedGoogleMapsLinks: [],
+      detectedMapEmbeds: [],
+      detectedLocalBusinessSchema: [],
+      operatingHoursSignals: [],
+    },
+    {
+      url: `${baseUrl}/order-inquiries`,
+      statusCode: 200,
+      analysisStatus: "ANALYZED",
+      title: "Order Inquiries | Sunrise Pocket Bakery",
+      metaDescription:
+        "Email the requested order details for pickup or delivery.",
+      h1Count: 1,
+      h1Text: ["Order Inquiries"],
+      hasCanonical: true,
+      hasViewportMeta: true,
+      imageCount: 1,
+      imagesMissingAltCount: 0,
+      internalLinksCount: 4,
+      externalLinksCount: 0,
+      ctaCandidates: ["Email your order"],
+      actionSummary: orderActions,
+      wordCount: 210,
+      mainContentWordCount: 175,
+      thinContent: {
+        status: "SUFFICIENT",
+        mainContentWordCount: 175,
+        reason: null,
+      },
+      copyQualityIssues: [],
+      conversionProcess: {
+        applicable: true,
+        conversionMethod: "EMAIL",
+        estimatedManualSteps: 4,
+        formAvailable: false,
+        emailOnly: true,
+        phoneOnly: false,
+        delayedConfirmation: true,
+        externalInvoice: true,
+        pricingClarity: "UNCLEAR",
+        fulfillmentClarity: "CLEAR",
+        frictionLevel: "HIGH",
+        evidence: [
+          "Ordering appears to rely on email rather than a structured form.",
+          "Six order-detail types are requested without a structured form.",
+          "The process requires a later manual confirmation.",
+          "Payment references an invoice sent after confirmation.",
+        ],
+        confidence: "HIGH",
+      },
+      warnings: [],
+      score: 58,
+      pageTypes: ["Order"],
+      hasContactInfo: true,
+      contactSignals: ["Email your order"],
+      detectedAddress: null,
+      detectedPhone: null,
+      detectedGoogleMapsLinks: [],
+      detectedMapEmbeds: [],
+      detectedLocalBusinessSchema: [],
+      operatingHoursSignals: [],
+    },
+    ...["apple", "cherry"].map<CrawledPageResult>((flavor) => ({
+      url: `${baseUrl}/products/${flavor}`,
+      statusCode: 200,
+      analysisStatus: "ANALYZED",
+      title: `${flavor === "apple" ? "Apple" : "Cherry"} Pie Pocket`,
+      metaDescription:
+        "A seasonal pastry pocket available through preorder.",
+      h1Count: 1,
+      h1Text: [
+        `${flavor === "apple" ? "Apple" : "Cherry"} Pie Pocket`,
+      ],
+      hasCanonical: true,
+      hasViewportMeta: true,
+      imageCount: 3,
+      imagesMissingAltCount: 0,
+      internalLinksCount: 4,
+      externalLinksCount: 0,
+      ctaCandidates: [],
+      actionSummary: fixtureActionSummary([]),
+      wordCount: 155,
+      mainContentWordCount: 118,
+      thinContent: {
+        status: "SUFFICIENT",
+        mainContentWordCount: 118,
+        reason: null,
+      },
+      copyQualityIssues: [],
+      warnings: [],
+      score: 72,
+      pageTypes: ["Product"],
+      hasContactInfo: false,
+      contactSignals: [],
+      detectedAddress: null,
+      detectedPhone: null,
+      detectedGoogleMapsLinks: [],
+      detectedMapEmbeds: [],
+      detectedLocalBusinessSchema: [],
+      operatingHoursSignals: [],
+    })),
+    {
+      url: `${baseUrl}/faq`,
+      statusCode: 200,
+      analysisStatus: "ANALYZED",
+      title: "FAQ | Sunrise Pocket Bakery",
+      metaDescription: "Common preorder questions.",
+      h1Count: 1,
+      h1Text: ["Frequently Asked Questions"],
+      hasCanonical: true,
+      hasViewportMeta: true,
+      imageCount: 0,
+      imagesMissingAltCount: 0,
+      internalLinksCount: 3,
+      externalLinksCount: 0,
+      ctaCandidates: [],
+      actionSummary: fixtureActionSummary([]),
+      wordCount: 24,
+      mainContentWordCount: 18,
+      thinContent: {
+        status: "EMPTY",
+        mainContentWordCount: 18,
+        reason:
+          "The extracted main content contains little beyond a page shell or navigation.",
+      },
+      copyQualityIssues: [],
+      warnings: ["Extracted main content appears empty."],
+      score: 48,
+      pageTypes: ["FAQ"],
+      hasContactInfo: false,
+      contactSignals: [],
+      detectedAddress: null,
+      detectedPhone: null,
+      detectedGoogleMapsLinks: [],
+      detectedMapEmbeds: [],
+      detectedLocalBusinessSchema: [],
+      operatingHoursSignals: [],
+    },
+  ];
+
+  return {
+    normalizedUrl: config.initialInput,
+    pagesScanned: pages.length,
+    successfulPages: pages.length,
+    failedPages: 0,
+    averagePageScore: 61,
+    pagesMissingTitle: 0,
+    pagesMissingMetaDescription: 2,
+    pagesWithNoH1: 1,
+    pagesWithMultipleH1: 0,
+    totalImages: pages.reduce((sum, page) => sum + page.imageCount, 0),
+    totalImagesMissingAlt: pages.reduce(
+      (sum, page) => sum + page.imagesMissingAltCount,
+      0,
+    ),
+    pagesWithNoCTA: pages.filter(
+      (page) => !page.actionSummary.hasDetectedActionLinks,
+    ).length,
+    pagesWithDetectedActionLinks: pages.filter(
+      (page) => page.actionSummary.hasDetectedActionLinks,
+    ).length,
+    pagesWithAssessedPrimaryCta: pages.length,
+    pagesWithClearPrimaryCta: 0,
+    pagesWithCtaNeedsImprovement: pages.filter(
+      (page) =>
+        page.actionSummary.primaryCtaAssessment.clarity ===
+        "NEEDS_IMPROVEMENT",
+    ).length,
+    pagesWithUncertainPrimaryCta: pages.filter(
+      (page) =>
+        page.actionSummary.primaryCtaAssessment.clarity === "UNCERTAIN",
+    ).length,
+    importantPagesFound: ["Menu", "Order", "FAQ"],
+    importantPagesMissing: ["Contact"],
+    discoveredImportantPages: [],
+    scannedImportantPages: [],
+    skippedImportantPages: [],
+    missingImportantPageTypes: ["Contact"],
+    duplicateUrlsSkipped: 0,
+    crawlLimitUsed: 10,
+    crawlLimitReached: false,
+    businessTypeUsed: "general",
+    pageResults: pages,
+    thinPages: [
+      {
+        url: `${baseUrl}/faq`,
+        wordCount: 18,
+        status: "EMPTY",
+      },
+    ],
+    duplicateContentGroups: [
+      {
+        urls: [
+          `${baseUrl}/products/apple`,
+          `${baseUrl}/products/cherry`,
+        ],
+        similarity: 0.91,
+        reason: "NEAR_DUPLICATE_MAIN_CONTENT",
+      },
+    ],
+    copyQualityFindings: [
+      {
+        url: `${baseUrl}/menu`,
+        issueType: "LIKELY_SPELLING",
+        excerpt: "Please recieve confirmation before pickup.",
+        suggestedCorrection: "receive",
+        confidence: "HIGH",
+      },
+    ],
+    orderingFrictionPages: [
+      {
+        url: `${baseUrl}/order-inquiries`,
+        frictionLevel: "HIGH",
+        evidence: [
+          "Ordering relies on email without a structured form.",
+          "Confirmation and invoice payment happen later.",
+        ],
+      },
+    ],
     warnings: [],
   };
 }
@@ -700,6 +1259,12 @@ function fixtureActionSummary(actions: string[], rawCandidates = actions) {
       assessed: true,
     },
     primaryActions: actions,
+    conversionLinks: actions,
+    contactActions: [],
+    emailActions: [],
+    orderActions: actions.filter((action) => /order|buy|shop/i.test(action)),
+    bookingActions: actions.filter((action) => /book|schedule/i.test(action)),
+    newsletterActions: [],
     secondaryNavigation: ["About"],
     socialLinks: [],
     eventLinks: [],
@@ -708,7 +1273,35 @@ function fixtureActionSummary(actions: string[], rawCandidates = actions) {
   };
 }
 
-function createSeo(): SeoAnalysis {
+function createSeo(config: FixtureConfig): SeoAnalysis {
+  if (config.archetype === "cottage_food") {
+    return {
+      score: 52,
+      titleStatus: "too_short",
+      titleLength: `Home | ${config.name}`.length,
+      metaDescriptionStatus: "missing",
+      metaDescriptionLength: 0,
+      h1Status: "good",
+      canonicalStatus: "good",
+      viewportStatus: "good",
+      robotsTxtStatus: "found",
+      sitemapStatus: "found",
+      indexabilityWarnings: [],
+      seoWarnings: [
+        "The homepage and menu page are missing meta descriptions.",
+        "The menu page has no H1.",
+      ],
+      seoStrengths: [
+        "The homepage has exactly one H1.",
+        "robots.txt and sitemap.xml were found.",
+      ],
+      recommendedFixes: [
+        "Write descriptive metadata for the homepage and menu page.",
+        "Add one descriptive H1 to the menu page.",
+      ],
+    };
+  }
+
   return {
     score: 71,
     titleStatus: "good",
@@ -752,10 +1345,73 @@ function createRecommendations(config: FixtureConfig, stress = false) {
     confidence: index < 3 ? ("High" as const) : ("Medium" as const),
     freshness: "Current audit" as const,
     technical: index >= 3,
+    sourceUrl: item.sourceUrl ?? null,
   }));
 }
 
 function recommendationDetails(config: FixtureConfig) {
+  if (config.archetype === "cottage_food") {
+    const baseUrl = config.initialInput.replace(/\/$/, "");
+    return [
+      action(
+        "Make ordering the clear primary action",
+        "Give the confirmed order-inquiry path stronger placement near the top and repeat it after the product section.",
+        ScoreCategory.WEBSITE,
+        "Order and email paths exist, but no single action has verified dominant structural prominence.",
+        "The saved growth goal depends on moving product interest into a real preorder inquiry.",
+        config.initialInput,
+      ),
+      action(
+        "Simplify the order inquiry process",
+        "Keep the manual preorder model, but collect required details in one guided form and explain confirmation, invoice payment, pickup, and delivery expectations.",
+        ScoreCategory.WEBSITE,
+        "The order page requests several details by email, requires later confirmation, and sends payment through a later invoice.",
+        "Fewer manual handoffs may make the existing preorder path easier to understand and complete.",
+        `${baseUrl}/order-inquiries`,
+      ),
+      action(
+        "Write descriptive metadata for the homepage and menu",
+        "Describe the product, local preorder market, and pickup or delivery offer in concise page-specific language.",
+        ScoreCategory.SEO,
+        "Measured meta-description length is 0 on the homepage and menu page.",
+        "Specific descriptions can make these pages clearer in search presentations without treating character ranges as guarantees.",
+        config.initialInput,
+      ),
+      action(
+        "Add a clear main headline to Menu",
+        "Add one descriptive H1 to the menu page while preserving the verified homepage H1.",
+        ScoreCategory.SEO,
+        "Homepage H1 count is 1; the menu page H1 count is 0.",
+        "The fix belongs only on the measured menu page.",
+        `${baseUrl}/menu`,
+      ),
+      action(
+        "Correct visible copy errors across key customer pages",
+        "Correct the cited high-confidence spelling issue while preserving product and brand language.",
+        ScoreCategory.BRANDING,
+        "The menu includes the excerpt: Please recieve confirmation before pickup.",
+        "Clean ordering copy supports trust during a manual inquiry.",
+        `${baseUrl}/menu`,
+      ),
+      action(
+        "Resolve the thin FAQ page",
+        "Add useful preorder answers, redirect it, remove it from navigation, or noindex it after confirming the page purpose.",
+        ScoreCategory.WEBSITE,
+        "The FAQ page contains 18 extracted main-content words.",
+        "A complete FAQ can reduce avoidable ordering questions.",
+        `${baseUrl}/faq`,
+      ),
+      action(
+        "Differentiate near-duplicate product pages",
+        "Give each product page distinct flavor details, availability, fulfillment guidance, and a relevant next step.",
+        ScoreCategory.SEO,
+        "The Apple and Cherry product pages have 91% main-content similarity in the synthetic fixture.",
+        "Distinct product information helps customers choose without forcing an automatic deletion recommendation.",
+        `${baseUrl}/products/apple`,
+      ),
+    ];
+  }
+
   if (config.archetype === "restaurant_hospitality") {
     return [
       action("Make menu, hours, and directions prominent", "Connect visual hospitality content to one practical visit action.", ScoreCategory.WEBSITE, "Current action-link evidence shows several options without one dominant visitor path.", "Restaurant visitors need a fast path from interest to a visit or order."),
@@ -807,11 +1463,79 @@ function action(
   category: ScoreCategory,
   evidence: string,
   relevance: string,
+  sourceUrl?: string,
 ) {
-  return { title, description, category, evidence, relevance };
+  return { title, description, category, evidence, relevance, sourceUrl };
 }
 
-function createFindings(config: FixtureConfig, stress = false) {
+function createFindings(
+  config: FixtureConfig,
+  stress = false,
+): AuditReportViewModel["findings"]["all"] {
+  if (config.archetype === "cottage_food") {
+    const baseUrl = config.initialInput.replace(/\/$/, "");
+    return [
+      {
+        id: "finding-homepage-h1-strength",
+        title: "The homepage has a clear main heading",
+        description: 'Homepage H1 count: 1. Found H1: "PIE POCKETS".',
+        category: ScoreCategory.SEO,
+        severity: FindingSeverity.INFO,
+        source: "selected_audit" as const,
+        sourceUrl: config.initialInput,
+        findingType: "VERIFIED_STRENGTH" as const,
+        sourceLabel: "Verified strength" as const,
+      },
+      {
+        id: "finding-menu-h1",
+        title: "The menu page is missing a main heading",
+        description: `Measured H1 count: 0 on ${baseUrl}/menu.`,
+        category: ScoreCategory.SEO,
+        severity: FindingSeverity.HIGH,
+        source: "selected_audit" as const,
+        sourceUrl: `${baseUrl}/menu`,
+        findingType: "VERIFIED_TECHNICAL_ISSUE" as const,
+        sourceLabel: "Verified technical issue" as const,
+      },
+      {
+        id: "finding-ordering-friction",
+        title: "The manual order process has several handoffs",
+        description:
+          "The order page requests details by email, waits for confirmation, and sends payment through a later invoice.",
+        category: ScoreCategory.WEBSITE,
+        severity: FindingSeverity.MEDIUM,
+        source: "selected_audit" as const,
+        sourceUrl: `${baseUrl}/order-inquiries`,
+        findingType: "AI_REVIEWED_OPPORTUNITY" as const,
+        sourceLabel: "AI-reviewed opportunity" as const,
+      },
+      {
+        id: "finding-coverage",
+        title: "Six pages completed technical analysis",
+        description:
+          "The bounded crawl analyzed all six eligible canonical pages discovered within this synthetic crawl scope.",
+        category: ScoreCategory.WEBSITE,
+        severity: FindingSeverity.INFO,
+        source: "selected_audit" as const,
+        sourceUrl: null,
+        findingType: "COVERAGE_INFORMATION" as const,
+        sourceLabel: "Coverage note" as const,
+      },
+      {
+        id: "finding-review-limitation",
+        title: "Review performance data is unavailable",
+        description:
+          "The Google listing is confirmed, but rating and review count are unavailable; reviews and sentiment were not analyzed.",
+        category: ScoreCategory.REVIEWS,
+        severity: FindingSeverity.HIGH,
+        source: "selected_audit" as const,
+        sourceUrl: null,
+        findingType: "LIMITATION" as const,
+        sourceLabel: "Limitation" as const,
+      },
+    ];
+  }
+
   const base = [
     {
       id: "finding-strength",
@@ -1001,6 +1725,9 @@ function firstAuditComparison(
 function buildExecutiveSummary(config: FixtureConfig, score: number) {
   if (!config.hasWebsite) {
     return `${config.name} has a ${score}/100 social-first foundation based on confirmed profiles, Business Context, goals, and trust evidence. Website and SEO were not supplied and did not reduce the score. Start with profile clarity, a focused link-in-bio path, and pinned offer and proof content. Individual post performance was not analyzed.`;
+  }
+  if (config.archetype === "cottage_food") {
+    return `${config.name}'s ${score}/100 assessment is grounded in a six-page technical crawl, confirmed Business Context, one user-confirmed social profile, three publicly detected social links, and a confirmed Google listing with limited review data. The homepage has one verified H1. Start by simplifying the manual preorder inquiry and making that confirmed path more prominent; the menu-only H1 gap and missing page descriptions follow. Social posts and review performance were not analyzed.`;
   }
   return `${config.name} has a ${score}/100 online foundation. Confirmed profiles and clear Business Context are working well. The controlled crawl found one page without an H1 and one missing meta description. Start with the highest-confidence conversion and structure actions; individual social-post performance was not analyzed.`;
 }

@@ -353,7 +353,16 @@ export function PresentationDeck({ data }: { data: PresentationDeckData }) {
           >
             <div className="grid h-full min-h-0 grid-rows-[auto_auto_minmax(0,1fr)] gap-2 sm:gap-3">
               <SlideMetricGrid columns={2} className="lg:grid-cols-4">
-                <SlideMetric label="Reviews & Trust score" value={`${data.reviews.score}/100`} tone="positive" />
+                <SlideMetric
+                  label={data.reviews.scoreLabel}
+                  value={`${data.reviews.score}/100`}
+                  detail={data.reviews.scoreDetail}
+                  tone={
+                    data.reviews.scoreLabel === "Listing-presence score"
+                      ? "warning"
+                      : "positive"
+                  }
+                />
                 <SlideMetric label="Google Business" value={data.reviews.googleStatus} tone="positive" />
                 <SlideMetric label="Google rating" value={data.reviews.rating} />
                 <SlideMetric label="Public review count" value={data.reviews.reviewCount} />
@@ -403,9 +412,9 @@ export function PresentationDeck({ data }: { data: PresentationDeckData }) {
                   tone="positive"
                 />
                 <SlideMetric
-                  label="Social presence"
-                  value={`${data.social.confirmedCount} confirmed social profiles`}
-                  detail={data.social.confirmedPlatforms.join(" and ") || "None confirmed"}
+                  label="Profile coverage"
+                  value={`${data.social.confirmedCount} confirmed / ${data.social.detectedCount} detected`}
+                  detail={`${data.social.pendingCount} pending; ${data.social.contentAnalyzedCount} profile contents analyzed`}
                 />
               </SlideMetricGrid>
               <div className="flex flex-wrap items-center gap-2 text-xs sm:text-sm">

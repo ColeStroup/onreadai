@@ -201,8 +201,13 @@ export function buildAuditEvidenceIntegrity<
     scoreBreakdowns: documentedScoreBreakdowns,
     canonicalRecommendations: canonicalRecommendations.map((item) => ({
       issueKey: item.issueKey,
+      rootCauseKey: item.rootCauseKey,
       sourceFindingId: item.sourceFindingId,
+      sourceFindingIds: item.sourceFindingIds,
       sourceEvidenceIds: item.sourceEvidenceIds,
+      affectedUrls: item.affectedUrls,
+      sourceTypes: item.sourceTypes,
+      findingType: item.findingType,
       sourceCategory: item.sourceCategory,
       recommendationType: item.recommendationType,
       fullEvidence: item.fullEvidence,

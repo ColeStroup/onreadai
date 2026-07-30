@@ -350,29 +350,30 @@ function renderAnalysisCoverage(
   flow: PdfFlow,
   report: AuditReportViewModel,
 ) {
-  const analysis = report.aiAnalysis;
-  if (!analysis) return;
+  const coverage = report.coverage;
+  if (!coverage) return;
 
-  const coverage = analysis.coverage;
   flow.sectionHeading("Analysis Coverage", { minContentHeight: 115 });
   flow.keyValueRows(
     [
       [
-        "Pages checked technically",
-        String(coverage.pagesCheckedTechnically),
+        "Crawl coverage",
+        `${coverage.crawl.successfulPages} of ${coverage.crawl.eligiblePages} eligible pages in scope`,
       ],
-      ["Key pages reviewed by AI", String(coverage.deepReviewedPages)],
       [
-        "Additional pages covered through technical and site-wide analysis",
-        String(
-          Math.max(
-            0,
-            coverage.pagesCheckedTechnically - coverage.deepReviewedPages,
-          ),
-        ),
+        "Technical coverage",
+        `${coverage.technical.pagesAnalyzed} pages (${formatStatus(coverage.technical.status)})`,
       ],
-      ["Unchanged AI page reviews reused", String(coverage.cacheHits)],
-      ["Selective analysis status", formatStatus(analysis.status)],
+      [
+        "AI content coverage",
+        `${coverage.aiContent.completedPages} of ${coverage.aiContent.selectedPages} selected pages`,
+      ],
+      [
+        "Social profile evidence",
+        `${coverage.socialProfiles.userConfirmed} confirmed / ${coverage.socialProfiles.publiclyDetected} publicly detected / ${coverage.socialProfiles.contentAnalyzed} content-analyzed`,
+      ],
+      ["Review evidence", formatStatus(coverage.reviews.status)],
+      ["Competitor evidence", formatStatus(coverage.competitors.status)],
     ],
     {
       fill: colors.softBlue,
@@ -381,7 +382,7 @@ function renderAnalysisCoverage(
     },
   );
   flow.note(
-    "Every successfully crawled page received deterministic checks. Only selected high-value representative pages received AI interpretation; the report does not imply uniform AI review.",
+    `${coverage.crawl.explanation} ${coverage.aiContent.explanation} ${coverage.socialProfiles.explanation}`,
     "Analysis Coverage",
   );
 }
@@ -411,6 +412,7 @@ function renderWebsite(flow: PdfFlow, report: AuditReportViewModel) {
   }
 
   const website = report.website;
+  const normalizedHomepage = report.normalizedFacts?.homepage;
   const crawl = report.websiteCrawl;
   const primaryActions =
     website.actionSummary?.detectedActionTypes ??
@@ -420,16 +422,18 @@ function renderWebsite(flow: PdfFlow, report: AuditReportViewModel) {
   flow.keyValueRows(
     [
       ["Website score", scoreValue(report.scores, ScoreCategory.WEBSITE)],
-      ["Page title", website.pageTitle || "Missing"],
+      ["Page title", normalizedHomepage?.title.value || "Missing"],
       [
         "Meta description",
-        website.metaDescription ? "Present" : "Missing",
+        normalizedHomepage?.metaDescription.status === "MISSING"
+          ? "Missing (0 characters)"
+          : `Present (${normalizedHomepage?.metaDescription.length ?? website.metaDescription?.length ?? 0} characters)`,
       ],
       [
         "Main headline (H1)",
-        website.h1Count === 1
-          ? website.h1Text.at(0) || "One detected"
-          : `${website.h1Count} detected`,
+        normalizedHomepage?.h1.count === 1
+          ? normalizedHomepage.h1.values.at(0) || "One detected"
+          : `${normalizedHomepage?.h1.count ?? website.h1Count} detected`,
       ],
       [
         "Images missing alt text",
@@ -499,12 +503,18 @@ function renderSeo(flow: PdfFlow, report: AuditReportViewModel) {
   flow.keyValueRows(
     [
       ["SEO score", scoreValue(report.scores, ScoreCategory.SEO)],
-      ["Title status / length", `${formatStatus(seo.titleStatus)} / ${seo.titleLength}`],
+      [
+        "Title status / length",
+        `${formatStatus(report.normalizedFacts?.homepage?.title.status ?? seo.titleStatus)} / ${report.normalizedFacts?.homepage?.title.length ?? seo.titleLength}`,
+      ],
       [
         "Meta description status / length",
-        `${formatStatus(seo.metaDescriptionStatus)} / ${seo.metaDescriptionLength}`,
+        `${formatStatus(report.normalizedFacts?.homepage?.metaDescription.status ?? seo.metaDescriptionStatus)} / ${report.normalizedFacts?.homepage?.metaDescription.length ?? seo.metaDescriptionLength}`,
       ],
-      ["H1 status", formatStatus(seo.h1Status)],
+      [
+        "Homepage H1 status",
+        formatStatus(report.normalizedFacts?.homepage?.h1.status ?? seo.h1Status),
+      ],
       ["Canonical status", formatStatus(seo.canonicalStatus)],
       ["Viewport status", formatStatus(seo.viewportStatus)],
       ["robots.txt", formatStatus(seo.robotsTxtStatus)],
@@ -543,7 +553,18 @@ function renderReviews(flow: PdfFlow, report: AuditReportViewModel) {
   flow.sectionHeading("Reviews and Trust", { minContentHeight: 130 });
   flow.keyValueRows(
     [
-      ["Reviews & Trust score", `${reviews.score}/100`],
+      [
+        reviews.dataRequirementsMet
+          ? "Reviews & Trust score"
+          : "Listing-presence score",
+        `${reviews.score}/100 (${reviews.scoreConfidence.toLowerCase()} confidence)`,
+      ],
+      [
+        "Score scope",
+        reviews.dataRequirementsMet
+          ? "Review performance with rating and count"
+          : "Provisional listing presence; review performance unscored",
+      ],
       ["Google Business status", formatStatus(reviews.googleBusinessStatus)],
       [
         "Confirmed listing",
@@ -562,6 +583,10 @@ function renderReviews(flow: PdfFlow, report: AuditReportViewModel) {
           : reviews.googleReviewCount.toLocaleString(),
       ],
       ["Review presence", reviews.reviewPresenceLevel],
+      [
+        "Evidence completeness",
+        `${reviews.evidenceCompleteness}%`,
+      ],
       [
         "Confirmed review platforms",
         reviews.confirmedReviewPlatforms.join(", ") || "None",
@@ -604,7 +629,7 @@ function renderReviews(flow: PdfFlow, report: AuditReportViewModel) {
     flow.bulletList(reviews.recommendedFixes.slice(0, 2), "Reviews and Trust");
   }
   flow.drawWrappedText(
-    "This section uses current confirmed listing, rating, review-count, and platform-presence data. It does not claim to have read every review or performed full sentiment analysis, and it does not invent review quotes.",
+    `${reviews.reviewScoreExplanation} This section does not claim to have read individual reviews or performed sentiment analysis, and it does not invent review quotes.`,
     {
       fontSize: 8.5,
       color: colors.muted,
@@ -624,8 +649,42 @@ function renderSocialStrategy(flow: PdfFlow, report: AuditReportViewModel) {
   flow.keyValueRows(
     [
       ["Social score", `${report.social.score}/100`],
-      ["Confirmed social profiles", String(report.social.confirmedProfilesCount)],
-      ["Pending social profiles", String(report.social.pendingProfilesCount)],
+      [
+        "Score scope",
+        "Confirmed profile coverage only; content performance not analyzed",
+      ],
+      [
+        "User-confirmed social profiles",
+        String(
+          report.normalizedFacts?.profiles.userConfirmedSocialProfiles ??
+            report.business.profileSummary.userConfirmedSocialProfiles ??
+            report.social.confirmedProfilesCount,
+        ),
+      ],
+      [
+        "Publicly detected social profiles",
+        String(
+          report.normalizedFacts?.profiles.publiclyDetectedSocialProfiles ??
+            report.business.profileSummary.publiclyDetectedSocialProfiles ??
+            0,
+        ),
+      ],
+      [
+        "Pending social profiles",
+        String(
+          report.normalizedFacts?.profiles.pendingSocialProfiles ??
+            report.business.profileSummary.pendingSocialProfiles ??
+            report.social.pendingProfilesCount,
+        ),
+      ],
+      [
+        "Profile content analyzed",
+        String(
+          report.normalizedFacts?.profiles.profileContentAnalyzed ??
+            report.business.profileSummary.profileContentAnalyzed ??
+            0,
+        ),
+      ],
       ["Coverage level", report.social.platformCoverageLevel],
       ["Strategy source", strategy.sourceLabel],
       ["Source freshness", strategy.freshness.status],
@@ -1123,7 +1182,7 @@ function renderTechnicalAppendix(
   flow.bulletList(
     appendixFindings.map(
       (finding) =>
-        `${finding.sourceLabel ?? "Verified technical issue"} | ${categoryLabel(finding.category)} - ${finding.title}: ${finding.description}${
+        `${finding.sourceLabel ?? "Observation"} | ${categoryLabel(finding.category)} - ${finding.title}: ${finding.description}${
           finding.sourceUrl ? ` | Affected page: ${finding.sourceUrl}` : ""
         }${
           finding.source === "ai_reviewed_opportunity" &&

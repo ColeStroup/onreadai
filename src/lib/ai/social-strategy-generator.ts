@@ -17,6 +17,10 @@ import {
   getOpenAIModel,
   isOpenAIConfigured,
 } from "@/lib/ai/openai-client";
+import {
+  classifyBusinessModel,
+  supportsCustomerVisitLanguage,
+} from "@/lib/business-model";
 import { businessGoalLabels } from "@/lib/goals";
 import { logError, logWarn } from "@/lib/observability/log";
 import { validateBusinessCompatibleContent } from "@/lib/reports/content-compatibility";
@@ -87,6 +91,7 @@ export type GeneratedSocialStrategy = SocialStrategyData & {
 type StrategyArchetype =
   | "creator_community"
   | "restaurant_hospitality"
+  | "cottage_food"
   | "local_service"
   | "beauty_fitness"
   | "ecommerce"
@@ -108,6 +113,8 @@ export async function generateSocialStrategy(
 Rules:
 - Treat saved Business Context as the primary guide and never borrow terminology from another industry.
 - Hospitality and visual local businesses usually favor Instagram, Facebook, TikTok, Google Business, and YouTube Shorts. LinkedIn belongs only when B2B, hiring, corporate events, recruiting, catering, or partnerships are supported by evidence.
+- Distinguish restaurants and cafes from cottage-food, preorder, mobile, and home-based businesses. Never suggest atmosphere, dine-in visits, directions, walk-in traffic, or store hours unless a public customer-facing location is confirmed.
+- For cottage-food and preorder businesses, focus on products, seasonal releases, preparation, founder story, ordering instructions, pickup or delivery, customer proof, and local delivery coverage.
 - SaaS and professional B2B businesses may prioritize LinkedIn. Creator/community channels such as Discord or Reddit belong only when the saved audience explicitly supports them.
 - A website is optional. Social-first conversions can include a DM, follow, profile booking or storefront link, community join, subscription, call, or email.
 - Never recommend a website destination that was not provided.
@@ -138,8 +145,7 @@ Rules:
 export function generateDeterministicSocialStrategy(
   input: GenerateSocialStrategyInput,
 ): GeneratedSocialStrategy {
-  const contextText = contextTextFor(input);
-  const archetype = detectArchetype(contextText);
+  const archetype = detectArchetype(input);
   const recommendedPlatforms = platformRecommendationsFor(archetype, input);
   const contentPillars = contentPillarsFor(archetype, input);
   const weeklyPlan = weeklyPlanFor(
@@ -165,7 +171,7 @@ export function generateDeterministicSocialStrategy(
     confidence: confidenceFor(input, archetype),
     reasoningSummary:
       input.businessContext.description || input.businessContext.targetAudience
-        ? `Deterministic strategy generated from current Business Context, confirmed profiles, goals, reviews, and competitor evidence${socialFirst ? " for a social-first business" : ""}. Individual posts, engagement, posting frequency, and content performance were not analyzed.`
+        ? `Foundational social strategy based on Business Context, confirmed public sources, goals, reviews, and competitor evidence${socialFirst ? " for a social-first business" : ""}. Individual posts, engagement, posting frequency, and content performance were not analyzed.`
         : "Deterministic strategy generated with limited Business Context. Review the Context tab before relying on detailed audience or content assumptions.",
   });
 
@@ -205,12 +211,15 @@ function buildCompactEvidence(input: GenerateSocialStrategyInput) {
         value: profile.url ?? profile.handle ?? profile.displayName ?? null,
       }));
 
+  const businessModel = classifyStrategyBusinessModel(input);
+
   return {
     businessName: input.businessName,
     originalInput: input.initialInput,
     assessmentMode: hasConfirmedWebsiteProfile(input)
       ? "website_enabled"
       : "social_first",
+    businessModel,
     businessContext: input.businessContext,
     goals: input.goals?.map((goal) => businessGoalLabels[goal]) ?? [],
     primaryGoal: input.primaryGoal
@@ -276,7 +285,25 @@ function buildCompactEvidence(input: GenerateSocialStrategyInput) {
   };
 }
 
-function detectArchetype(text: string): StrategyArchetype {
+function detectArchetype(input: GenerateSocialStrategyInput): StrategyArchetype {
+  const classification = classifyStrategyBusinessModel(input);
+  const normalizedMap: Partial<Record<typeof classification.model, StrategyArchetype>> = {
+    RESTAURANT: "restaurant_hospitality",
+    CAFE: "restaurant_hospitality",
+    COTTAGE_FOOD: "cottage_food",
+    LOCAL_RETAIL: "ecommerce",
+    ECOMMERCE: "ecommerce",
+    PROFESSIONAL_SERVICE: "professional_service",
+    HOME_SERVICE: "local_service",
+    APPOINTMENT_BUSINESS: "beauty_fitness",
+    MOBILE_BUSINESS: "local_service",
+    CREATOR: "creator_community",
+    SAAS: "saas_software",
+  };
+  const normalizedArchetype = normalizedMap[classification.model];
+  if (normalizedArchetype) return normalizedArchetype;
+
+  const text = contextTextFor(input);
   if (/\b(restaurant|pizza|cafe|bar|bakery|menu|grill|brewery|pub|venue|hospitality|tourism|beach club|dining)\b/.test(text)) {
     return "restaurant_hospitality";
   }
@@ -299,6 +326,19 @@ function detectArchetype(text: string): StrategyArchetype {
     return "professional_service";
   }
   return "general";
+}
+
+function classifyStrategyBusinessModel(input: GenerateSocialStrategyInput) {
+  return classifyBusinessModel({
+    context: {
+      name: input.businessName,
+      ...input.businessContext,
+    },
+    detectedAddress: input.websiteAnalysis?.detectedAddress,
+    operatingHoursSignals: input.websiteAnalysis?.operatingHoursSignals,
+    detectedActionTypes:
+      input.websiteAnalysis?.actionSummary.detectedActionTypes ?? [],
+  });
 }
 
 function platformRecommendationsFor(
@@ -328,12 +368,26 @@ function platformRecommendationsFor(
 
   switch (archetype) {
     case "restaurant_hospitality":
+      if (!allowsCustomerVisitContent(input)) {
+        return [
+          make("Instagram", "high", "Visual product, preparation, offer, and ordering content can support discovery through the confirmed customer path.", "Product highlights, preparation, founder stories, ordering instructions, and fulfillment updates.", 72),
+          make("Facebook", "medium", "Facebook can support local updates, customer proof, offers, and practical ordering information.", "Availability, offers, community stories, proof, and confirmed order or contact paths.", 64),
+          make("TikTok", "medium", "Short preparation and product-story videos can create discovery around the offer and ordering process.", "Preparation clips, product stories, founder content, and ordering walkthroughs.", 66),
+        ];
+      }
       return [
         make("Instagram", "high", "Visual food, atmosphere, event, and customer-experience content fits hospitality discovery.", "Reels, menu highlights, atmosphere, guest moments, and events.", 80),
         make("Facebook", "high", "Facebook supports local updates, events, practical visit information, and community awareness.", "Events, hours, offers, local stories, and customer proof.", 74),
         make("TikTok", "high", "Short hospitality videos can create discovery around atmosphere, food, drinks, and local moments.", "Short preparation, atmosphere, menu, event, and local-story videos.", 74),
         make("YouTube Shorts", "medium", "Short video can extend visual stories and event clips across another discovery surface.", "Atmosphere, menu highlights, event recaps, and local traditions.", 65),
         make("Google Business", "high", "Local discovery and trust depend on current listing, photo, and review signals.", "Photo updates, practical visit information, and authentic review prompts.", 78),
+      ];
+    case "cottage_food":
+      return [
+        make("Instagram", "high", "Visual product, preparation, release, and preorder content fits a cottage-food buying path.", "Product closeups, preparation, seasonal releases, ordering instructions, and pickup or delivery updates.", 82),
+        make("Facebook", "high", "Facebook supports local preorder updates, community proof, pickup details, and seasonal availability.", "Availability, preorder windows, customer proof, pop-ups, and local fulfillment details.", 74),
+        make("TikTok", "high", "Short preparation and product-story videos can support discovery through the confirmed preorder path.", "Preparation clips, flavor stories, releases, founder content, and ordering walkthroughs.", 76),
+        make("Google Business", "medium", "A confirmed listing can support local trust when appropriate, even when ordering is preorder-based.", "Accurate service details, authentic proof, and current pickup or delivery information.", 62),
       ];
     case "creator_community":
       if (!hasExplicitCommunityEvidence(input)) {
@@ -393,6 +447,40 @@ function contentPillarsFor(
   const offer = input.businessContext.mainOffer || input.businessName;
 
   if (archetype === "restaurant_hospitality") {
+    if (!allowsCustomerVisitContent(input)) {
+      return [
+        {
+          title: "Products, preparation, and current offers",
+          description:
+            "Show specific products, preparation, seasonal offers, and the details customers need before ordering.",
+          exampleTopics: [
+            "A signature product",
+            "Behind the scenes of preparation",
+            "A current release or offer",
+          ],
+        },
+        {
+          title: "Founder story and customer proof",
+          description:
+            "Build trust with the people, process, local story, and authentic customer proof behind the offer.",
+          exampleTopics: [
+            "Why the business started",
+            "A preparation or sourcing detail",
+            "An approved customer story",
+          ],
+        },
+        {
+          title: "Ordering and fulfillment clarity",
+          description:
+            "Explain the confirmed ordering, contact, pickup, delivery, or fulfillment path using only saved customer actions.",
+          exampleTopics: [
+            "How to place an order",
+            "What happens after an inquiry",
+            "Pickup or delivery expectations",
+          ],
+        },
+      ];
+    }
     return [
       {
         title: "Atmosphere and reasons to visit",
@@ -408,6 +496,41 @@ function contentPillarsFor(
         title: "Customer proof and local connection",
         description: "Use authentic customer proof, staff stories, community activity, and practical visit information to build trust.",
         exampleTopics: ["A verified review theme", "A staff or local-partner story", "Hours, directions, events, takeout, or gift cards"],
+      },
+    ];
+  }
+
+  if (archetype === "cottage_food") {
+    return [
+      {
+        title: "Products, flavors, and seasonal releases",
+        description:
+          "Make the offer tangible with product details, flavor options, seasonal availability, and clear preorder windows.",
+        exampleTopics: [
+          "A featured flavor or product",
+          "A seasonal release",
+          "What is available to preorder this week",
+        ],
+      },
+      {
+        title: "Preparation, founder story, and trust",
+        description:
+          "Show preparation, sourcing, founder perspective, allergen or ingredient information, and authentic customer proof.",
+        exampleTopics: [
+          "Behind the scenes of preparation",
+          "Why the business started",
+          "Ingredient or allergen information",
+        ],
+      },
+      {
+        title: "Ordering, pickup, and delivery clarity",
+        description:
+          "Repeat the confirmed ordering process and explain pickup, delivery, pop-up, or fulfillment details tied to the saved customer path.",
+        exampleTopics: [
+          "How to place a preorder",
+          "Pickup or delivery expectations",
+          "A pop-up or local delivery update",
+        ],
       },
     ];
   }
@@ -467,7 +590,27 @@ function weeklyPlanFor(
     "Show the process, people, product, or preparation behind the outcome.",
     "Use one direct call-to-action that matches the confirmed conversion path.",
   ];
-  const ideas = archetype === "restaurant_hospitality" ? restaurantIdeas : generalIdeas;
+  const cottageFoodIdeas = [
+    "Feature one product or flavor and explain the confirmed preorder path.",
+    "Show one preparation step or founder detail that builds trust.",
+    "Share a seasonal release, availability window, or local delivery update.",
+    "Turn authentic customer proof into a useful product-selection story.",
+    "Explain pickup, delivery, or order-inquiry expectations in one clear post.",
+  ];
+  const ideas =
+    archetype === "restaurant_hospitality"
+      ? allowsCustomerVisitContent(input)
+        ? restaurantIdeas
+        : [
+            "Feature one product or offer and explain the confirmed order path.",
+            "Show one preparation detail or founder story that builds trust.",
+            "Turn authentic customer proof into a useful offer-selection story.",
+            "Share a current release, availability update, or local community detail.",
+            "Explain the confirmed ordering, pickup, delivery, or contact path in one clear post.",
+          ]
+      : archetype === "cottage_food"
+        ? cottageFoodIdeas
+        : generalIdeas;
 
   return ideas.map((idea, index) => ({
     day: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"][index],
@@ -489,10 +632,48 @@ function suggestedPostsFor(
   const cta =
     input.businessContext.primaryConversionGoal || socialFirstConversion(input);
   if (archetype === "restaurant_hospitality") {
+    if (!allowsCustomerVisitContent(input)) {
+      return [
+        {
+          platform: primary,
+          hook: "Here is what is available right now.",
+          postConcept:
+            "Feature one product or offer and connect it to the confirmed ordering path.",
+          captionDraft: `${input.businessName} can make the offer easier to understand by showing one specific product, preparation detail, or release and then explaining the real next step.`,
+          callToAction: cta,
+        },
+        {
+          platform: secondary,
+          hook: "How the ordering process works.",
+          postConcept:
+            "Turn the confirmed inquiry and fulfillment process into a short walkthrough.",
+          captionDraft:
+            "Set expectations for ordering, confirmation, pickup, delivery, or fulfillment using the confirmed process.",
+          callToAction: cta,
+        },
+        {
+          platform: primary,
+          hook: "A look behind the offer.",
+          postConcept:
+            "Show preparation, founder perspective, or authentic customer proof.",
+          captionDraft:
+            "A specific process or founder detail can build trust before someone takes the confirmed next step.",
+          callToAction: cta,
+        },
+      ];
+    }
     return [
       { platform: primary, hook: "Here is one reason to make this your next stop.", postConcept: "Pair the atmosphere with one specific menu, event, or visit detail.", captionDraft: `${input.businessName} brings the setting and the offer together. Show what a real visit feels like, then make the next step easy to find.`, callToAction: cta },
       { platform: secondary, hook: "What would you order first?", postConcept: "Feature one menu item or drink with a concise preparation or experience story.", captionDraft: "Specific menu details make the experience easier to imagine and give people a practical reason to visit or order.", callToAction: cta },
       { platform: primary, hook: "Plan the visit around this moment.", postConcept: "Highlight a current event, local tradition, atmosphere moment, or useful visit detail.", captionDraft: "Connect the visual story to current hours, directions, events, takeout, gift cards, or another confirmed action.", callToAction: cta },
+    ];
+  }
+
+  if (archetype === "cottage_food") {
+    return [
+      { platform: primary, hook: "Here is what is available to preorder this week.", postConcept: "Feature one confirmed product or seasonal release and explain the ordering window.", captionDraft: `${input.businessName} is taking preorders for a current product or flavor. Show the product clearly, then explain the confirmed order and fulfillment path.`, callToAction: cta },
+      { platform: secondary, hook: "A look behind this week's batch.", postConcept: "Show a preparation step, ingredient detail, or founder story without making unsupported quality claims.", captionDraft: "A specific preparation detail can make the product easier to understand and build trust before someone orders.", callToAction: cta },
+      { platform: primary, hook: "How pickup or delivery works.", postConcept: "Turn the confirmed fulfillment process into a short, practical walkthrough.", captionDraft: "Set expectations for ordering, confirmation, pickup, delivery, or a current pop-up so buyers know the next step.", callToAction: cta },
     ];
   }
 
@@ -513,10 +694,36 @@ function conversionTipsFor(
     ? "destination page"
     : "profile action or link destination";
   if (archetype === "restaurant_hospitality") {
+    if (!allowsCustomerVisitContent(input)) {
+      return [
+        {
+          tip: "Connect every product story to the confirmed order path",
+          reason:
+            "Customers should be able to move from interest to the real inquiry, pickup, delivery, or fulfillment step without guessing.",
+        },
+        {
+          tip: "Pin one offer post and one ordering-process post",
+          reason:
+            "New profile visitors should quickly understand what is available and how to take the next step.",
+        },
+        {
+          tip: "Use one confirmed action per post",
+          reason:
+            "A single verified order or contact path is clearer than several competing actions.",
+        },
+      ];
+    }
     return [
       { tip: "Connect every visual story to a practical visit action", reason: "Atmosphere and menu content work harder when the viewer can immediately check hours, view the menu, get directions, see an event, order, or use another confirmed path." },
       { tip: "Pin one experience post and one practical visit post", reason: "New profile visitors should quickly see both why the experience is distinctive and how to plan a visit or order." },
       { tip: "Use one clear call-to-action per post", reason: "A single relevant next step is easier to follow than several competing actions." },
+    ];
+  }
+  if (archetype === "cottage_food") {
+    return [
+      { tip: "Repeat the preorder path in product posts", reason: "Customers should not have to infer how to order, when availability closes, or what happens after an inquiry." },
+      { tip: "Pin one offer post and one ordering-process post", reason: "New profile visitors should quickly understand both what is available and how pickup or delivery works." },
+      { tip: "Use one confirmed action per post", reason: "Point to the saved order, inquiry, DM, email, pickup, delivery, or profile-link path." },
     ];
   }
   return [
@@ -575,7 +782,12 @@ function isCompatibleStrategy(
     item: { title: "Social Strategy", description: text },
     context: { name: input.businessName, ...input.businessContext },
     sourceEvidence: contextTextFor(input),
+    businessModel: classifyStrategyBusinessModel(input),
   }).compatible;
+}
+
+function allowsCustomerVisitContent(input: GenerateSocialStrategyInput) {
+  return supportsCustomerVisitLanguage(classifyStrategyBusinessModel(input));
 }
 
 function parseStrategyJson(value?: string | null) {

@@ -35,6 +35,17 @@ test("hospitality report stays specific and free of creator/software leakage", (
   assertNoContradictoryStates(text);
 });
 
+test("every report score carries normalized confidence and sufficiency metadata", () => {
+  const report = createReportFixture("hospitality");
+
+  for (const score of report.scores) {
+    assert(score.confidence);
+    assert.equal(typeof score.evidenceCompleteness, "number");
+    assert.equal(typeof score.dataRequirementsMet, "boolean");
+    assert(Array.isArray(score.missingInputs));
+  }
+});
+
 test("SaaS report uses software conversion language without hospitality leakage", () => {
   const text = normalizedReportText(createReportFixture("saas"));
 
@@ -84,6 +95,67 @@ test("social-only report excludes unavailable website categories from scoring", 
     text,
     /post performance was not analyzed|posting frequency.*not analyzed/i,
   );
+});
+
+test("cottage regression report keeps facts, strategy, review scope, and actions consistent", () => {
+  const report = createReportFixture("cottage_regression");
+  const facts = report.normalizedFacts;
+  const text = normalizedReportText(report);
+
+  assert(facts);
+  assert.equal(facts.homepage?.h1.count, 1);
+  assert.equal(facts.homepage?.h1.status, "GOOD");
+  assert.deepEqual(facts.siteWide.pagesMissingH1, [
+    {
+      url: "https://sunrise-pocket.example/menu",
+      count: 0,
+    },
+  ]);
+  assert.equal(facts.homepage?.metaDescription.length, 0);
+  assert.equal(facts.profiles.userConfirmedSocialProfiles, 1);
+  assert.equal(facts.profiles.publiclyDetectedSocialProfiles, 3);
+  assert.equal(facts.profiles.profileContentAnalyzed, 0);
+  assert.equal(report.reviews.dataRequirementsMet, false);
+  assert.equal(report.reviews.scoreConfidence, "LOW");
+  assert(report.reviews.score <= 58);
+  assert.equal(
+    report.recommendations.all.filter((item) =>
+      /meta(?: description|data)/i.test(item.title),
+    ).length,
+    1,
+  );
+  assert.equal(
+    report.recommendations.all.filter((item) =>
+      /primary action/i.test(item.title),
+    ).length,
+    1,
+  );
+  assert(
+    report.recommendations.all.some(
+      (item) =>
+        item.sourceUrl === "https://sunrise-pocket.example/menu" &&
+        /\bh1|headline\b/i.test(item.title),
+    ),
+  );
+  assert(
+    report.recommendations.all.every(
+      (item) => !/homepage.*(?:h1|headline)/i.test(item.title),
+    ),
+  );
+  assert.equal(facts.siteWide.thinPages.length, 1);
+  assert.equal(facts.siteWide.duplicateContentGroups.length, 1);
+  assert.equal(facts.siteWide.copyQualityFindings.length, 1);
+  assert.equal(facts.siteWide.orderingFrictionPages.length, 1);
+  assert.match(text, /preorder|pickup|delivery/i);
+  assert.doesNotMatch(
+    JSON.stringify(report.socialStrategy),
+    /\batmosphere\b|\bdine[- ]?in\b|\bdirections\b|\bguest experience\b/i,
+  );
+  const homepageStrength = report.findings.all.find(
+    (item) => item.id === "finding-homepage-h1-strength",
+  );
+  assert.equal(homepageStrength?.findingType, "VERIFIED_STRENGTH");
+  assert.equal(homepageStrength?.sourceLabel, "Verified strength");
 });
 
 test("missing competitor data is unscored and creates no required competitor task", () => {

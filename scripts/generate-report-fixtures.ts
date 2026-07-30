@@ -12,6 +12,7 @@ const fixtures: ReportFixtureKind[] = [
   "saas",
   "local_service",
   "social_only",
+  "cottage_regression",
   "no_competitor",
   "stale_strategy",
 ];

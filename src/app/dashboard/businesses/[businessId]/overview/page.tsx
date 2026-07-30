@@ -246,12 +246,10 @@ export default async function BusinessOverviewPage({
   const confirmedSocial = social.confirmedPlatforms;
   const confirmedCompetitorProfiles =
     report.competitors.profileCounts.confirmedPublicProfiles;
-  const scoreBreakdown = report.scores.map(
-    (item) => [item.category, item.score] as const,
-  );
+  const scoreBreakdown = report.scores;
+  const overallScoreEvidence =
+    report.normalizedFacts?.scoreEvidence.categories?.[ScoreCategory.OVERALL];
   const executiveSummary = report.audit.executiveSummary;
-  const aiAnalysis = report.aiAnalysis;
-  const aiCoverage = aiAnalysis?.coverage;
   const reportRecommendationById = new Map(
     report.recommendations.all.map((recommendation) => [
       recommendation.id,
@@ -357,6 +355,13 @@ export default async function BusinessOverviewPage({
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <h3 className="text-xl font-semibold">{health.label}</h3>
+              {overallScoreEvidence ? (
+                <span className="rounded-full border border-border bg-background px-2.5 py-1 text-xs font-semibold text-muted">
+                  {overallScoreEvidence.confidence.toLowerCase()} confidence
+                  {" \u00b7 "}
+                  {overallScoreEvidence.evidenceCompleteness}% evidence
+                </span>
+              ) : null}
               {business.primaryGoal ? (
                 <span className="rounded-full border border-border bg-background px-2.5 py-1 text-xs font-semibold text-muted">
                   Goal: {businessGoalLabels[business.primaryGoal]}
@@ -367,7 +372,8 @@ export default async function BusinessOverviewPage({
               {executiveSummary}
             </p>
             <div className="mt-4 grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
-              {scoreBreakdown.map(([category, score]) => {
+              {scoreBreakdown.map((item) => {
+                const { category, score } = item;
                 const notConfigured =
                   category === ScoreCategory.COMPETITORS &&
                   business.competitors.length === 0;
@@ -395,6 +401,13 @@ export default async function BusinessOverviewPage({
                             ? "Not provided"
                             : score}
                     </p>
+                    {item.confidence && item.evidenceCompleteness !== undefined ? (
+                      <p className="mt-1 text-[11px] text-muted">
+                        {item.confidence} confidence
+                        {" \u00b7 "}
+                        {item.evidenceCompleteness}% evidence
+                      </p>
+                    ) : null}
                   </div>
                 );
               })}
@@ -403,48 +416,39 @@ export default async function BusinessOverviewPage({
         </div>
       </Card>
 
-      {aiAnalysis ? (
+      {report.coverage ? (
         <ReportSection
           title="Analysis coverage"
-          description="Technical checks cover every successfully crawled page. AI review is reserved for the most important representative pages."
+          description="Each layer is reported separately so crawl scope, technical checks, AI content review, and channel data are not mistaken for one another."
           action={<Sparkles className="size-5 text-accent" />}
         >
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <CompactMetricCard
-              label="Checked technically"
-              value={aiCoverage?.pagesCheckedTechnically ?? 0}
+              label="Crawl coverage"
+              value={`${report.coverage.crawl.successfulPages}/${report.coverage.crawl.eligiblePages}`}
+              detail={report.coverage.crawl.explanation}
             />
             <CompactMetricCard
-              label="Key pages reviewed by AI"
-              value={aiCoverage?.deepReviewedPages ?? 0}
+              label="Technical coverage"
+              value={report.coverage.technical.pagesAnalyzed}
+              detail={report.coverage.technical.explanation}
             />
             <CompactMetricCard
-              label="Technical + site-wide only"
-              value={Math.max(
-                0,
-                (aiCoverage?.pagesCheckedTechnically ?? 0) -
-                  (aiCoverage?.deepReviewedPages ?? 0),
-              )}
+              label="AI content coverage"
+              value={`${report.coverage.aiContent.completedPages}/${report.coverage.aiContent.selectedPages}`}
+              detail={report.coverage.aiContent.explanation}
+            />
+            <CompactMetricCard
+              label="Social content analyzed"
+              value={report.coverage.socialProfiles.contentAnalyzed}
+              detail={report.coverage.socialProfiles.explanation}
             />
           </div>
           <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-muted">
             <span className="rounded-full border border-border bg-background px-2.5 py-1 font-semibold">
-              {aiAnalysis.status.replaceAll("_", " ").toLowerCase()}
+              Reviews: {report.coverage.reviews.status.replaceAll("_", " ").toLowerCase()}
             </span>
-            {(aiCoverage?.cacheHits ?? 0) > 0 ? (
-              <span>
-                {aiCoverage?.cacheHits} unchanged page{" "}
-                {aiCoverage?.cacheHits === 1 ? "review was" : "reviews were"}{" "}
-                reused.
-              </span>
-            ) : null}
-            {(aiCoverage?.failedAiPages ?? 0) > 0 ? (
-              <span>
-                {aiCoverage?.failedAiPages} selected page{" "}
-                {aiCoverage?.failedAiPages === 1 ? "was" : "were"} unavailable
-                for deep review; deterministic checks still completed.
-              </span>
-            ) : null}
+            <span>{report.coverage.reviews.explanation}</span>
           </div>
         </ReportSection>
       ) : null}
@@ -533,7 +537,13 @@ export default async function BusinessOverviewPage({
                 recommendationId={recommendation.id}
                 recommendationTitle={recommendation.title}
                 status={recommendation.status}
-                evidence={audit.findings.find((finding) => finding.category === recommendation.category)?.description}
+                evidence={
+                  reportRecommendation?.evidenceSummary ??
+                  audit.findings.find(
+                    (finding) =>
+                      finding.category === recommendation.category,
+                  )?.description
+                }
                 initialSavedCount={recommendation.implementationDrafts.length}
                 implementationLabel={/canonical|robots|sitemap|alt text/i.test(recommendation.title) ? "Show Implementation Steps" : "Generate Fix"}
               />
@@ -560,7 +570,7 @@ export default async function BusinessOverviewPage({
                         : "border-border bg-background text-muted",
                     )}
                   >
-                    {finding.sourceLabel ?? "Verified technical issue"}
+                    {finding.sourceLabel ?? "Observation"}
                   </span>
                   <span className="rounded-full border border-border bg-background px-2.5 py-1 text-xs font-semibold text-muted">
                     {recommendationCategoryLabels[finding.category]}
@@ -708,9 +718,28 @@ export default async function BusinessOverviewPage({
           action={<Star className="size-5 text-accent" />}
         >
           <div className="grid gap-3 sm:grid-cols-3">
-            <CompactMetricCard label="Score" value={reviews.score} />
+            <CompactMetricCard
+              label={
+                reviews.dataRequirementsMet
+                  ? "Review score"
+                  : "Listing-presence score"
+              }
+              value={reviews.score}
+              detail={
+                reviews.dataRequirementsMet
+                  ? `${reviews.scoreConfidence} confidence`
+                  : "Provisional, low confidence"
+              }
+            />
             <CompactMetricCard label="Google Business" value={reviews.googleBusinessStatus === "confirmed" ? "Confirmed" : reviews.googleBusinessStatus === "pending" ? "Review" : "Missing"} />
-            <CompactMetricCard label="Presence" value={reviews.reviewPresenceLevel} />
+            <CompactMetricCard
+              label="Data status"
+              value={
+                reviews.dataRequirementsMet
+                  ? "Scorable"
+                  : "Limited evidence"
+              }
+            />
           </div>
           <p className="mt-4 text-sm leading-6 text-muted">
             {reviews.reviewScoreExplanation}
@@ -727,9 +756,32 @@ export default async function BusinessOverviewPage({
           action={<Share2 className="size-5 text-accent" />}
         >
           <div className="grid gap-3 sm:grid-cols-3">
-            <CompactMetricCard label="Score" value={social?.score ?? categoryScore(audit.scores, ScoreCategory.SOCIAL) ?? "Not scored"} />
-            <CompactMetricCard label="Confirmed" value={confirmedSocial.length} />
-            <CompactMetricCard label="Coverage" value={social?.platformCoverageLevel ?? "Not set"} />
+            <CompactMetricCard
+              label="Profile coverage score"
+              value={social?.score ?? categoryScore(audit.scores, ScoreCategory.SOCIAL) ?? "Not scored"}
+              detail="Posts and performance not analyzed"
+            />
+            <CompactMetricCard
+              label="User-confirmed"
+              value={
+                report.normalizedFacts?.profiles
+                  .userConfirmedSocialProfiles ??
+                report.business.profileSummary
+                  .userConfirmedSocialProfiles ??
+                confirmedSocial.length
+              }
+            />
+            <CompactMetricCard
+              label="Publicly detected"
+              value={
+                report.normalizedFacts?.profiles
+                  .publiclyDetectedSocialProfiles ??
+                report.business.profileSummary
+                  .publiclyDetectedSocialProfiles ??
+                0
+              }
+              detail={`${report.normalizedFacts?.profiles.pendingSocialProfiles ?? report.business.profileSummary.pendingSocialProfiles ?? 0} pending; ${report.normalizedFacts?.profiles.profileContentAnalyzed ?? report.business.profileSummary.profileContentAnalyzed ?? 0} content-analyzed`}
+            />
           </div>
           <p className="mt-4 text-sm leading-6 text-muted">
             {confirmedSocial.length > 0

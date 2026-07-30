@@ -29,6 +29,7 @@ import {
 import { getAuditAssessment } from "@/lib/audits/audit-applicability";
 import { readEvidenceIntegrity } from "@/lib/audits/evidence-contracts";
 import { completeEvidenceSummary } from "@/lib/audits/finding-copy";
+import { readNormalizedAuditFacts } from "@/lib/audits/normalized-audit-facts";
 import {
   readAiReviewedOpportunityEvidence,
   readSelectiveAiAuditSnapshot,
@@ -207,6 +208,9 @@ export async function buildConsultantContext(input: BuildConsultantContextInput)
     input.latestAudit.analysisSnapshot,
   );
   const selectiveAiAnalysis = readSelectiveAiAuditSnapshot(
+    input.latestAudit.analysisSnapshot,
+  );
+  const normalizedFacts = readNormalizedAuditFacts(
     input.latestAudit.analysisSnapshot,
   );
   const relevantAiPageEvidence = selectRelevantAiPageEvidence(
@@ -422,13 +426,36 @@ export async function buildConsultantContext(input: BuildConsultantContextInput)
               }`;
             }
 
-            return `${categoryLabels[score.category]}: ${
-              score.category === ScoreCategory.REVIEWS
-                ? reviews.score
-                : score.score
-            }/100`;
+            return `${categoryLabels[score.category]}: ${score.score}/100`;
           },
         ),
+      normalizedFacts: normalizedFacts
+        ? {
+            homepage: normalizedFacts.homepage,
+            siteWide: {
+              pagesMissingTitles:
+                normalizedFacts.siteWide.pagesMissingTitles,
+              pagesMissingMetaDescriptions:
+                normalizedFacts.siteWide.pagesMissingMetaDescriptions,
+              pagesMissingH1: normalizedFacts.siteWide.pagesMissingH1,
+              pagesWithMultipleH1:
+                normalizedFacts.siteWide.pagesWithMultipleH1,
+              thinPages: normalizedFacts.siteWide.thinPages,
+              duplicateContentGroups:
+                normalizedFacts.siteWide.duplicateContentGroups,
+              copyQualityFindings:
+                normalizedFacts.siteWide.copyQualityFindings,
+              orderingFrictionPages:
+                normalizedFacts.siteWide.orderingFrictionPages,
+            },
+            profileCounts: normalizedFacts.profiles,
+            scoreEvidence: normalizedFacts.scoreEvidence,
+            coverage: normalizedFacts.coverage,
+            businessModel: normalizedFacts.businessModel,
+            rule:
+              "These normalized audit-time facts take precedence over generated prose for objective claims.",
+          }
+        : "Legacy audit without normalized facts; use deterministic analyzer snapshots and disclose uncertainty.",
       evidenceIntegrity: evidenceIntegrity
         ? {
             contractVersion: evidenceIntegrity.contractVersion,
@@ -674,8 +701,19 @@ export async function buildConsultantContext(input: BuildConsultantContextInput)
     social: social
       ? {
           score: social.score,
+          scoreScope: social.scoreScope ?? "PROFILE_COVERAGE",
+          performanceStatus: social.performanceStatus ?? "NOT_ANALYZED",
           confirmedPlatforms: social.confirmedPlatforms,
           pendingPlatforms: social.pendingPlatforms,
+          userConfirmedProfiles:
+            normalizedFacts?.profiles.userConfirmedSocialProfiles ??
+            social.confirmedProfilesCount,
+          publiclyDetectedProfiles:
+            normalizedFacts?.profiles.publiclyDetectedSocialProfiles ?? 0,
+          additionalDetectedPlatforms:
+            normalizedFacts?.profiles.additionalDetectedPlatforms ?? [],
+          profileContentAnalyzed:
+            normalizedFacts?.profiles.profileContentAnalyzed ?? 0,
           coverageLevel: social.platformCoverageLevel,
           detectedConversionPaths: social.detectedConversionPaths ?? [],
           warnings: social.warnings.slice(0, 5),
@@ -753,9 +791,17 @@ export async function buildConsultantContext(input: BuildConsultantContextInput)
         }
       : "No saved Social Strategy yet. Use Business Context and social snapshot, and suggest generating Social Strategy when the user asks for detailed content planning.",
     reviews: {
-      currentSourceOfTruth: "Current database records override saved audit review snapshots for Google Business confirmation status.",
+      evidenceRule:
+        "Use normalized saved audit facts when explaining the selected audit. Use current database records only when answering about the listing's current state, and label any post-audit change.",
       currentScore: reviews.score,
       savedAuditScore: snapshotReviews?.score ?? null,
+      savedAuditScoreStatus:
+        normalizedFacts?.scoreEvidence.reviews.status ?? "Legacy unavailable",
+      savedAuditScoreScope:
+        normalizedFacts?.scoreEvidence.reviews.scope ?? "Legacy unavailable",
+      savedAuditScoreConfidence:
+        normalizedFacts?.scoreEvidence.reviews.confidence ??
+        "Legacy unavailable",
       googleBusinessStatus: reviews.googleBusinessStatus,
       savedAuditGoogleBusinessStatus:
         snapshotReviews?.googleBusinessStatus ?? null,

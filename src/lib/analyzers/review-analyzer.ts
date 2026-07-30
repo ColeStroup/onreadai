@@ -9,6 +9,10 @@ import { platformLabels } from "@/lib/profiles/platforms";
 export type GoogleBusinessStatus = "missing" | "pending" | "confirmed";
 export type ReviewPresenceLevel = "none" | "low" | "moderate" | "strong";
 export type GoogleBusinessApplicability = "important" | "useful" | "optional";
+export type ReviewScoreStatus =
+  | "SCORED"
+  | "PROVISIONAL"
+  | "INSUFFICIENT_DATA";
 
 export type ReviewAnalyzerProfile = {
   platform: ProfilePlatform;
@@ -44,6 +48,12 @@ export type ManualReviewInput = {
 
 export type ReviewAnalysis = {
   score: number;
+  scoreStatus: ReviewScoreStatus;
+  scoreConfidence: "HIGH" | "MEDIUM" | "LOW";
+  scoreScope: "REVIEW_PERFORMANCE" | "LISTING_PRESENCE";
+  evidenceCompleteness: number;
+  dataRequirementsMet: boolean;
+  missingInputs: string[];
   hasGoogleBusinessProfile: boolean;
   googleBusinessStatus: GoogleBusinessStatus;
   googleBusinessApplicability: GoogleBusinessApplicability;
@@ -159,11 +169,41 @@ export function analyzeReviews({
     confirmedGoogleBusinessProfiles.at(0) ??
     pendingGoogleBusinessProfiles.at(0) ??
     null;
+  const googleRating = googleProfileForDetails?.rating ?? null;
+  const googleReviewCount = googleProfileForDetails?.reviewCount ?? null;
+  const hasRating = typeof googleRating === "number";
+  const hasReviewCount = typeof googleReviewCount === "number";
+  const dataRequirementsMet =
+    googleBusinessStatus === "confirmed" && hasRating && hasReviewCount;
+  const scoreStatus: ReviewScoreStatus = dataRequirementsMet
+    ? "SCORED"
+    : googleBusinessStatus === "confirmed" && (hasRating || hasReviewCount)
+      ? "PROVISIONAL"
+      : "INSUFFICIENT_DATA";
+  const scoreConfidence =
+    scoreStatus === "SCORED"
+      ? ("HIGH" as const)
+      : scoreStatus === "PROVISIONAL"
+        ? ("MEDIUM" as const)
+        : ("LOW" as const);
+  const missingInputs = [
+    ...(!hasRating ? ["Google rating"] : []),
+    ...(!hasReviewCount ? ["Google review count"] : []),
+    "Review recency",
+    "Owner response coverage",
+    "Review sentiment",
+  ];
+  const evidenceCompleteness = Math.round(
+    ((googleBusinessStatus === "confirmed" ? 1 : 0) +
+      (hasRating ? 1 : 0) +
+      (hasReviewCount ? 1 : 0)) /
+      6 *
+      100,
+  );
   const googleBusinessListingName = googleProfileForDetails?.displayName ?? null;
   const strongGoogleReviewPresence =
-    googleBusinessStatus === "confirmed" &&
-    ((googleProfileForDetails?.rating ?? 0) >= 4.3 ||
-      (googleProfileForDetails?.reviewCount ?? 0) >= 100);
+    dataRequirementsMet &&
+    (googleRating >= 4.3 || googleReviewCount >= 100);
   const confirmedReviewPlatforms = uniquePlatformLabels([
     ...confirmedProfiles,
     ...confirmedGoogleBusinessProfiles.map(() => ({
@@ -223,6 +263,7 @@ export function analyzeReviews({
     confirmedPlatformsCount: confirmedReviewPlatforms.length,
     manualReviewCount,
     strongGoogleReviewPresence,
+    reviewMetricsAvailable: hasRating || hasReviewCount,
   });
   const trustStrengths: string[] = [];
   const trustWarnings: string[] = [];
@@ -247,6 +288,12 @@ export function analyzeReviews({
         ? `A confirmed Google Business profile is present: ${detail}.`
         : "A confirmed Google Business profile is present.",
     );
+
+    if (!dataRequirementsMet) {
+      trustWarnings.push(
+        "The Google Business listing is confirmed, but rating and review-count evidence are incomplete. This audit can assess listing presence, not review performance.",
+      );
+    }
   }
 
   if (confirmedReviewPlatforms.length > 1) {
@@ -379,26 +426,36 @@ export function analyzeReviews({
     manualReviewCount,
     googleBusinessApplicability,
     strongGoogleReviewPresence,
+    rating: googleRating,
+    reviewCount: googleReviewCount,
   });
   const reviewScoreExplanation = getReviewScoreExplanation({
     googleBusinessStatus,
     googleBusinessApplicability,
-    rating: googleProfileForDetails?.rating ?? null,
-    reviewCount: googleProfileForDetails?.reviewCount ?? null,
+    rating: googleRating,
+    reviewCount: googleReviewCount,
     confirmedPlatformsCount: confirmedReviewPlatforms.length,
     hasWebsite,
   });
 
   return {
     score,
+    scoreStatus,
+    scoreConfidence,
+    scoreScope: dataRequirementsMet
+      ? "REVIEW_PERFORMANCE"
+      : "LISTING_PRESENCE",
+    evidenceCompleteness,
+    dataRequirementsMet,
+    missingInputs,
     hasGoogleBusinessProfile,
     googleBusinessStatus,
     googleBusinessApplicability,
     googleBusinessListingName,
     googleBusinessDiscoveryStatus,
     googleBusinessProfiles: activeGoogleBusinessProfiles,
-    googleRating: googleProfileForDetails?.rating ?? null,
-    googleReviewCount: googleProfileForDetails?.reviewCount ?? null,
+    googleRating,
+    googleReviewCount,
     googleMapsUri: googleProfileForDetails?.googleMapsUri ?? null,
     reviewScoreExplanation,
     confirmedReviewPlatforms,
@@ -444,6 +501,48 @@ export function normalizeReviewAnalysisForDisplay(
 
   return {
     ...reviews,
+    scoreStatus:
+      reviews.scoreStatus ??
+      (typeof reviews.googleRating === "number" &&
+      typeof reviews.googleReviewCount === "number"
+        ? "SCORED"
+        : "INSUFFICIENT_DATA"),
+    scoreConfidence:
+      reviews.scoreConfidence ??
+      (typeof reviews.googleRating === "number" &&
+      typeof reviews.googleReviewCount === "number"
+        ? "HIGH"
+        : "LOW"),
+    scoreScope:
+      reviews.scoreScope ??
+      (typeof reviews.googleRating === "number" &&
+      typeof reviews.googleReviewCount === "number"
+        ? "REVIEW_PERFORMANCE"
+        : "LISTING_PRESENCE"),
+    evidenceCompleteness:
+      reviews.evidenceCompleteness ??
+      Math.round(
+        ((reviews.googleBusinessStatus === "confirmed" ? 1 : 0) +
+          (typeof reviews.googleRating === "number" ? 1 : 0) +
+          (typeof reviews.googleReviewCount === "number" ? 1 : 0)) /
+          6 *
+          100,
+      ),
+    dataRequirementsMet:
+      reviews.dataRequirementsMet ??
+      (typeof reviews.googleRating === "number" &&
+        typeof reviews.googleReviewCount === "number"),
+    missingInputs:
+      reviews.missingInputs ??
+      [
+        ...(typeof reviews.googleRating !== "number" ? ["Google rating"] : []),
+        ...(typeof reviews.googleReviewCount !== "number"
+          ? ["Google review count"]
+          : []),
+        "Review recency",
+        "Owner response coverage",
+        "Review sentiment",
+      ],
     confirmedReviewPlatforms: normalizePlatforms(
       reviews.confirmedReviewPlatforms,
     ),
@@ -596,17 +695,23 @@ function getReviewPresenceLevel({
   confirmedPlatformsCount,
   manualReviewCount,
   strongGoogleReviewPresence,
+  reviewMetricsAvailable,
 }: {
   googleBusinessStatus: GoogleBusinessStatus;
   confirmedPlatformsCount: number;
   manualReviewCount: number;
   strongGoogleReviewPresence: boolean;
+  reviewMetricsAvailable: boolean;
 }): ReviewPresenceLevel {
   if (googleBusinessStatus === "missing" && confirmedPlatformsCount === 0) {
     return "none";
   }
 
-  if (googleBusinessStatus === "pending" || confirmedPlatformsCount === 0) {
+  if (
+    googleBusinessStatus === "pending" ||
+    confirmedPlatformsCount === 0 ||
+    !reviewMetricsAvailable
+  ) {
     return "low";
   }
 
@@ -630,6 +735,8 @@ function scoreReviews({
   manualReviewCount,
   googleBusinessApplicability,
   strongGoogleReviewPresence,
+  rating,
+  reviewCount,
 }: {
   googleBusinessStatus: GoogleBusinessStatus;
   confirmedPlatformsCount: number;
@@ -639,30 +746,63 @@ function scoreReviews({
   manualReviewCount: number;
   googleBusinessApplicability: GoogleBusinessApplicability;
   strongGoogleReviewPresence: boolean;
+  rating: number | null;
+  reviewCount: number | null;
 }) {
-  let score =
-    googleBusinessStatus === "confirmed"
-      ? trustGoal
-        ? strongGoogleReviewPresence
-          ? 84
-          : 82
-        : strongGoogleReviewPresence
-          ? 80
-          : 76
-      : googleBusinessStatus === "pending"
-        ? trustGoal
-          ? 50
-          : 58
-        : googleBusinessApplicability === "optional"
-          ? 58
-          : trustGoal || googleBusinessApplicability === "important"
-            ? 26
-            : 38;
+  const hasRating = typeof rating === "number";
+  const hasReviewCount = typeof reviewCount === "number";
+  let score: number;
 
-  score += Math.min(8, Math.max(0, confirmedPlatformsCount - 1) * 4);
-  score += Math.min(8, Math.floor(manualReviewCount / 10) * 2);
-  score -= Math.min(8, pendingPlatformsCount * 2);
-  if (competitorHasBetterCoverage) score -= 6;
+  if (googleBusinessStatus === "confirmed" && hasRating && hasReviewCount) {
+    const ratingContribution = Math.max(
+      0,
+      Math.min(30, Math.round(((rating - 2.5) / 2.5) * 30)),
+    );
+    const volumeContribution =
+      reviewCount >= 200
+        ? 16
+        : reviewCount >= 100
+          ? 13
+          : reviewCount >= 50
+            ? 10
+            : reviewCount >= 20
+              ? 7
+              : reviewCount >= 5
+                ? 4
+                : 1;
+    score = 38 + ratingContribution + volumeContribution;
+    if (strongGoogleReviewPresence) score += 3;
+  } else if (googleBusinessStatus === "confirmed") {
+    // A listing is useful setup evidence, but it is not review-performance evidence.
+    score = 52;
+    if (hasRating) {
+      score += rating >= 4.3 ? 8 : rating >= 3.8 ? 4 : 0;
+    }
+    if (hasReviewCount) {
+      score += reviewCount >= 100 ? 8 : reviewCount >= 20 ? 5 : 2;
+    }
+  } else if (googleBusinessStatus === "pending") {
+    score = trustGoal ? 42 : 46;
+  } else {
+    score =
+      googleBusinessApplicability === "optional"
+        ? 50
+        : trustGoal || googleBusinessApplicability === "important"
+          ? 30
+          : 40;
+  }
+
+  score += Math.min(6, Math.max(0, confirmedPlatformsCount - 1) * 3);
+  score += Math.min(6, Math.floor(manualReviewCount / 10) * 2);
+  score -= Math.min(6, pendingPlatformsCount * 2);
+  if (competitorHasBetterCoverage) score -= 5;
+
+  if (
+    googleBusinessStatus === "confirmed" &&
+    !(hasRating && hasReviewCount)
+  ) {
+    score = Math.min(score, hasRating || hasReviewCount ? 60 : 58);
+  }
 
   return Math.max(0, Math.min(100, Math.round(score)));
 }
@@ -700,7 +840,17 @@ function getReviewScoreExplanation({
   }
 
   if (googleBusinessStatus === "confirmed") {
-    return `Google Business is confirmed. Score can improve by making customer proof more visible ${
+    if (rating === null || reviewCount === null) {
+      return `Google Business listing presence is confirmed, but ${
+        rating === null && reviewCount === null
+          ? "rating and review count are unavailable"
+          : rating === null
+            ? "rating is unavailable"
+            : "review count is unavailable"
+      }. The displayed score is limited to listing-presence and trust-setup evidence; it does not measure review performance.`;
+    }
+
+    return `Google Business is confirmed with enough rating and review-count evidence for a scored review-presence assessment. Score can improve by making customer proof more visible ${
       hasWebsite
         ? "on key website pages"
         : "in profiles, pinned content, and booking or storefront paths"

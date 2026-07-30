@@ -710,11 +710,15 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
         "Confirmed platform coverage supports consistency; pending profiles reduce confidence until reviewed.",
     });
   }
-  let reviewsScore = clampScore(
-    (googleConfirmed ? 74 : hasProfile(input.profiles, ProfilePlatform.GOOGLE_BUSINESS) ? 58 : 36) +
-      confirmedCount +
-      offset,
-  );
+  let reviewsScore = reviewAnalysis
+    ? clampScore(reviewAnalysis.score)
+    : clampScore(
+        (googleConfirmed
+          ? 54
+          : hasProfile(input.profiles, ProfilePlatform.GOOGLE_BUSINESS)
+            ? 46
+            : 36) + Math.min(3, confirmedCount),
+      );
   const reviewsTrace = createScoreTrace({
     category: ScoreCategory.REVIEWS,
     score: reviewsScore,
@@ -722,16 +726,16 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
     label: "Review presence baseline",
     value: googleConfirmed,
     explanation:
-      "The baseline uses confirmed Google Business and public-profile presence; unavailable metrics are not entered as zero.",
+      "This is a limited listing-presence baseline. It does not represent review performance unless rating and review-count requirements are met.",
   });
   if (reviewAnalysis) {
     reviewsScore = updateScoreTrace(reviewsTrace, {
-      score: clampScore((reviewsScore + reviewAnalysis.score * 2) / 3),
+      score: clampScore(reviewAnalysis.score),
       key: "reviews:analyzer-result",
       label: "Review and trust analysis",
       value: reviewAnalysis.score,
       explanation:
-        "The review analyzer uses confirmed listing status and available public review metrics. Missing competitor metrics are excluded from comparisons.",
+        reviewAnalysis.reviewScoreExplanation,
     });
     brandingScore = updateScoreTrace(brandingTrace, {
       score: clampScore(
@@ -924,9 +928,12 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
                 description:
                   "The homepage is missing a meta description, which makes search snippets and share previews less predictable.",
                 severity: FindingSeverity.HIGH,
+                sourceUrl: websiteAnalysis.normalizedUrl,
                 evidence: {
                   normalizedUrl: websiteAnalysis.normalizedUrl,
                   metaDescription: websiteAnalysis.metaDescription,
+                  metaDescriptionLength: 0,
+                  issueKey: "homepage:meta-description:missing",
                 },
               },
             ]
@@ -939,10 +946,12 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
                 description:
                   "Detected 0 H1 headings. A clear H1 helps visitors and search engines understand the page.",
                 severity: FindingSeverity.HIGH,
+                sourceUrl: websiteAnalysis.normalizedUrl,
                 evidence: {
                   normalizedUrl: websiteAnalysis.normalizedUrl,
                   h1Count: websiteAnalysis.h1Count,
                   h1Text: websiteAnalysis.h1Text,
+                  issueKey: "sitewide:h1:missing",
                 },
               },
             ]
@@ -956,10 +965,12 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
                   " | ",
                 )}.`,
                 severity: FindingSeverity.MEDIUM,
+                sourceUrl: websiteAnalysis.normalizedUrl,
                 evidence: {
                   normalizedUrl: websiteAnalysis.normalizedUrl,
                   h1Count: websiteAnalysis.h1Count,
                   h1Text: websiteAnalysis.h1Text,
+                  issueKey: "sitewide:h1:multiple",
                 },
               },
             ]
@@ -971,10 +982,12 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
                 title: "Homepage has a clear primary H1.",
                 description: `Found H1: '${websiteAnalysis.h1Text.at(0) ?? ""}'.`,
                 severity: FindingSeverity.INFO,
+                sourceUrl: websiteAnalysis.normalizedUrl,
                 evidence: {
                   normalizedUrl: websiteAnalysis.normalizedUrl,
                   h1Count: websiteAnalysis.h1Count,
                   h1Text: websiteAnalysis.h1Text,
+                  findingType: "VERIFIED_STRENGTH",
                 },
               },
             ]
@@ -1007,10 +1020,12 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
                   primaryCtaAssessment?.evidence.join(" ") ??
                   `Static HTML did not provide enough evidence to verify one clear primary CTA. Detected action types: ${primaryWebsiteActions.join(", ") || "none"}.`,
                 severity: FindingSeverity.MEDIUM,
+                sourceUrl: websiteAnalysis.normalizedUrl,
                 evidence: {
                   normalizedUrl: websiteAnalysis.normalizedUrl,
                   detectedActionTypes: primaryWebsiteActions,
                   primaryCtaAssessment,
+                  issueKey: "homepage:primary-cta:unclear",
                 },
               },
             ]
@@ -1039,9 +1054,11 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
                   ", ",
                 )}.`,
                 severity: FindingSeverity.INFO,
+                sourceUrl: websiteAnalysis.normalizedUrl,
                 evidence: {
                   normalizedUrl: websiteAnalysis.normalizedUrl,
                   detectedSocialLinks: websiteAnalysis.detectedSocialLinks,
+                  findingType: "VERIFIED_STRENGTH",
                 },
               },
             ]
@@ -1077,6 +1094,7 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
             duplicateUrlsSkipped: websiteCrawl.duplicateUrlsSkipped,
             crawlLimitUsed: websiteCrawl.crawlLimitUsed,
             crawlLimitReached: websiteCrawl.crawlLimitReached,
+            findingType: "COVERAGE_INFORMATION",
           },
         },
         ...(websiteCrawl.pagesMissingMetaDescription > 0
@@ -1098,6 +1116,7 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
                   affectedPages: websiteCrawl.pageResults
                     .filter((page) => !page.metaDescription)
                     .map((page) => page.url),
+                  issueKey: "sitewide:meta-description:missing",
                 },
               },
             ]
@@ -1116,6 +1135,7 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
                   affectedPages: websiteCrawl.pageResults
                     .filter((page) => page.h1Count === 0)
                     .map((page) => page.url),
+                  issueKey: "sitewide:h1:missing",
                 },
               },
             ]
@@ -1134,6 +1154,7 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
                   affectedPages: websiteCrawl.pageResults
                     .filter((page) => page.h1Count > 1)
                     .map((page) => page.url),
+                  issueKey: "sitewide:h1:multiple",
                 },
               },
             ]
@@ -1231,6 +1252,79 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
                     websiteCrawl.missingImportantPageTypes,
                   crawlLimitUsed: websiteCrawl.crawlLimitUsed,
                   crawlLimitReached: websiteCrawl.crawlLimitReached,
+                },
+              },
+            ]
+          : []),
+        ...((websiteCrawl.thinPages?.length ?? 0) > 0
+          ? [
+              {
+                category: ScoreCategory.WEBSITE,
+                title: "Some public pages contain little unique content.",
+                description: `${websiteCrawl.thinPages!.length} page${
+                  websiteCrawl.thinPages!.length === 1 ? " is" : "s are"
+                } thin or nearly empty after navigation and template content were removed.`,
+                severity: FindingSeverity.MEDIUM,
+                evidence: {
+                  issueKey: "website:content:thin",
+                  affectedPages: websiteCrawl.thinPages!.map((page) => page.url),
+                  pages: websiteCrawl.thinPages,
+                },
+              },
+            ]
+          : []),
+        ...((websiteCrawl.duplicateContentGroups?.length ?? 0) > 0
+          ? [
+              {
+                category: ScoreCategory.SEO,
+                title: "Near-duplicate page content was detected.",
+                description: `${websiteCrawl.duplicateContentGroups!.length} group${
+                  websiteCrawl.duplicateContentGroups!.length === 1 ? " was" : "s were"
+                } identified from extracted main-content similarity.`,
+                severity: FindingSeverity.MEDIUM,
+                evidence: {
+                  issueKey: "website:content:duplicate",
+                  groups: websiteCrawl.duplicateContentGroups,
+                  affectedPages: websiteCrawl.duplicateContentGroups!.flatMap(
+                    (group) => group.urls,
+                  ),
+                },
+              },
+            ]
+          : []),
+        ...((websiteCrawl.copyQualityFindings?.length ?? 0) > 0
+          ? [
+              {
+                category: ScoreCategory.BRANDING,
+                title: "Visible copy errors may reduce professionalism.",
+                description: `${websiteCrawl.copyQualityFindings!.length} high-confidence copy issue${
+                  websiteCrawl.copyQualityFindings!.length === 1 ? " was" : "s were"
+                } found across customer-facing pages. Intentional brand and product language is excluded from this check.`,
+                severity: FindingSeverity.MEDIUM,
+                evidence: {
+                  issueKey: "website:copy:professionalism",
+                  issues: websiteCrawl.copyQualityFindings,
+                  affectedPages: websiteCrawl.copyQualityFindings!.map(
+                    (issue) => issue.url,
+                  ),
+                },
+              },
+            ]
+          : []),
+        ...((websiteCrawl.orderingFrictionPages?.length ?? 0) > 0
+          ? [
+              {
+                category: ScoreCategory.WEBSITE,
+                title: "The visible ordering process contains manual friction.",
+                description:
+                  "The current process can remain intentionally manual, but one or more pages require several customer steps or later confirmation.",
+                severity: FindingSeverity.MEDIUM,
+                evidence: {
+                  issueKey: "website:ordering-process:friction",
+                  pages: websiteCrawl.orderingFrictionPages,
+                  affectedPages: websiteCrawl.orderingFrictionPages!.map(
+                    (page) => page.url,
+                  ),
                 },
               },
             ]
@@ -1568,11 +1662,18 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
                 {
                   title: "Write a homepage meta description",
                   description:
-                    "Add a concise 140-160 character description that states the offer, audience, and primary value.",
+                    "Add a concise, descriptive summary of the offer, audience, and primary value. Treat length as an editorial guideline because search engines may truncate or rewrite it.",
                   category: ScoreCategory.SEO,
                   priority: RecommendationPriority.HIGH,
                   estimatedEffort: "Low" as const,
                   expectedImpact: "Medium" as const,
+                  sourceUrl: websiteAnalysis.normalizedUrl,
+                  issueKey: "homepage:meta-description:missing",
+                  evidence: {
+                    issueKey: "homepage:meta-description:missing",
+                    sourceUrl: websiteAnalysis.normalizedUrl,
+                    metaDescriptionLength: 0,
+                  },
                 },
               ]
             : []),
@@ -1586,6 +1687,13 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
                   priority: RecommendationPriority.HIGH,
                   estimatedEffort: "Low" as const,
                   expectedImpact: "High" as const,
+                  sourceUrl: websiteAnalysis.normalizedUrl,
+                  issueKey: "sitewide:h1:missing",
+                  evidence: {
+                    issueKey: "sitewide:h1:missing",
+                    sourceUrl: websiteAnalysis.normalizedUrl,
+                    h1Count: 0,
+                  },
                 },
               ]
             : []),
@@ -1610,6 +1718,14 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
                   priority: RecommendationPriority.HIGH,
                   estimatedEffort: "Low" as const,
                   expectedImpact: "High" as const,
+                  sourceUrl: websiteAnalysis.normalizedUrl,
+                  issueKey: "homepage:primary-cta:unclear",
+                  evidence: {
+                    issueKey: "homepage:primary-cta:unclear",
+                    sourceUrl: websiteAnalysis.normalizedUrl,
+                    detectedActionTypes: primaryWebsiteActions,
+                    primaryCtaAssessment,
+                  },
                 },
               ]
             : []),
@@ -1623,6 +1739,8 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
                   priority: RecommendationPriority.MEDIUM,
                   estimatedEffort: "Low" as const,
                   expectedImpact: "Medium" as const,
+                  sourceUrl: websiteAnalysis.normalizedUrl,
+                  issueKey: "website:contact-path:unclear",
                 },
               ]
             : []),
@@ -1641,25 +1759,51 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
                 priority: RecommendationPriority.HIGH,
                 estimatedEffort: "Medium" as const,
                 expectedImpact: "High" as const,
+                issueKey: "sitewide:meta-description:missing",
+                evidence: {
+                  issueKey: "sitewide:meta-description:missing",
+                  affectedUrls: websiteCrawl.pageResults
+                    .filter((page) => !page.metaDescription)
+                    .map((page) => page.url),
+                },
               },
             ]
           : []),
-        ...(websiteCrawl.pagesWithNoH1 + websiteCrawl.pagesWithMultipleH1 > 0
-          ? [
-              {
-                title: "Fix H1 structure across crawled pages",
-                description: `${websiteCrawl.pagesWithNoH1} page${
-                  websiteCrawl.pagesWithNoH1 === 1 ? " has" : "s have"
-                } no H1 and ${websiteCrawl.pagesWithMultipleH1} page${
-                  websiteCrawl.pagesWithMultipleH1 === 1 ? " has" : "s have"
-                } multiple H1s. Use one clear H1 per important page.`,
-                category: ScoreCategory.SEO,
-                priority: RecommendationPriority.MEDIUM,
-                estimatedEffort: "Medium" as const,
-                expectedImpact: "Medium" as const,
-              },
-            ]
-          : []),
+        ...websiteCrawl.pageResults
+          .filter((page) => page.analysisStatus !== "FAILED" && page.h1Count === 0)
+          .map((page) => ({
+            title: `Add a clear H1 to ${pageLabelFromUrl(page.url)}`,
+            description:
+              "Use one descriptive main heading that states this page's topic and customer value.",
+            category: ScoreCategory.SEO,
+            priority: RecommendationPriority.MEDIUM,
+            estimatedEffort: "Low" as const,
+            expectedImpact: "Medium" as const,
+            sourceUrl: page.url,
+            issueKey: "sitewide:h1:missing",
+            evidence: {
+              issueKey: "sitewide:h1:missing",
+              sourceUrl: page.url,
+              h1Count: 0,
+            },
+          })),
+        ...websiteCrawl.pageResults
+          .filter((page) => page.analysisStatus !== "FAILED" && page.h1Count > 1)
+          .map((page) => ({
+            title: `Clarify the H1 structure on ${pageLabelFromUrl(page.url)}`,
+            description: `The page has ${page.h1Count} H1 headings. Keep the strongest main heading and use subordinate heading levels for supporting sections.`,
+            category: ScoreCategory.SEO,
+            priority: RecommendationPriority.LOW,
+            estimatedEffort: "Low" as const,
+            expectedImpact: "Medium" as const,
+            sourceUrl: page.url,
+            issueKey: "sitewide:h1:multiple",
+            evidence: {
+              issueKey: "sitewide:h1:multiple",
+              sourceUrl: page.url,
+              h1Count: page.h1Count,
+            },
+          })),
         ...(websiteCrawl.pagesWithNoCTA > 0
           ? [
               {
@@ -1725,6 +1869,89 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
                 priority: RecommendationPriority.MEDIUM,
                 estimatedEffort: "Medium" as const,
                 expectedImpact: "Medium" as const,
+              },
+            ]
+          : []),
+        ...((websiteCrawl.orderingFrictionPages?.length ?? 0) > 0
+          ? [
+              {
+                title: "Simplify the order inquiry process",
+                description:
+                  "Preserve the business's manual ordering model while collecting required details in one guided step and explaining confirmation, payment, pickup, and delivery expectations.",
+                category: ScoreCategory.WEBSITE,
+                priority: RecommendationPriority.HIGH,
+                estimatedEffort: "Medium" as const,
+                expectedImpact: "High" as const,
+                sourceUrl: websiteCrawl.orderingFrictionPages!.at(0)?.url,
+                issueKey: "website:ordering-process:friction",
+                evidence: {
+                  issueKey: "website:ordering-process:friction",
+                  pages: websiteCrawl.orderingFrictionPages,
+                  affectedUrls: websiteCrawl.orderingFrictionPages!.map(
+                    (page) => page.url,
+                  ),
+                },
+              },
+            ]
+          : []),
+        ...((websiteCrawl.copyQualityFindings?.length ?? 0) > 0
+          ? [
+              {
+                title: "Correct visible copy errors across key customer pages",
+                description:
+                  "Correct the cited high-confidence spelling, duplication, placeholder, or currency-format issues while preserving intentional brand and product wording.",
+                category: ScoreCategory.BRANDING,
+                priority: RecommendationPriority.MEDIUM,
+                estimatedEffort: "Low" as const,
+                expectedImpact: "Medium" as const,
+                issueKey: "website:copy:professionalism",
+                evidence: {
+                  issueKey: "website:copy:professionalism",
+                  issues: websiteCrawl.copyQualityFindings,
+                  affectedUrls: websiteCrawl.copyQualityFindings!.map(
+                    (issue) => issue.url,
+                  ),
+                },
+              },
+            ]
+          : []),
+        ...((websiteCrawl.thinPages?.length ?? 0) > 0
+          ? [
+              {
+                title: "Resolve thin public pages",
+                description:
+                  "Review each cited page and choose the safest fit: add useful page-specific content, redirect it, remove it from navigation, or noindex it.",
+                category: ScoreCategory.WEBSITE,
+                priority: RecommendationPriority.MEDIUM,
+                estimatedEffort: "Medium" as const,
+                expectedImpact: "Medium" as const,
+                issueKey: "website:content:thin",
+                evidence: {
+                  issueKey: "website:content:thin",
+                  pages: websiteCrawl.thinPages,
+                  affectedUrls: websiteCrawl.thinPages!.map((page) => page.url),
+                },
+              },
+            ]
+          : []),
+        ...((websiteCrawl.duplicateContentGroups?.length ?? 0) > 0
+          ? [
+              {
+                title: "Differentiate near-duplicate customer pages",
+                description:
+                  "Give each affected page distinct customer value, main copy, and a relevant next step; consolidate only when the pages do not serve separate needs.",
+                category: ScoreCategory.SEO,
+                priority: RecommendationPriority.MEDIUM,
+                estimatedEffort: "Medium" as const,
+                expectedImpact: "Medium" as const,
+                issueKey: "website:content:duplicate",
+                evidence: {
+                  issueKey: "website:content:duplicate",
+                  groups: websiteCrawl.duplicateContentGroups,
+                  affectedUrls: websiteCrawl.duplicateContentGroups!.flatMap(
+                    (group) => group.urls,
+                  ),
+                },
               },
             ]
           : []),
@@ -1881,19 +2108,6 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
     ...reviewAnalysisRecommendations,
     ...businessContextRecommendations,
     ...socialFirstRecommendations,
-    ...(websiteConfirmed
-      ? [
-          {
-            title: "Clarify your homepage headline",
-            description:
-              "Use a direct headline that states who you help, what you offer, and what the visitor should do next.",
-            category: ScoreCategory.WEBSITE,
-            priority: RecommendationPriority.HIGH,
-            estimatedEffort: "Medium" as const,
-            expectedImpact: "High" as const,
-          },
-        ]
-      : []),
     ...(socialPending > 0
       ? [
           {
@@ -2016,4 +2230,17 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
       },
     ],
   };
+}
+
+function pageLabelFromUrl(value: string) {
+  try {
+    const pathname = new URL(value).pathname.replace(/\/+$/, "");
+    if (!pathname || pathname === "/") return "the homepage";
+    const segment = pathname.split("/").filter(Boolean).at(-1);
+    return segment
+      ? `the ${segment.replace(/[-_]+/g, " ")} page`
+      : "the affected page";
+  } catch {
+    return "the affected page";
+  }
 }

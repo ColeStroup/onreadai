@@ -5,6 +5,8 @@ import {
   type ProfilePlatform,
 } from "@prisma/client";
 
+import { readNormalizedAuditFacts } from "@/lib/audits/normalized-audit-facts";
+
 export type AuditComparisonScore = {
   category: ScoreCategory;
   previousScore: number;
@@ -520,6 +522,7 @@ function explainCategoryScoreChange({
 
 function getComparisonMetadata(snapshot: unknown): ComparisonMetadata {
   const root = isRecord(snapshot) ? snapshot : {};
+  const facts = readNormalizedAuditFacts(snapshot);
   const scoring = isRecord(root.scoringMetadata) ? root.scoringMetadata : {};
   const crawl = isRecord(root.websiteCrawl) ? root.websiteCrawl : {};
   const assessment = isRecord(root.assessment) ? root.assessment : {};
@@ -535,17 +538,26 @@ function getComparisonMetadata(snapshot: unknown): ComparisonMetadata {
   return {
     scoringEngineVersion:
       stringValue(scoring.scoringEngineVersion) ?? "legacy-growth-score",
-    pagesScanned: numberValue(crawl.pagesScanned),
-    crawlPartial:
-      Boolean(crawl.failedPages) ||
-      (Array.isArray(crawl.warnings) && crawl.warnings.length > 0),
-    hasWebsite: Boolean(assessment.hasWebsite ?? root.website),
+    pagesScanned:
+      facts?.coverage.technical.pagesAnalyzed ??
+      numberValue(crawl.pagesScanned),
+    crawlPartial: facts
+      ? facts.coverage.crawl.status === "PARTIAL_FAILURES"
+      : Boolean(crawl.failedPages) ||
+        (Array.isArray(crawl.warnings) && crawl.warnings.length > 0),
+    hasWebsite: facts
+      ? Boolean(facts.homepage)
+      : Boolean(assessment.hasWebsite ?? root.website),
     googleBusinessStatus: stringValue(reviews.googleBusinessStatus),
     googleRating: numberValue(reviews.googleRating),
     googleReviewCount: numberValue(reviews.googleReviewCount),
-    confirmedSocialProfiles: numberValue(social.confirmedProfilesCount),
+    confirmedSocialProfiles:
+      facts?.profiles.userConfirmedSocialProfiles ??
+      numberValue(social.confirmedProfilesCount),
     analyzedCompetitors:
-      numberValue(competitorComparison.analyzedCompetitorCount) ?? 0,
+      facts?.coverage.competitors.analyzed
+        ? numberValue(competitorComparison.analyzedCompetitorCount) ?? 1
+        : numberValue(competitorComparison.analyzedCompetitorCount) ?? 0,
     competitorSnapshotIds: Array.isArray(intelligence.snapshotIds)
       ? intelligence.snapshotIds.filter(
           (value): value is string => typeof value === "string",

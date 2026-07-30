@@ -52,6 +52,13 @@ function titleStatus(length: number, exists: boolean): SeoQualityStatus {
   return "good";
 }
 
+function titleIsVague(value?: string | null) {
+  if (!value) return false;
+  return /^(?:home|welcome|untitled|homepage|index)(?:\s*[|:\-]\s*.+)?$/i.test(
+    value.trim(),
+  );
+}
+
 function metaDescriptionStatus(
   length: number,
   exists: boolean,
@@ -169,6 +176,7 @@ export async function analyzeSeo(
     fetchTextStatus(`${origin}/sitemap.xml`),
   ]);
   const titleLength = website?.pageTitle?.length ?? 0;
+  const vagueTitle = titleIsVague(website?.pageTitle);
   const descriptionLength = website?.metaDescription?.length ?? 0;
   const result: Omit<SeoAnalysis, "score"> = {
     titleStatus: titleStatus(titleLength, Boolean(website?.pageTitle)),
@@ -216,24 +224,35 @@ export async function analyzeSeo(
 
   if (result.titleStatus !== "good") {
     result.seoWarnings.push(
-      `Page title is ${statusLabel(result.titleStatus)} (${titleLength} characters).`,
+      `Page title falls outside the product's typical length guideline (${titleLength} characters). Length alone does not determine search quality.`,
     );
     result.recommendedFixes.push(
-      "Write a clear page title between 30 and 65 characters.",
+      "Write a concise, descriptive page title that explains the offer and relevant market; use the length range as a guideline, not a strict rule.",
+    );
+  } else if (vagueTitle) {
+    result.seoWarnings.push(
+      `Page title "${website?.pageTitle}" is too vague to explain the page topic or offer.`,
+    );
+    result.recommendedFixes.push(
+      "Rewrite the page title to describe the primary offer and relevant market.",
     );
   } else {
-    result.seoStrengths.push("Page title length is in a healthy range.");
+    result.seoStrengths.push(
+      "Page title is present and falls within the product's typical editorial guideline.",
+    );
   }
 
   if (result.metaDescriptionStatus !== "good") {
     result.seoWarnings.push(
-      `Meta description is ${statusLabel(result.metaDescriptionStatus)} (${descriptionLength} characters).`,
+      `Meta description falls outside the product's typical length guideline (${descriptionLength} characters). Search engines may truncate or rewrite descriptions.`,
     );
     result.recommendedFixes.push(
-      "Write a meta description between 70 and 170 characters.",
+      "Write a concise, descriptive meta summary of the offer, audience, and relevant next step; use the length range as a guideline rather than a guarantee.",
     );
   } else {
-    result.seoStrengths.push("Meta description length is in a healthy range.");
+    result.seoStrengths.push(
+      "Meta description is present and falls within the product's typical editorial guideline.",
+    );
   }
 
   if (result.h1Status !== "good") {
@@ -270,6 +289,7 @@ export async function analyzeSeo(
   if (result.titleStatus === "too_short" || result.titleStatus === "too_long") {
     score -= 7;
   }
+  if (vagueTitle) score -= 8;
   if (result.metaDescriptionStatus === "missing") score -= 18;
   if (
     result.metaDescriptionStatus === "too_short" ||

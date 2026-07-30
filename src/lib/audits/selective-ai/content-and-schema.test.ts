@@ -18,6 +18,10 @@ import {
 } from "@/lib/audits/selective-ai/schemas";
 import { selectPagesForAiReview } from "@/lib/audits/selective-ai/page-selection";
 import {
+  auditSynthesisInstructions,
+  pageAnalysisInstructions,
+} from "@/lib/audits/selective-ai/prompts";
+import {
   buildCompactAuditSynthesisContext,
   serializeCompactSynthesisContext,
 } from "@/lib/audits/selective-ai/synthesis-context";
@@ -31,6 +35,23 @@ const businessContext = {
   primaryConversionGoal: "Request a consultation",
   brandTone: "Clear and direct",
 };
+
+test("selective AI prompts prioritize grounded process friction without overriding objective facts", () => {
+  assert.match(
+    pageAnalysisInstructions,
+    /ordering, booking, contact, or next-step instructions/i,
+  );
+  assert.match(pageAnalysisInstructions, /manual email, phone/i);
+  assert.match(pageAnalysisInstructions, /never as broken checkout/i);
+  assert.match(
+    auditSynthesisInstructions,
+    /Never replace a known count or length with "unavailable"/i,
+  );
+  assert.match(
+    auditSynthesisInstructions,
+    /Do not assume a storefront/i,
+  );
+});
 
 test("crawler extraction removes executable and repeated chrome while retaining useful evidence", async () => {
   const html = `<!doctype html>

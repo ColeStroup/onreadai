@@ -346,28 +346,26 @@ test("historical selective analysis renders accurate coverage and source labels"
   await expect(coverageHeading).toBeVisible();
   const coverage = coverageHeading.locator("xpath=../../..");
   await expect(
-    coverage.getByText("Checked technically").locator("..").getByText("75"),
+    coverage.getByText("Crawl coverage").locator("..").getByText("75/75"),
   ).toBeVisible();
   await expect(
     coverage
-      .getByText("Key pages reviewed by AI")
+      .getByText("Technical coverage")
       .locator("..")
-      .getByText(String(deepReviewedPagesCount)),
+      .getByText("75", { exact: true }),
   ).toBeVisible();
   await expect(
     coverage
-      .getByText("Technical + site-wide only")
+      .getByText("AI content coverage")
       .locator("..")
-      .getByText(String(75 - deepReviewedPagesCount)),
-  ).toBeVisible();
-  await expect(
-    coverage.getByText("6 unchanged page reviews were reused."),
+      .getByText(`${deepReviewedPagesCount}/${selectedPagesCount}`),
   ).toBeVisible();
   await expect(
     coverage.getByText(
-      "1 selected page was unavailable for deep review; deterministic checks still completed.",
+      `${deepReviewedPagesCount} of ${selectedPagesCount} selected pages completed AI content review; 1 failed.`,
     ),
   ).toBeVisible();
+  await expect(coverage.getByText("PARTIAL", { exact: true })).toHaveCount(0);
 
   await expect(
     page.getByText("AI-reviewed opportunity", { exact: true }).first(),

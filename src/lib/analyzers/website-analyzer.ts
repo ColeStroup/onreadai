@@ -4,7 +4,6 @@ import type { Element } from "domhandler";
 import {
   classifyWebsiteActions,
   emptyWebsiteActionSummary,
-  matchesActionCandidate,
   type WebsiteActionSummary,
 } from "@/lib/analyzers/action-classifier";
 import {
@@ -59,13 +58,6 @@ type WebsiteAnalyzerOptions = {
   } | null;
 };
 
-type BusinessKind =
-  | "restaurant"
-  | "saas"
-  | "local_service"
-  | "ecommerce"
-  | "general";
-
 const fetchTimeoutMs = 8000;
 const maxHtmlBytes = 1_000_000;
 const maxBusinessContentExcerptChars = 4_500;
@@ -80,63 +72,6 @@ const socialHosts = [
   "twitter.com",
   "pinterest.com",
 ];
-const ctaTerms = [
-  "get started",
-  "book",
-  "contact",
-  "schedule",
-  "buy",
-  "sign up",
-  "start",
-  "request quote",
-  "learn more",
-  "call now",
-];
-const ctaTermsByKind: Record<BusinessKind, string[]> = {
-  restaurant: [
-    "view menu",
-    "menu",
-    "get directions",
-    "directions",
-    "hours",
-    "order online",
-    "order",
-    "takeout",
-    "reservation",
-    "reservations",
-    "events",
-    "gift cards",
-  ],
-  saas: [
-    "start free trial",
-    "free trial",
-    "book demo",
-    "request demo",
-    "view pricing",
-    "pricing",
-    "contact sales",
-    "sign up",
-  ],
-  local_service: [
-    "get quote",
-    "request quote",
-    "book appointment",
-    "schedule service",
-    "request estimate",
-    "free estimate",
-  ],
-  ecommerce: [
-    "shop now",
-    "shop",
-    "view products",
-    "products",
-    "add to cart",
-    "subscribe",
-    "buy now",
-  ],
-  general: [],
-};
-
 function emptyAnalysis(normalizedUrl: string, warnings: string[]): WebsiteAnalysis {
   const localBusinessClues = emptyLocalBusinessClues();
 
@@ -271,44 +206,6 @@ function uniqueLimited(values: string[], limit: number) {
   return [...new Set(values.filter(Boolean))].slice(0, limit);
 }
 
-function inferBusinessKind(context?: WebsiteAnalyzerOptions["businessContext"]) {
-  const text = [
-    context?.description,
-    context?.targetAudience,
-    context?.mainOffer,
-    context?.industry,
-    context?.businessType,
-    context?.primaryConversionGoal,
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-
-  if (/\b(restaurant|bar|grill|cafe|coffee|food|dining|menu|venue|brewery|pub|pizza|tampa)\b/.test(text)) {
-    return "restaurant";
-  }
-
-  if (/\b(saas|software|app|platform|subscription|demo|trial|product-led|b2b)\b/.test(text)) {
-    return "saas";
-  }
-
-  if (/\b(ecommerce|e-commerce|shop|store|retail|products|shipping|returns|cart)\b/.test(text)) {
-    return "ecommerce";
-  }
-
-  if (/\b(local|service area|roofing|plumber|hvac|salon|clinic|law|attorney|contractor|repair|appointment|estimate|quote)\b/.test(text)) {
-    return "local_service";
-  }
-
-  return "general";
-}
-
-function ctaTermsForContext(context?: WebsiteAnalyzerOptions["businessContext"]) {
-  const businessKind = inferBusinessKind(context);
-
-  return [...new Set([...ctaTerms, ...ctaTermsByKind[businessKind]])];
-}
-
 export async function analyzeWebsite(
   input: string,
   options: WebsiteAnalyzerOptions = {},
@@ -378,7 +275,7 @@ export async function analyzeWebsite(
         }
       })
     .get()
-    .filter(
+      .filter(
         (link): link is {
           href: string;
           label: string;
@@ -393,19 +290,21 @@ export async function analyzeWebsite(
           buttonLike: boolean;
           nearPrimaryHeading: boolean;
           navigationLike: boolean;
-        } => Boolean(link?.href) && !link.href.startsWith("mailto:"),
+        } => Boolean(link?.href),
       );
-    const internalLinks = links.filter(
+    const navigableLinks = links.filter(
+      (link) => /^https?:/i.test(link.href),
+    );
+    const internalLinks = navigableLinks.filter(
       (link) => new URL(link.href).origin === finalOrigin,
     );
-    const externalLinks = links.filter(
+    const externalLinks = navigableLinks.filter(
       (link) => new URL(link.href).origin !== finalOrigin,
     );
     const detectedSocialLinks = uniqueLimited(
       links.filter((link) => isSocialUrl(link.href)).map((link) => link.href),
       12,
     );
-    const contextCtaTerms = ctaTermsForContext(options.businessContext);
     const buttonCandidates = $("button, [role='button']")
       .map((_, element) => ({
         label: textOf($(element).text()),
@@ -414,22 +313,7 @@ export async function analyzeWebsite(
       }))
       .get()
       .filter((button) => Boolean(button.label));
-    const rawActionCandidates = [
-      ...links.filter((link) =>
-        matchesActionCandidate({
-          label: link.label,
-          href: link.href,
-          terms: contextCtaTerms,
-        }),
-      ),
-      ...buttonCandidates.filter((button) =>
-        matchesActionCandidate({
-          label: button.label,
-          href: button.href,
-          terms: contextCtaTerms,
-        }),
-      ),
-    ].slice(0, 40);
+    const rawActionCandidates = [...links, ...buttonCandidates].slice(0, 100);
     const actionSummary = classifyWebsiteActions({
       candidates: rawActionCandidates,
       businessContext: options.businessContext,

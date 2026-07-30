@@ -40,6 +40,12 @@ export type WebsiteActionSummary = {
   secondaryNavigation: string[];
   socialLinks: string[];
   eventLinks: string[];
+  conversionLinks: string[];
+  contactActions: string[];
+  emailActions: string[];
+  orderActions: string[];
+  bookingActions: string[];
+  newsletterActions: string[];
   utilityLinks: string[];
   rawCandidates: string[];
 };
@@ -114,6 +120,12 @@ export function classifyWebsiteActions({
   const secondaryNavigation = new Set<string>();
   const socialLinks = new Set<string>();
   const eventLinks = new Set<string>();
+  const conversionLinks = new Set<string>();
+  const contactActions = new Set<string>();
+  const emailActions = new Set<string>();
+  const orderActions = new Set<string>();
+  const bookingActions = new Set<string>();
+  const newsletterActions = new Set<string>();
   const utilityLinks = new Set<string>();
   const rawCandidates = new Set<string>();
   const detectedActionLinks = new Map<string, DetectedActionLink>();
@@ -152,6 +164,16 @@ export function classifyWebsiteActions({
         : null);
     if (primary) {
       primaryActions.add(primary);
+      conversionLinks.add(display);
+      if (/contact|call/i.test(primary)) contactActions.add(display);
+      if (/email/i.test(primary)) emailActions.add(display);
+      if (/order|takeout|buy|shop/i.test(primary)) orderActions.add(display);
+      if (/book|schedule|reservation|appointment/i.test(primary)) {
+        bookingActions.add(display);
+      }
+      if (/newsletter|subscribe/i.test(primary)) {
+        newsletterActions.add(display);
+      }
       const action = toDetectedActionLink(candidate, primary, label, href);
       const key = `${action.actionType}:${action.label}:${action.href ?? ""}`;
       const existing = detectedActionLinks.get(key);
@@ -165,7 +187,7 @@ export function classifyWebsiteActions({
       eventLinks.add(label || "Event link");
       continue;
     }
-    if (/^(mailto|tel):/i.test(href) || /privacy|terms|login|admin|cart|checkout/i.test(text)) {
+    if (/privacy|terms|login|admin|cart|checkout/i.test(text)) {
       utilityLinks.add(label || href);
       continue;
     }
@@ -186,6 +208,12 @@ export function classifyWebsiteActions({
     secondaryNavigation: [...secondaryNavigation],
     socialLinks: [...socialLinks],
     eventLinks: [...eventLinks],
+    conversionLinks: [...conversionLinks],
+    contactActions: [...contactActions],
+    emailActions: [...emailActions],
+    orderActions: [...orderActions],
+    bookingActions: [...bookingActions],
+    newsletterActions: [...newsletterActions],
     utilityLinks: [...utilityLinks],
     rawCandidates: [...rawCandidates],
   };
@@ -210,6 +238,12 @@ export function emptyWebsiteActionSummary(): WebsiteActionSummary {
     secondaryNavigation: [],
     socialLinks: [],
     eventLinks: [],
+    conversionLinks: [],
+    contactActions: [],
+    emailActions: [],
+    orderActions: [],
+    bookingActions: [],
+    newsletterActions: [],
     utilityLinks: [],
     rawCandidates: [],
   };
@@ -392,11 +426,35 @@ function primaryActionLabel({
   kind: ActionBusinessKind;
   reservationRelevant: boolean;
 }) {
+  if (/^mailto:|\bemail\b|email us|send (?:us )?an email/.test(text)) {
+    return "Email";
+  }
+  if (
+    /\b(newsletter|email list|mailing list|join the list|subscribe for updates)\b/.test(
+      text,
+    )
+  ) {
+    return "Newsletter Signup";
+  }
   if (/get directions|directions|location|map/.test(text)) {
     return "Directions / Location";
   }
   if (/call now|\bcall\b|\bphone\b|^tel:/.test(text)) return "Call";
   if (/\bcontact\b|get in touch|email us/.test(text)) return "Contact";
+  if (
+    /\b(order inquiries?|place (?:an?|your) order|how to order|order now|pre[- ]?order|submit (?:an? )?order)\b/.test(
+      text,
+    )
+  ) {
+    return "Order / Inquiry";
+  }
+  if (
+    /\b(book now|book online|schedule now|schedule a call|schedule consultation|book consultation)\b/.test(
+      text,
+    )
+  ) {
+    return "Booking / Scheduling";
+  }
 
   if (kind === "restaurant") {
     if (/gift card|gift certificate|\bstore\b/.test(text)) return "Gift Cards";
@@ -442,6 +500,7 @@ function primaryActionLabel({
   if (/request quote|get quote/.test(text)) return "Request a Quote";
   if (/get started|sign up|signup/.test(text)) return "Get Started";
   if (/buy now|\bbuy\b|\bshop\b/.test(text)) return "Buy / Shop";
+  if (/\bsubscribe\b/.test(text)) return "Subscribe";
 
   return null;
 }

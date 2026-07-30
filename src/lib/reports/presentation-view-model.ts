@@ -112,6 +112,10 @@ export function buildPresentationViewModel(
     seo: buildSeoSlide(report),
     reviews: {
       score: report.reviews.score,
+      scoreLabel: report.reviews.dataRequirementsMet
+        ? "Reviews & Trust score"
+        : "Listing-presence score",
+      scoreDetail: report.reviews.reviewScoreExplanation,
       googleStatus:
         report.reviews.googleBusinessStatus === "confirmed"
           ? "Google listing verified"
@@ -134,7 +138,9 @@ export function buildPresentationViewModel(
       recommendedActions: report.reviews.recommendedFixes
         .slice(0, 2)
         .map((item) => conciseText(item, 160)),
-      sourceLabel: "Current confirmed Google Business data",
+      sourceLabel: report.reviews.dataRequirementsMet
+        ? "Saved audit-time rating and review-count evidence"
+        : "Saved audit-time listing presence; review performance unavailable",
     },
     social: buildSocialSlide(report),
     socialStrategy: buildSocialStrategySlide(report, actionTypes),
@@ -306,10 +312,25 @@ function buildSocialSlide(
   return {
     score: report.social.score,
     brandingScore: scoreFor(report, ScoreCategory.BRANDING),
-    confirmedCount: report.social.confirmedProfilesCount,
+    confirmedCount:
+      report.normalizedFacts?.profiles.userConfirmedSocialProfiles ??
+      report.business.profileSummary.userConfirmedSocialProfiles ??
+      report.social.confirmedProfilesCount,
+    detectedCount:
+      report.normalizedFacts?.profiles.publiclyDetectedSocialProfiles ??
+      report.business.profileSummary.publiclyDetectedSocialProfiles ??
+      0,
+    pendingCount:
+      report.normalizedFacts?.profiles.pendingSocialProfiles ??
+      report.business.profileSummary.pendingSocialProfiles ??
+      report.social.pendingProfilesCount,
+    contentAnalyzedCount:
+      report.normalizedFacts?.profiles.profileContentAnalyzed ??
+      report.business.profileSummary.profileContentAnalyzed ??
+      0,
     confirmedPlatforms: confirmed,
     recommendedChannels,
-    coverageNote: `${titleCase(report.social.platformCoverageLevel)} confirmed channel coverage`,
+    coverageNote: `${titleCase(report.social.platformCoverageLevel)} confirmed channel coverage; ${report.normalizedFacts?.profiles.publiclyDetectedSocialProfiles ?? report.business.profileSummary.publiclyDetectedSocialProfiles ?? 0} publicly detected; ${report.normalizedFacts?.profiles.profileContentAnalyzed ?? report.business.profileSummary.profileContentAnalyzed ?? 0} profile contents analyzed`,
   };
 }
 

@@ -22,6 +22,13 @@ export type SocialAnalyzerCompetitor = {
 
 export type SocialAnalysis = {
   score: number;
+  scoreScope: "PROFILE_COVERAGE";
+  scoreConfidence: "HIGH" | "MEDIUM" | "LOW";
+  scoreStatus: "COVERAGE_ONLY";
+  evidenceCompleteness: number;
+  dataRequirementsMet: boolean;
+  contentAnalyzedProfilesCount: number;
+  performanceStatus: "NOT_ANALYZED";
   confirmedProfilesCount: number;
   pendingProfilesCount: number;
   removedProfilesCount: number;
@@ -243,9 +250,27 @@ export function analyzeSocialProfiles({
   const pendingPenalty = Math.min(10, pendingProfiles.length * 3);
   const competitorPenalty = strongerCompetitor ? 5 : 0;
   const score = clampScore(baseScore - pendingPenalty - competitorPenalty);
+  const evidenceCompleteness = Math.min(
+    100,
+    Math.round(
+      (confirmedProfiles.length /
+        Math.max(1, confirmedProfiles.length + pendingProfiles.length)) *
+        70,
+    ),
+  );
 
   return {
     score,
+    scoreScope: "PROFILE_COVERAGE",
+    scoreConfidence:
+      confirmedProfiles.length > 0 && pendingProfiles.length === 0
+        ? "MEDIUM"
+        : "LOW",
+    scoreStatus: "COVERAGE_ONLY",
+    evidenceCompleteness,
+    dataRequirementsMet: confirmedProfiles.length > 0,
+    contentAnalyzedProfilesCount: 0,
+    performanceStatus: "NOT_ANALYZED",
     confirmedProfilesCount: confirmedProfiles.length,
     pendingProfilesCount: pendingProfiles.length,
     removedProfilesCount: removedProfiles.length,

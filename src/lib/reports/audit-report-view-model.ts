@@ -13,7 +13,10 @@ import {
   type Prisma,
 } from "@prisma/client";
 
-import type { ReviewAnalysis } from "@/lib/analyzers/review-analyzer";
+import {
+  normalizeReviewAnalysisForDisplay,
+  type ReviewAnalysis,
+} from "@/lib/analyzers/review-analyzer";
 import type { SeoAnalysis } from "@/lib/analyzers/seo-analyzer";
 import type { SocialAnalysis } from "@/lib/analyzers/social-analyzer";
 import type { WebsiteCrawlResult } from "@/lib/analyzers/website-crawler";
@@ -48,6 +51,17 @@ import {
   normalizeFindingTitle,
 } from "@/lib/audits/finding-copy";
 import {
+  classifyAuditFindingType,
+  findingTypeLabels,
+  type AuditFindingType,
+} from "@/lib/audits/finding-taxonomy";
+import {
+  buildNormalizedAuditFacts,
+  readNormalizedAuditFacts,
+  type AuditCoverageV2,
+  type NormalizedAuditFacts,
+} from "@/lib/audits/normalized-audit-facts";
+import {
   contextConfidenceLabel,
   contextSourceLabel,
   hasBusinessContext,
@@ -69,7 +83,6 @@ import {
 } from "@/lib/recommendations/recommendation-deduplication";
 import {
   classifyReportBusiness,
-  deterministicSocialRecommendation,
   filterBusinessCompatibleContent,
   publicCompetitorMonitoringCopy,
   validateBusinessCompatibleContent,
@@ -111,6 +124,10 @@ export type ReportScoreItem = {
     | "saved_not_analyzed"
     | "partial";
   note?: string;
+  confidence?: "High" | "Medium" | "Low";
+  evidenceCompleteness?: number;
+  dataRequirementsMet?: boolean;
+  missingInputs?: string[];
 };
 
 export type ReportRecommendation = {
@@ -129,7 +146,7 @@ export type ReportRecommendation = {
   confidence: "High" | "Medium" | "Low";
   freshness: "Current audit" | "Current live state" | "General best practice";
   technical: boolean;
-  sourceLabel?: "Verified technical issue" | "AI-reviewed opportunity";
+  sourceLabel?: (typeof findingTypeLabels)[AuditFindingType];
   sourceUrl?: string | null;
 };
 
@@ -150,12 +167,13 @@ export type ReportFinding = {
   description: string;
   category: ScoreCategory;
   severity: FindingSeverity;
+  findingType?: AuditFindingType;
   source:
     | "selected_audit"
     | "current_live_state"
     | "current_comparison"
     | "ai_reviewed_opportunity";
-  sourceLabel?: "Verified technical issue" | "AI-reviewed opportunity";
+  sourceLabel?: (typeof findingTypeLabels)[AuditFindingType];
   sourceUrl?: string | null;
   evidenceSummary?: string;
   confidence?: "High" | "Medium" | "Low";
@@ -206,6 +224,11 @@ export type AuditReportViewModel = {
       removed: number;
       confirmedPlatforms: string[];
       counts: ProfileCountSummary;
+      userConfirmedSocialProfiles?: number;
+      publiclyDetectedSocialProfiles?: number;
+      additionalDetectedPlatforms?: string[];
+      pendingSocialProfiles?: number;
+      profileContentAnalyzed?: number;
     };
   };
   audit: {
@@ -289,6 +312,8 @@ export type AuditReportViewModel = {
   };
   scoringMetadata: ReportScoringMetadata;
   evidenceIntegrity: AuditEvidenceIntegritySnapshot;
+  normalizedFacts?: NormalizedAuditFacts;
+  coverage?: AuditCoverageV2;
   aiAnalysis?: SelectiveAiAuditSnapshot | null;
   dataNotes: string[];
   technicalAppendix: {
@@ -417,8 +442,28 @@ export async function buildAuditReportViewModel({
     (value) => typeof value.score === "number",
   );
   const aiAnalysis = readSelectiveAiAuditSnapshot(audit.analysisSnapshot);
-  const social = currentState.currentSocial;
-  const reviews = currentState.currentReviews;
+  const savedSocial = getSnapshotValue<SocialAnalysis>(
+    audit.analysisSnapshot,
+    "social",
+    (value) =>
+      typeof value.score === "number" &&
+      Array.isArray(value.confirmedPlatforms) &&
+      Array.isArray(value.pendingPlatforms),
+  );
+  const savedReviews = getSnapshotValue<ReviewAnalysis>(
+    audit.analysisSnapshot,
+    "reviews",
+    (value) =>
+      typeof value.score === "number" &&
+      typeof value.googleBusinessStatus === "string" &&
+      Array.isArray(value.googleBusinessProfiles),
+  );
+  const social = normalizeSocialAnalysisForDisplay(
+    savedSocial ?? currentState.currentSocial,
+  );
+  const reviews = normalizeReviewAnalysisForDisplay(
+    savedReviews ?? currentState.currentReviews,
+  );
   const currentComparison = currentState.comparison;
   const competitorSummary = currentComparison
     ? buildDeterministicSummary(business.name, currentComparison)
@@ -452,6 +497,28 @@ export async function buildAuditReportViewModel({
     brandTone: business.brandTone,
   };
   const archetype = classifyReportBusiness(compatibilityContext);
+  const normalizedFacts =
+    readNormalizedAuditFacts(audit.analysisSnapshot) ??
+    buildNormalizedAuditFacts({
+      website,
+      websiteCrawl,
+      seo,
+      social,
+      reviews,
+      selectiveAi: aiAnalysis,
+      businessProfiles: business.profiles.map((profile) => ({
+        platform: profile.platform,
+        status: profile.status,
+      })),
+      businessContext: compatibilityContext,
+      competitorConfigured: business.competitors.length > 0,
+      competitorAnalyzed:
+        (currentState.comparison?.analyzedCompetitorCount ?? 0) > 0,
+      scoreValues: Object.fromEntries(
+        audit.scores.map((score) => [score.category, score.score]),
+      ) as Partial<Record<ScoreCategory, number>>,
+      generatedAt: (audit.completedAt ?? audit.createdAt).toISOString(),
+    });
   const comparison = compareAudits({
     currentAudit: audit,
     previousAudit,
@@ -499,6 +566,7 @@ export async function buildAuditReportViewModel({
     social,
     reviews,
     competitorStatus,
+    normalizedFacts,
   });
   const overallScore =
     audit.overallScore ??
@@ -611,10 +679,6 @@ export async function buildAuditReportViewModel({
   });
   const nextMoves = buildNextMoves({
     assessment,
-    context: compatibilityContext,
-    website,
-    websiteCrawl,
-    reviews,
     social,
     recommendations: recommendationSet.primary,
   });
@@ -623,11 +687,9 @@ export async function buildAuditReportViewModel({
     overallScore,
     scores,
     reviews,
-    website,
-    websiteCrawl,
     currentComparison,
     nextMoves,
-    aiAnalysis,
+    normalizedFacts,
   });
   const snapshotDate = latestDate(
     currentComparison?.freshness.map((item) => item.scannedAt) ?? [],
@@ -676,6 +738,16 @@ export async function buildAuditReportViewModel({
           )
           .map((profile) => platformLabel(profile.platform)),
         counts: businessProfileCounts,
+        userConfirmedSocialProfiles:
+          normalizedFacts.profiles.userConfirmedSocialProfiles,
+        publiclyDetectedSocialProfiles:
+          normalizedFacts.profiles.publiclyDetectedSocialProfiles,
+        additionalDetectedPlatforms:
+          normalizedFacts.profiles.additionalDetectedPlatforms,
+        pendingSocialProfiles:
+          normalizedFacts.profiles.pendingSocialProfiles,
+        profileContentAnalyzed:
+          normalizedFacts.profiles.profileContentAnalyzed,
       },
     },
     audit: {
@@ -743,9 +815,9 @@ export async function buildAuditReportViewModel({
       reviews: "CURRENT",
     },
     confidence: {
-      pagesScanned: websiteCrawl?.pagesScanned ?? (website ? 1 : 0),
-      crawlLimit: websiteCrawl?.crawlLimitUsed ?? (website ? 1 : 0),
-      crawlStatus: scoringMetadata.crawlStatus.replaceAll("_", " "),
+      pagesScanned: normalizedFacts.coverage.crawl.successfulPages,
+      crawlLimit: normalizedFacts.coverage.crawl.crawlLimit,
+      crawlStatus: normalizedFacts.coverage.crawl.explanation,
       importantPagesIncluded: websiteCrawl?.importantPagesFound ?? [],
       googleBusinessStatus: reviews.googleBusinessStatus,
       businessContextStatus: !hasBusinessContext(business)
@@ -766,6 +838,8 @@ export async function buildAuditReportViewModel({
     },
     scoringMetadata,
     evidenceIntegrity,
+    normalizedFacts,
+    coverage: normalizedFacts.coverage,
     aiAnalysis,
     dataNotes: evidenceIntegrity.dataConflicts.map(
       (conflict) => `${conflict.explanation} ${conflict.action}`,
@@ -1041,9 +1115,7 @@ function buildCurrentRecommendations({
   currentComparison: CompetitorComparisonResult | null;
   evidenceIntegrity: AuditEvidenceIntegritySnapshot;
 }): AuditReportViewModel["recommendations"] {
-  const pendingBusinessProfiles = business.profiles.filter(
-    (profile) => profile.status === BusinessProfileStatus.PENDING,
-  ).length;
+  const pendingBusinessProfiles = social.pendingProfilesCount;
   const confirmedGoogle = reviews.googleBusinessStatus === "confirmed";
   const hasCurrentComparison =
     (currentComparison?.analyzedCompetitorCount ?? 0) > 0;
@@ -1136,75 +1208,12 @@ function buildCurrentRecommendations({
 
       return true;
     });
-  let compatible = filterBusinessCompatibleContent({
+  const compatible = filterBusinessCompatibleContent({
     items: normalized,
     context,
     sourceEvidence,
     diagnosticLabel: `pdf:${business.id}`,
   });
-  const socialRec = deterministicSocialRecommendation(context);
-
-  if (
-    (business.goals.includes(BusinessGoal.GROW_SOCIAL_MEDIA) ||
-      compatible.some((item) => item.category === ScoreCategory.SOCIAL)) &&
-    !compatible.some((item) =>
-      /visual hospitality content|product value into repeatable|local proof|product-led content|focused weekly content/i.test(
-        `${item.title} ${item.description}`,
-      ),
-    )
-  ) {
-    compatible = [
-      ...compatible,
-      {
-        id: "current-social-strategy",
-        title: socialRec.title,
-        description: socialRec.description,
-        category: ScoreCategory.SOCIAL,
-        priority: RecommendationPriority.MEDIUM,
-        status: RecommendationStatus.TODO,
-        effort: "Medium",
-        impact: "Medium",
-        estimatedEffort: "Medium",
-        expectedImpact: "Medium",
-        sourceType: "current_live_state",
-        sourceReferenceId: null,
-        sourceUrl: null,
-        evidence: null,
-      },
-    ];
-  }
-
-  if (
-    reviews.googleBusinessStatus === "confirmed" &&
-    ((reviews.googleRating ?? 0) >= 4.3 ||
-      (reviews.googleReviewCount ?? 0) >= 100) &&
-    !compatible.some((item) =>
-      /customer proof|selected google reviews|testimonial/i.test(
-        `${item.title} ${item.description}`,
-      ),
-    )
-  ) {
-    compatible.push({
-      id: "current-review-proof",
-      title: assessment.hasWebsite
-        ? "Feature customer proof near important decision points"
-        : "Feature customer proof across confirmed profiles",
-      description: assessment.hasWebsite
-        ? "Place selected, authentic review excerpts or testimonials near the homepage and primary conversion path. Do not invent quotes; use customer-approved or publicly verifiable proof."
-        : "Use authentic review proof in a pinned post, profile highlights, and the primary social conversion path. Do not invent quotes.",
-      category: ScoreCategory.REVIEWS,
-      priority: RecommendationPriority.HIGH,
-      status: RecommendationStatus.TODO,
-      effort: "Low",
-      impact: "High",
-      estimatedEffort: "Low",
-      expectedImpact: "High",
-      sourceType: "current_live_state",
-      sourceReferenceId: null,
-      sourceUrl: null,
-      evidence: null,
-    });
-  }
 
   const deduped: ReportRecommendation[] = dedupeRecommendations(compatible).map((recommendation) => {
     const canonicalEvidence = readCanonicalRecommendationEvidence(
@@ -1273,12 +1282,18 @@ function buildCurrentRecommendations({
             : "General best practice" as const,
       technical,
       sourceLabel:
-        recommendation.sourceType === "ai_reviewed_opportunity"
+        canonicalEvidence?.findingType
+          ? findingTypeLabels[canonicalEvidence.findingType]
+          : recommendation.sourceType === "ai_reviewed_opportunity"
           ? "AI-reviewed opportunity" as const
           : technical
             ? "Verified technical issue" as const
             : undefined,
-      sourceUrl: recommendation.sourceUrl ?? aiEvidence?.sourceUrl ?? null,
+      sourceUrl:
+        recommendation.sourceUrl ??
+        canonicalEvidence?.affectedUrls?.at(0) ??
+        aiEvidence?.sourceUrl ??
+        null,
     };
   });
   const sorted = deduped.sort(recommendationSort);
@@ -1296,132 +1311,15 @@ function buildCurrentRecommendations({
 
 function buildNextMoves({
   assessment,
-  context,
-  website,
-  websiteCrawl,
-  reviews,
   social,
   recommendations,
 }: {
   assessment: AuditAssessment;
-  context: ReportBusinessContext;
-  website: WebsiteAnalysis | null;
-  websiteCrawl: WebsiteCrawlResult | null;
-  reviews: ReviewAnalysis;
   social: SocialAnalysis;
   recommendations: ReportRecommendation[];
 }) {
-  const moves: ReportNextMove[] = [];
-
-  if (!assessment.hasWebsite) {
-    moves.push(
-      {
-        title: "Make every confirmed profile explain the offer clearly",
-        whyItMatters:
-          "A social-first visitor should understand who the business serves, what it offers, and what to do next without needing a website.",
-        expectedOutcome:
-          "A clearer profile conversion path for DMs, bookings, calls, email, storefront visits, subscriptions, or link-in-bio actions.",
-        evidence: `${social.confirmedProfilesCount} confirmed social profile${social.confirmedProfilesCount === 1 ? "" : "s"}; detected conversion paths: ${social.detectedConversionPaths.join(", ") || "none saved"}.`,
-        implementationAction:
-          "Rewrite each confirmed profile bio around the audience, main offer, proof, and one primary action. Add a prioritized link-in-bio path where appropriate.",
-        category: ScoreCategory.SOCIAL,
-        effort: "Low",
-        impact: "High",
-      },
-      {
-        title: "Create three pinned posts for new profile visitors",
-        whyItMatters:
-          "Pinned content can explain the offer, show proof, and direct a next step before a visitor explores the full feed.",
-        expectedOutcome:
-          "A more complete social storefront using only confirmed profile and Business Context evidence.",
-        evidence:
-          "Post-level engagement and performance were not analyzed; this is conversion-path guidance for a social-first presence.",
-        implementationAction:
-          "Pin one offer explainer, one trust or proof post, and one clear next-step post.",
-        category: ScoreCategory.SOCIAL,
-        effort: "Medium",
-        impact: "High",
-      },
-    );
-  } else {
-    const primaryActions =
-      website?.actionSummary?.detectedActionTypes ??
-      website?.actionSummary?.primaryActions ??
-      website?.ctaCandidates ??
-      [];
-    const ctaAssessment = getPrimaryCtaAssessment(website?.actionSummary);
-    const unclearCta =
-      ctaAssessment.clarity === "NEEDS_IMPROVEMENT" ||
-      ctaAssessment.clarity === "UNCERTAIN";
-
-    if (unclearCta) {
-      moves.push({
-        title: "Make primary visitor actions more prominent",
-        whyItMatters:
-          "Detected links can include navigation, utility, social, and secondary actions; their presence does not guarantee that the main next step is clear.",
-        expectedOutcome:
-          "Visitors can identify the most important next step faster and with less searching.",
-        evidence: primaryActions.length
-          ? `Detected homepage action types: ${primaryActions.slice(0, 6).join(", ")}. Primary CTA clarity: ${ctaAssessment.clarity.replaceAll("_", " ").toLowerCase()}. Link presence alone does not verify prominence.`
-          : `No customer action link was detected on the homepage. Primary CTA clarity: ${ctaAssessment.clarity.replaceAll("_", " ").toLowerCase()}.`,
-        implementationAction: `Choose one primary action that matches the observed conversion goal${context.primaryConversionGoal ? ` (${context.primaryConversionGoal})` : ""}, then give it stronger wording and visual prominence.`,
-        category: ScoreCategory.WEBSITE,
-        effort: "Low",
-        impact: "High",
-      });
-    }
-
-    const h1Issues =
-      (websiteCrawl?.pagesWithNoH1 ?? 0) +
-      (websiteCrawl?.pagesWithMultipleH1 ?? 0);
-    if (website?.h1Count !== 1 || h1Issues > 0) {
-      moves.push({
-        title: "Give important pages a clear main headline",
-        whyItMatters:
-          "A descriptive main headline helps visitors understand the page and gives search engines a cleaner content signal.",
-        expectedOutcome:
-          "Faster page comprehension and a more consistent heading structure.",
-        evidence: websiteCrawl
-          ? `${websiteCrawl.pagesWithNoH1} scanned page(s) have no H1 and ${websiteCrawl.pagesWithMultipleH1} have multiple H1s.`
-          : `Homepage H1 count: ${website?.h1Count ?? "not available"}.`,
-        implementationAction:
-          "Write one descriptive H1 for each important page, starting with the homepage and highest-value customer paths.",
-        category: ScoreCategory.SEO,
-        effort: "Medium",
-        impact: "High",
-      });
-    }
-  }
-
-  if (
-    reviews.googleBusinessStatus === "confirmed" &&
-    ((reviews.googleReviewCount ?? 0) > 0 || reviews.googleRating !== null)
-  ) {
-    moves.push({
-      title: assessment.hasWebsite
-        ? "Feature customer proof near decision points"
-        : "Turn current review proof into social trust signals",
-      whyItMatters:
-        "Current Google Business data provides verifiable trust evidence without requiring invented customer quotes.",
-      expectedOutcome:
-        "Potential customers see credible proof closer to the moment they decide whether to visit, contact, book, or buy.",
-      evidence: googleListingSummary(reviews),
-      implementationAction: assessment.hasWebsite
-        ? "Select authentic review excerpts or approved testimonials and place them near the homepage and primary conversion path."
-        : "Use authentic review proof in a pinned post, highlight, and profile conversion path.",
-      category: ScoreCategory.REVIEWS,
-      effort: "Low",
-      impact: "High",
-    });
-  }
-
-  for (const recommendation of recommendations) {
-    if (moves.length >= 5) break;
-    if (moves.some((move) => sharesMeaningfulTerm(move.title, recommendation.title))) {
-      continue;
-    }
-
-    moves.push({
+  const moves = recommendations.slice(0, 3).map<ReportNextMove>(
+    (recommendation) => ({
       title: recommendation.title,
       whyItMatters: recommendation.businessRelevance,
       expectedOutcome: expectedOutcomeForCategory(recommendation.category),
@@ -1430,6 +1328,22 @@ function buildNextMoves({
       category: recommendation.category,
       effort: recommendation.estimatedEffort,
       impact: recommendation.expectedImpact,
+    }),
+  );
+
+  if (moves.length === 0 && !assessment.hasWebsite) {
+    moves.push({
+      title: "Make every confirmed profile explain the offer clearly",
+      whyItMatters:
+        "A social-first visitor should understand who the business serves, what it offers, and what to do next without needing a website.",
+      expectedOutcome:
+        "A clearer profile path for direct messages, bookings, calls, email, subscriptions, or saved conversion links.",
+      evidence: `${social.confirmedProfilesCount} confirmed social profile${social.confirmedProfilesCount === 1 ? "" : "s"}; detected conversion paths: ${social.detectedConversionPaths.join(", ") || "none saved"}.`,
+      implementationAction:
+        "Rewrite each confirmed profile bio around the audience, main offer, proof, and one primary action.",
+      category: ScoreCategory.SOCIAL,
+      effort: "Low",
+      impact: "High",
     });
   }
 
@@ -1441,31 +1355,21 @@ function buildExecutiveSummary({
   overallScore,
   scores,
   reviews,
-  website,
-  websiteCrawl,
   currentComparison,
   nextMoves,
-  aiAnalysis,
+  normalizedFacts,
 }: {
   businessName: string;
   overallScore: number;
   scores: ReportScoreItem[];
   reviews: ReviewAnalysis;
-  website: WebsiteAnalysis | null;
-  websiteCrawl: WebsiteCrawlResult | null;
   currentComparison: CompetitorComparisonResult | null;
   nextMoves: ReportNextMove[];
-  aiAnalysis: SelectiveAiAuditSnapshot | null;
+  normalizedFacts: NormalizedAuditFacts;
 }) {
-  if (
-    aiAnalysis?.synthesisSource === "AI_GENERATED" &&
-    aiAnalysis.synthesis?.executiveSummary
-  ) {
-    return cleanReportCopy(aiAnalysis.synthesis.executiveSummary);
-  }
   const scored = scores.filter(
     (item): item is ReportScoreItem & { score: number } =>
-      typeof item.score === "number",
+      typeof item.score === "number" && item.status === "scored",
   );
   const strongest = [...scored]
     .filter((item) => item.category !== ScoreCategory.OVERALL)
@@ -1478,15 +1382,17 @@ function buildExecutiveSummary({
     .slice(0, 2)
     .map((item) => item.label);
   const parts = [
-    `${businessName} has a ${healthLabel(overallScore).toLowerCase()} online foundation with an overall score of ${overallScore}/100.`,
+    `${businessName}'s measured overall growth score is ${overallScore}/100.`,
     strongest.length
-      ? `The strongest current areas are ${joinNaturally(strongest)}.`
+      ? `The strongest fully scored areas are ${joinNaturally(strongest)}.`
       : null,
     reviews.googleBusinessStatus === "confirmed"
-      ? `${googleListingSummary(reviews)} provides a verified local trust signal.`
+      ? reviews.dataRequirementsMet
+        ? `${googleListingSummary(reviews)} provides measured local review evidence.`
+        : "A Google Business listing is confirmed, but rating and review-count data were unavailable, so the review result is limited to listing presence."
       : null,
-    website
-      ? `${websiteCrawl?.pagesScanned ?? 1} website page${(websiteCrawl?.pagesScanned ?? 1) === 1 ? " was" : "s were"} analyzed; ${website.h1Count === 1 ? "the homepage has one H1" : `the homepage has ${website.h1Count} H1 headings`}${website.hasCanonical ? " and a canonical tag is present" : " and the canonical tag is missing"}.`
+    normalizedFacts.homepage
+      ? `${normalizedFacts.coverage.technical.pagesAnalyzed} website page${normalizedFacts.coverage.technical.pagesAnalyzed === 1 ? " was" : "s were"} checked technically; the homepage H1 count is ${normalizedFacts.homepage.h1.count}, and its meta-description length is ${normalizedFacts.homepage.metaDescription.length}.`
       : "Website and SEO were not scored because no confirmed website was provided.",
     currentComparison?.competitorAdvantages.at(0)
       ? `The current public competitor benchmark identifies this response: ${currentComparison.opportunities.at(0)?.title ?? currentComparison.competitorAdvantages[0].title}.`
@@ -1497,7 +1403,9 @@ function buildExecutiveSummary({
     nextMoves.at(0)
       ? `Start with: ${nextMoves[0].title}.`
       : null,
-    "Individual social posts, engagement, posting frequency, and content performance were not analyzed.",
+    normalizedFacts.profiles.profileContentAnalyzed === 0
+      ? "Social profile presence was assessed, but individual posts, engagement, posting frequency, and content performance were not analyzed."
+      : null,
   ];
 
   return cleanReportCopy(parts.filter(Boolean).join(" "));
@@ -1559,18 +1467,24 @@ function buildCurrentFindings({
     diagnosticLabel: "report-findings",
   }).map<ReportFinding>((finding) => {
     const aiEvidence = readAiReviewedOpportunityEvidence(finding.evidence);
+    const findingType = classifyAuditFindingType({
+      title: finding.title,
+      description: finding.description,
+      severity: finding.severity,
+      evidence: finding.evidence,
+      sourceType: aiEvidence ? "ai_reviewed_opportunity" : null,
+    });
     return {
       id: finding.id,
       title: normalizeFindingTitle(finding.title),
       description: normalizeFindingDescription(finding.description),
       category: finding.category,
       severity: finding.severity,
+      findingType,
       source: aiEvidence
         ? "ai_reviewed_opportunity"
         : "selected_audit",
-      sourceLabel: aiEvidence
-        ? "AI-reviewed opportunity"
-        : "Verified technical issue",
+      sourceLabel: findingTypeLabels[findingType],
       sourceUrl: finding.sourceUrl ?? aiEvidence?.sourceUrl ?? null,
       evidenceSummary: aiEvidence?.excerpt ?? finding.description,
       confidence: aiEvidence
@@ -1593,7 +1507,9 @@ function buildCurrentFindings({
       description: `${googleListingSummary(reviews)} is current live trust evidence.`,
       category: ScoreCategory.REVIEWS,
       severity: FindingSeverity.INFO,
-      source: "current_live_state",
+      findingType: "VERIFIED_STRENGTH",
+      source: "selected_audit",
+      sourceLabel: "Verified strength",
     });
   }
 
@@ -1605,7 +1521,9 @@ function buildCurrentFindings({
         .executiveSummary,
       category: ScoreCategory.COMPETITORS,
       severity: FindingSeverity.INFO,
+      findingType: "OBSERVATION",
       source: "current_comparison",
+      sourceLabel: "Observation",
     });
   }
 
@@ -1620,7 +1538,9 @@ function buildCurrentFindings({
         "Pending profiles are shown separately and are not counted as confirmed coverage.",
       category: ScoreCategory.SOCIAL,
       severity: FindingSeverity.MEDIUM,
-      source: "current_live_state",
+      findingType: "LIMITATION",
+      source: "selected_audit",
+      sourceLabel: "Limitation",
     });
   }
 
@@ -1629,19 +1549,12 @@ function buildCurrentFindings({
 
 function groupFindings(findings: ReportFinding[]) {
   const strengths = findings.filter(
-    (finding) =>
-      finding.severity === FindingSeverity.INFO &&
-      !/could|needs?|missing|unclear|pending|opportunit/i.test(
-        `${finding.title} ${finding.description}`,
-      ),
+    (finding) => reportFindingType(finding) === "VERIFIED_STRENGTH",
   );
   const warnings = findings.filter(
     (finding) =>
-      finding.severity === FindingSeverity.HIGH ||
-      finding.severity === FindingSeverity.CRITICAL ||
-      /missing|failed|blocked|no h1|multiple pages/i.test(
-        `${finding.title} ${finding.description}`,
-      ),
+      reportFindingType(finding) === "VERIFIED_TECHNICAL_ISSUE" ||
+      reportFindingType(finding) === "LIMITATION",
   );
   const assigned = new Set([...strengths, ...warnings].map((item) => item.id));
   const opportunities = findings.filter((finding) => !assigned.has(finding.id));
@@ -1655,6 +1568,7 @@ function buildScoreItems({
   social,
   reviews,
   competitorStatus,
+  normalizedFacts,
 }: {
   auditScores: Array<{
     category: ScoreCategory;
@@ -1665,6 +1579,7 @@ function buildScoreItems({
   social: SocialAnalysis;
   reviews: ReviewAnalysis;
   competitorStatus: AuditReportViewModel["competitors"]["status"];
+  normalizedFacts: NormalizedAuditFacts;
 }) {
   const categories = [
     ScoreCategory.WEBSITE,
@@ -1676,6 +1591,17 @@ function buildScoreItems({
   ];
 
   return categories.map<ReportScoreItem>((category) => {
+    const categoryEvidence =
+      normalizedFacts.scoreEvidence.categories?.[category];
+    const evidenceDetails = categoryEvidence
+      ? {
+          confidence: evidenceConfidenceLabel(categoryEvidence.confidence),
+          evidenceCompleteness: categoryEvidence.evidenceCompleteness,
+          dataRequirementsMet: categoryEvidence.dataRequirementsMet,
+          missingInputs: categoryEvidence.missingInputs,
+        }
+      : {};
+
     if (
       !assessment.applicableCategories.includes(category) &&
       (category === ScoreCategory.WEBSITE || category === ScoreCategory.SEO)
@@ -1690,6 +1616,7 @@ function buildScoreItems({
             : "not_applicable",
         note:
           "Adding and confirming a website later will unlock website and SEO analysis.",
+        ...evidenceDetails,
       };
     }
 
@@ -1709,19 +1636,60 @@ function buildScoreItems({
               : competitorStatus === "partial"
                 ? "partial"
                 : "scored",
+        ...evidenceDetails,
+      };
+    }
+
+    if (category === ScoreCategory.SOCIAL) {
+      return {
+        category,
+        label: "Social profile coverage",
+        score: normalizedFacts.scoreEvidence.social.score,
+        status: "partial",
+        note:
+          "This score measures confirmed platform coverage only. Posts, activity, engagement, and performance were not analyzed.",
+        confidence: evidenceConfidenceLabel(
+          normalizedFacts.scoreEvidence.social.confidence,
+        ),
+        evidenceCompleteness: social.evidenceCompleteness,
+        dataRequirementsMet: social.dataRequirementsMet,
+        missingInputs: [
+          "Profile content",
+          "Posting activity",
+          "Engagement and performance",
+        ],
+      };
+    }
+
+    if (category === ScoreCategory.REVIEWS) {
+      return {
+        category,
+        label:
+          normalizedFacts.scoreEvidence.reviews.scope === "LISTING_PRESENCE"
+            ? "Reviews / listing presence"
+            : "Reviews",
+        score: normalizedFacts.scoreEvidence.reviews.score,
+        status: normalizedFacts.scoreEvidence.reviews.dataRequirementsMet
+          ? "scored"
+          : "partial",
+        note: reviews.reviewScoreExplanation,
+        confidence: evidenceConfidenceLabel(
+          normalizedFacts.scoreEvidence.reviews.confidence,
+        ),
+        evidenceCompleteness:
+          normalizedFacts.scoreEvidence.reviews.evidenceCompleteness,
+        dataRequirementsMet:
+          normalizedFacts.scoreEvidence.reviews.dataRequirementsMet,
+        missingInputs: normalizedFacts.scoreEvidence.reviews.missingInputs,
       };
     }
 
     return {
       category,
       label: categoryLabel(category),
-      score:
-        category === ScoreCategory.SOCIAL
-          ? social.score
-          : category === ScoreCategory.REVIEWS
-            ? reviews.score
-            : categoryScore(auditScores, category),
+      score: categoryScore(auditScores, category),
       status: "scored",
+      ...evidenceDetails,
     };
   });
 }
@@ -2139,19 +2107,6 @@ function dedupeFindings(items: ReportFinding[]) {
   });
 }
 
-function sharesMeaningfulTerm(left: string, right: string) {
-  const stopWords = new Set([
-    "this", "that", "with", "from", "your", "have", "will", "into",
-    "more", "clear", "business", "current", "improve", "create", "review",
-  ]);
-  const words = left
-    .toLowerCase()
-    .match(/[a-z0-9]{4,}/g)
-    ?.filter((word) => !stopWords.has(word)) ?? [];
-  const normalizedRight = right.toLowerCase();
-  return words.some((word) => normalizedRight.includes(word));
-}
-
 function googleListingSummary(reviews: ReviewAnalysis) {
   const parts = [
     reviews.googleBusinessListingName,
@@ -2163,6 +2118,55 @@ function googleListingSummary(reviews: ReviewAnalysis) {
       : null,
   ].filter((value): value is string => Boolean(value));
   return parts.join(" | ") || "Google Business data is unavailable.";
+}
+
+function normalizeSocialAnalysisForDisplay(
+  social: SocialAnalysis,
+): SocialAnalysis {
+  return {
+    ...social,
+    scoreScope: social.scoreScope ?? "PROFILE_COVERAGE",
+    scoreConfidence:
+      social.scoreConfidence ??
+      (social.confirmedProfilesCount > 0 &&
+      social.pendingProfilesCount === 0
+        ? "MEDIUM"
+        : "LOW"),
+    scoreStatus: social.scoreStatus ?? "COVERAGE_ONLY",
+    evidenceCompleteness:
+      social.evidenceCompleteness ??
+      Math.round(
+        (social.confirmedProfilesCount /
+          Math.max(
+            1,
+            social.confirmedProfilesCount + social.pendingProfilesCount,
+          )) *
+          70,
+      ),
+    dataRequirementsMet:
+      social.dataRequirementsMet ?? social.confirmedProfilesCount > 0,
+    contentAnalyzedProfilesCount: social.contentAnalyzedProfilesCount ?? 0,
+    performanceStatus: social.performanceStatus ?? "NOT_ANALYZED",
+  };
+}
+
+function reportFindingType(finding: ReportFinding): AuditFindingType {
+  if (finding.findingType) return finding.findingType;
+  const stored = Object.entries(findingTypeLabels).find(
+    ([, label]) => label === finding.sourceLabel,
+  )?.[0] as AuditFindingType | undefined;
+  return (
+    stored ??
+    classifyAuditFindingType({
+      title: finding.title,
+      description: finding.description,
+      severity: finding.severity,
+      sourceType:
+        finding.source === "ai_reviewed_opportunity"
+          ? "ai_reviewed_opportunity"
+          : null,
+    })
+  );
 }
 
 function socialScopeNote() {

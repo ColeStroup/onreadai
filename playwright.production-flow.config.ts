@@ -18,7 +18,10 @@ process.env.DIRECT_URL = databaseUrl;
 
 export default defineConfig({
   testDir: "./tests",
-  testMatch: "production-business-flow.spec.ts",
+  testMatch: [
+    "production-business-flow.spec.ts",
+    "audit-quality-v3.spec.ts",
+  ],
   timeout: 180_000,
   expect: { timeout: 30_000 },
   fullyParallel: false,

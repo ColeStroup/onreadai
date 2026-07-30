@@ -75,7 +75,7 @@ test("cache identity is tenant-scoped and invalidates on content, prompt, schema
     page,
     payload,
     route,
-    versions: { promptVersion: "audit-page-analysis-prompt-v2" },
+    versions: { promptVersion: "audit-page-analysis-prompt-v3-test" },
   });
   const changedSchema = buildPageAnalysisCacheIdentity({
     businessId: "business-a",

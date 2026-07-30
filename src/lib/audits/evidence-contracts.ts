@@ -3,10 +3,10 @@ import type {
   ScoreCategory,
 } from "@prisma/client";
 
-export const EVIDENCE_CONTRACT_VERSION = "audit-evidence-v1";
+export const EVIDENCE_CONTRACT_VERSION = "audit-evidence-v2";
 export const CLAIM_VALIDATOR_VERSION = "claim-validator-v1";
 export const RECOMMENDATION_EVIDENCE_VERSION =
-  "recommendation-evidence-v1";
+  "recommendation-evidence-v2-root-cause";
 
 export type EvidenceConfidence = "HIGH" | "MEDIUM" | "LOW";
 
@@ -210,8 +210,19 @@ export type EvidenceValidationWarning = {
 
 export type CanonicalRecommendationEvidence = {
   issueKey: string;
+  rootCauseKey?: string;
   sourceFindingId: string | null;
+  sourceFindingIds?: string[];
   sourceEvidenceIds: string[];
+  affectedUrls?: string[];
+  sourceTypes?: string[];
+  findingType?:
+    | "VERIFIED_TECHNICAL_ISSUE"
+    | "AI_REVIEWED_OPPORTUNITY"
+    | "VERIFIED_STRENGTH"
+    | "COVERAGE_INFORMATION"
+    | "LIMITATION"
+    | "OBSERVATION";
   sourceCategory: ScoreCategory;
   recommendationType: string;
   fullEvidence: string;
@@ -270,7 +281,9 @@ export function readEvidenceIntegrity(
 
   const value = snapshot.evidenceIntegrity;
   if (
-    value.contractVersion !== EVIDENCE_CONTRACT_VERSION ||
+    !["audit-evidence-v1", EVIDENCE_CONTRACT_VERSION].includes(
+      String(value.contractVersion),
+    ) ||
     !Array.isArray(value.evidence) ||
     !Array.isArray(value.validatedClaims) ||
     !Array.isArray(value.scoreBreakdowns) ||

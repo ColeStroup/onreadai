@@ -89,6 +89,8 @@ export type PresentationDeckData = {
   };
   reviews: {
     score: number;
+    scoreLabel: string;
+    scoreDetail: string;
     googleStatus: string;
     listingName: string | null;
     rating: string;
@@ -102,6 +104,9 @@ export type PresentationDeckData = {
     score: number;
     brandingScore: number | null;
     confirmedCount: number;
+    detectedCount: number;
+    pendingCount: number;
+    contentAnalyzedCount: number;
     confirmedPlatforms: string[];
     recommendedChannels: string[];
     coverageNote: string;

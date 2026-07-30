@@ -8,6 +8,7 @@ import {
 } from "@prisma/client";
 
 import { buildCompetitorConsultantContext } from "@/lib/ai/competitor-consultant-context";
+import { readNormalizedAuditFacts } from "@/lib/audits/normalized-audit-facts";
 import { readAiReviewedOpportunityEvidence } from "@/lib/audits/selective-ai/types";
 import { businessGoalLabels } from "@/lib/goals";
 import { prisma } from "@/lib/prisma";
@@ -88,6 +89,15 @@ export type ImplementationContext = {
     pagesMissingMetaDescription: number | null;
     pagesWithH1Issues: number | null;
   };
+  auditFacts: {
+    homepageUrl: string | null;
+    homepageTitleLength: number | null;
+    homepageMetaDescriptionLength: number | null;
+    homepageH1Count: number | null;
+    pagesMissingH1: string[];
+    pagesMissingMetaDescription: string[];
+    coverageNote: string | null;
+  };
   googleBusiness: {
     status: "missing" | "pending" | "confirmed";
     rating: number | null;
@@ -97,6 +107,8 @@ export type ImplementationContext = {
   social: {
     confirmedPlatforms: string[];
     pendingPlatforms: string[];
+    publiclyDetectedPlatforms: string[];
+    profileContentAnalyzed: number;
     currentItem: Record<string, string> | null;
     strategySummary: string | null;
   };
@@ -262,6 +274,9 @@ export async function buildImplementationContext({
   }
 
   const snapshot = asRecord(latestAudit?.analysisSnapshot);
+  const normalizedFacts = readNormalizedAuditFacts(
+    latestAudit?.analysisSnapshot,
+  );
   const website = asRecord(snapshot.website);
   const crawl = asRecord(snapshot.websiteCrawl);
   const socialSnapshot = asRecord(snapshot.social);
@@ -350,19 +365,45 @@ export async function buildImplementationContext({
     },
     evidence: relatedFindings,
     website: {
-      url: stringValue(website.normalizedUrl) ?? business.websiteUrl,
-      pageTitle: stringValue(website.pageTitle),
-      metaDescription: stringValue(website.metaDescription),
-      h1Text: stringArray(website.h1Text).slice(0, 3),
+      url:
+        normalizedFacts?.homepage?.url ??
+        stringValue(website.normalizedUrl) ??
+        business.websiteUrl,
+      pageTitle:
+        normalizedFacts?.homepage?.title.value ??
+        stringValue(website.pageTitle),
+      metaDescription:
+        normalizedFacts?.homepage?.metaDescription.value ??
+        stringValue(website.metaDescription),
+      h1Text:
+        normalizedFacts?.homepage?.h1.values.slice(0, 3) ??
+        stringArray(website.h1Text).slice(0, 3),
       ctaCandidates: stringArray(website.ctaCandidates).slice(0, 6),
       pagesScanned: numberValue(crawl.pagesScanned),
       pagesMissingMetaDescription: numberValue(crawl.pagesMissingMetaDescription),
       pagesWithH1Issues:
-        numberValue(crawl.pagesWithNoH1) !== null ||
+        normalizedFacts
+          ? normalizedFacts.siteWide.pagesMissingH1.length +
+            normalizedFacts.siteWide.pagesWithMultipleH1.length
+          : numberValue(crawl.pagesWithNoH1) !== null ||
         numberValue(crawl.pagesWithMultipleH1) !== null
           ? (numberValue(crawl.pagesWithNoH1) ?? 0) +
             (numberValue(crawl.pagesWithMultipleH1) ?? 0)
           : null,
+    },
+    auditFacts: {
+      homepageUrl: normalizedFacts?.homepage?.url ?? null,
+      homepageTitleLength: normalizedFacts?.homepage?.title.length ?? null,
+      homepageMetaDescriptionLength:
+        normalizedFacts?.homepage?.metaDescription.length ?? null,
+      homepageH1Count: normalizedFacts?.homepage?.h1.count ?? null,
+      pagesMissingH1:
+        normalizedFacts?.siteWide.pagesMissingH1.map((item) => item.url) ?? [],
+      pagesMissingMetaDescription:
+        normalizedFacts?.siteWide.pagesMissingMetaDescriptions.map(
+          (item) => item.url,
+        ) ?? [],
+      coverageNote: normalizedFacts?.coverage.crawl.explanation ?? null,
     },
     googleBusiness: {
       status: primaryGoogle
@@ -385,6 +426,10 @@ export async function buildImplementationContext({
         pendingSocial.length > 0
           ? pendingSocial
           : stringArray(socialSnapshot.pendingPlatforms).slice(0, 8),
+      publiclyDetectedPlatforms:
+        normalizedFacts?.profiles.publiclyDetectedPlatforms ?? [],
+      profileContentAnalyzed:
+        normalizedFacts?.profiles.profileContentAnalyzed ?? 0,
       currentItem: currentSocialItem,
       strategySummary: latestStrategy?.reasoningSummary ?? null,
     },
