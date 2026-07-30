@@ -13,7 +13,6 @@ import { ContextualHelpCard } from "@/components/dashboard/contextual-help-card"
 import { DisclosureSection } from "@/components/dashboard/disclosure-section";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { FloatingScrollControls } from "@/components/dashboard/floating-scroll-controls";
-import { ImplementationHelpDrawer } from "@/components/implementation/implementation-help-drawer";
 import {
   CompactIssueRow,
   CompactMetricCard,
@@ -289,17 +288,30 @@ export default async function BusinessWebsitePage({
 
   if (!audit) {
     return (
-      <EmptyState
-        icon={<Globe2 className="size-6" />}
-        title="No website analysis yet"
-        description="Confirm a website profile and run an audit to analyze the homepage and priority internal pages."
-        action={
-          <Link href={`/dashboard/businesses/${business.id}/confirm`} className={buttonVariants({ variant: "primary" })}>
-            Run Audit
-            <ArrowRight className="size-4" />
-          </Link>
-        }
-      />
+      <div className="space-y-6">
+        <PageIntro
+          title="Website analysis"
+          description="Review website clarity, conversion paths, page quality, and supporting crawl evidence."
+          icon={Globe2}
+        />
+        <EmptyState
+          compact
+          icon={<Globe2 className="size-6" />}
+          title="No website analysis yet"
+          description="Confirm a website profile and run an audit to analyze the homepage and priority internal pages."
+          action={
+            <Link
+              href={`/dashboard/businesses/${business.id}/audit/run`}
+              data-customer-event="empty_state_action_clicked"
+              data-customer-surface="empty_state"
+              className={buttonVariants({ variant: "primary" })}
+            >
+              Run audit
+              <ArrowRight className="size-4" aria-hidden="true" />
+            </Link>
+          }
+        />
+      </div>
     );
   }
 
@@ -314,6 +326,7 @@ export default async function BusinessWebsitePage({
           icon={Globe2}
         />
         <EmptyState
+          compact
           icon={<Globe2 className="size-6" />}
           title="Website not provided"
           description="This social-first audit did not score Website as a failure. Add and confirm a website later to unlock homepage, conversion, and multi-page crawl analysis."
@@ -407,22 +420,28 @@ export default async function BusinessWebsitePage({
         description="See the highest-impact clarity, conversion, and page-quality issues first. Full crawl evidence stays available when you need it."
         icon={Globe2}
         actions={
-          <a href={analysis.normalizedUrl} target="_blank" rel="noreferrer" className={buttonVariants({ variant: "secondary", size: "sm" })}>
-            Open website
-            <ExternalLink className="size-4" />
-          </a>
+          <>
+            <Link
+              href={`/dashboard/businesses/${business.id}/action-plan?category=WEBSITE`}
+              className={buttonVariants({ variant: "primary", size: "sm" })}
+            >
+              Review website actions
+              <ArrowRight className="size-4" />
+            </Link>
+            <a href={analysis.normalizedUrl} target="_blank" rel="noreferrer" className={buttonVariants({ variant: "secondary", size: "sm" })}>
+              Open website
+              <ExternalLink className="size-4" />
+            </a>
+          </>
         }
       />
 
       <ContextualHelpCard {...contextualHelp.website} />
 
-      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+      <section className="grid gap-3 sm:grid-cols-3">
         <CompactMetricCard label="Website score" value={`${websiteScore}/100`} />
-        <CompactMetricCard label="Page quality" value={`${crawl?.averagePageScore ?? analysis.score}/100`} />
         <CompactMetricCard label="Pages scanned" value={crawl?.pagesScanned ?? 1} />
-        <CompactMetricCard label="Crawl limit" value={crawl?.crawlLimitUsed ?? 1} />
         <CompactMetricCard label="Critical issues" value={criticalFindings.length} tone={criticalFindings.length ? "warning" : "good"} />
-        <CompactMetricCard label="Priority pages found" value={normalizedCoverage?.scannedImportantPages.length ?? 1} />
       </section>
 
       {crawl?.duplicateUrlsSkipped ? (
@@ -435,12 +454,6 @@ export default async function BusinessWebsitePage({
       <ReportSection
         title="Critical issues"
         description="The website problems most likely to affect clarity, search visibility, or visitor action."
-        action={
-          <Link href={`/dashboard/businesses/${business.id}/action-plan?category=WEBSITE`} className={buttonVariants({ variant: "secondary", size: "sm" })}>
-            Open tasks
-            <ArrowRight className="size-4" />
-          </Link>
-        }
       >
         {criticalFindings.length > 0 ? (
           criticalFindings.map((finding) => {
@@ -457,23 +470,13 @@ export default async function BusinessWebsitePage({
                 tone={finding.severity === FindingSeverity.CRITICAL || finding.severity === FindingSeverity.HIGH ? "danger" : "warning"}
                 meta={affected.length > 0 ? `Affected key pages: ${affected.join(", ")}` : "Homepage evidence"}
                 action={
-                  <div className="flex flex-wrap items-center gap-2">
-                    {recommendation ? (
-                      <ImplementationHelpDrawer
-                        businessId={business.id}
-                        businessName={business.name}
-                        source={{ kind: "recommendation", recommendationId: recommendation.id }}
-                        recommendationId={recommendation.id}
-                        recommendationTitle={recommendation.title}
-                        evidence={finding.description}
-                        initialSavedCount={recommendation.implementationDrafts.length}
-                        label={/canonical|robots|sitemap|alt text/i.test(recommendation.title) ? "Show Implementation Steps" : "Generate Fix"}
-                      />
-                    ) : null}
-                    <Link href={`/dashboard/businesses/${business.id}/action-plan?category=${finding.category}`} className="text-sm font-medium text-accent hover:underline">
-                      Related task
-                    </Link>
-                  </div>
+                  <Link
+                    href={`/dashboard/businesses/${business.id}/action-plan?category=${finding.category}${recommendation ? `&q=${encodeURIComponent(recommendation.title)}` : ""}`}
+                    className={buttonVariants({ variant: "secondary", size: "sm" })}
+                  >
+                    Review action
+                    <ArrowRight className="size-4" />
+                  </Link>
                 }
               />
             );

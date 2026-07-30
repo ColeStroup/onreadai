@@ -25,7 +25,6 @@ import { ContextualHelpCard } from "@/components/dashboard/contextual-help-card"
 import { DisclosureSection } from "@/components/dashboard/disclosure-section";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { FloatingScrollControls } from "@/components/dashboard/floating-scroll-controls";
-import { ImplementationHelpDrawer } from "@/components/implementation/implementation-help-drawer";
 import {
   CompactIssueRow,
   PageIntro,
@@ -71,6 +70,12 @@ const statusStyles = {
   pending: "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100",
   confirmed: "border-teal-200 bg-teal-50 text-teal-800 dark:border-teal-900 dark:bg-teal-950/30 dark:text-teal-100",
 };
+
+const googleBusinessStatusLabels = {
+  missing: "Not found",
+  pending: "Needs review",
+  confirmed: "Confirmed",
+} as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -380,6 +385,15 @@ export default async function BusinessReviewsPage({
         title="Reviews and trust"
         description="Understand whether customers can find credible review signals and whether your Google Business presence is ready to support local trust."
         icon={Star}
+        actions={
+          <Link
+            href={`/dashboard/businesses/${business.id}/action-plan?category=REVIEWS`}
+            className={buttonVariants({ variant: "primary", size: "sm" })}
+          >
+            Review trust actions
+            <ArrowRight className="size-4" />
+          </Link>
+        }
       />
 
       <ContextualHelpCard {...contextualHelp.reviews} />
@@ -407,13 +421,14 @@ export default async function BusinessReviewsPage({
         <>
           <GoogleListingManager businessId={business.id} profiles={business.googleBusinessProfiles} />
           <EmptyState
+            compact
             icon={<Star className="size-6" />}
             title="No reviews analysis yet"
             description="Run a new audit to evaluate Google Business presence, review platform coverage, and local trust signals."
             action={
               <Link href={`/dashboard/businesses/${business.id}/audit/run`} className={buttonVariants({ variant: "primary" })}>
-                Run Audit
-                <ArrowRight className="size-4" />
+                Run audit
+                <ArrowRight className="size-4" aria-hidden="true" />
               </Link>
             }
           />
@@ -429,7 +444,8 @@ export default async function BusinessReviewsPage({
               <div>
                 <div className="flex flex-wrap items-center gap-2">
                   <span className={cn("rounded-full border px-2.5 py-1 text-xs font-semibold", statusStyles[reviews.googleBusinessStatus])}>
-                    Google Business {reviews.googleBusinessStatus}
+                    Google Business{" "}
+                    {googleBusinessStatusLabels[reviews.googleBusinessStatus]}
                   </span>
                   <span className="rounded-full border border-border bg-background px-2.5 py-1 text-xs font-semibold capitalize">
                     Presence: {reviews.reviewPresenceLevel}
@@ -439,7 +455,11 @@ export default async function BusinessReviewsPage({
                   {primaryGoogleProfile?.displayName ?? reviews.googleBusinessListingName ?? "No confirmed listing"}
                 </p>
                 <p className="mt-1 text-sm text-muted">
-                  {reviews.googleRating ? `${reviews.googleRating.toFixed(1)} stars` : "Rating unavailable"} · {formatReviewCount(reviews.googleReviewCount)} reviews
+                  {reviews.googleRating
+                    ? `${reviews.googleRating.toFixed(1)} stars`
+                    : "Rating unavailable"}
+                  {" \u00b7 "}
+                  {formatReviewCount(reviews.googleReviewCount)} reviews
                 </p>
               </div>
               <div className="lg:text-right">
@@ -492,12 +512,6 @@ export default async function BusinessReviewsPage({
           <ReportSection
             title="Recommended actions"
             description="Opportunities and fixes are combined into one practical queue."
-            action={
-              <Link href={`/dashboard/businesses/${business.id}/action-plan?category=REVIEWS`} className={buttonVariants({ variant: "secondary", size: "sm" })}>
-                Review tasks
-                <ArrowRight className="size-4" />
-              </Link>
-            }
           >
             {recommendedActions.length > 0 ? recommendedActions.map((action, index) => {
               const requestAction = /request|collect|ask/i.test(action);
@@ -516,22 +530,13 @@ export default async function BusinessReviewsPage({
                   tone="info"
                   meta={`Priority ${index + 1}`}
                   action={
-                    <div className="flex flex-wrap items-center gap-2">
-                      {recommendation ? (
-                        <ImplementationHelpDrawer
-                          businessId={business.id}
-                          businessName={business.name}
-                          source={{ kind: "recommendation", recommendationId: recommendation.id }}
-                          recommendationId={recommendation.id}
-                          recommendationTitle={recommendation.title}
-                          evidence={action}
-                          initialSavedCount={recommendation.implementationDrafts.length}
-                        />
-                      ) : null}
-                      <Link href={`/dashboard/businesses/${business.id}/chat?prompt=${encodeURIComponent(`Help me implement this reviews and trust action: ${action}`)}`} className="text-sm font-medium text-accent hover:underline">
-                        Ask AI to help
-                      </Link>
-                    </div>
+                    <Link
+                      href={`/dashboard/businesses/${business.id}/action-plan?category=REVIEWS${recommendation ? `&q=${encodeURIComponent(recommendation.title)}` : ""}`}
+                      className={buttonVariants({ variant: "secondary", size: "sm" })}
+                    >
+                      Review action
+                      <ArrowRight className="size-4" />
+                    </Link>
                   }
                 />
               );

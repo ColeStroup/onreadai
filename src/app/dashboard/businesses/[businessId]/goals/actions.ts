@@ -45,6 +45,7 @@ export async function saveBusinessGoals(formData: FormData) {
     primaryGoal && !selectedGoals.includes(primaryGoal)
       ? [...selectedGoals, primaryGoal]
       : selectedGoals;
+  const returnTo = String(formData.get("returnTo") ?? "");
 
   await prisma.business.update({
     where: {
@@ -53,6 +54,7 @@ export async function saveBusinessGoals(formData: FormData) {
     data: {
       goals,
       primaryGoal,
+      onboardingLastStep: returnTo === "setup-next" ? "audit" : undefined,
     },
   });
 
@@ -65,8 +67,12 @@ export async function saveBusinessGoals(formData: FormData) {
   revalidatePath("/dashboard/businesses");
   revalidatePath("/dashboard");
 
+  if (returnTo === "setup-next") {
+    redirect(`/dashboard/businesses/${business.id}/setup?step=audit`);
+  }
+
   redirect(
-    formData.get("returnTo") === "setup"
+    returnTo === "setup"
       ? `/dashboard/businesses/${business.id}/setup?step=goals&saved=1`
       : `/dashboard/businesses/${business.id}/goals?saved=1`,
   );

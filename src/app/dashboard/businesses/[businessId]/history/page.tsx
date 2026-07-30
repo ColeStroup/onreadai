@@ -7,14 +7,8 @@ import { LockedFeature } from "@/components/billing/locked-feature";
 import { ContextualHelpCard } from "@/components/dashboard/contextual-help-card";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { FloatingScrollControls } from "@/components/dashboard/floating-scroll-controls";
+import { PageIntro } from "@/components/dashboard/report-ui";
 import { buttonVariants } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { compareAudits, formatDelta } from "@/lib/audits/audit-comparison";
 import { canUseProgressComparison } from "@/lib/billing/entitlements";
 import { contextualHelp } from "@/lib/education/help-content";
@@ -37,6 +31,14 @@ const statusStyles: Record<AuditStatus, string> = {
     "border-teal-200 bg-teal-50 text-teal-800 dark:border-teal-900 dark:bg-teal-950/40 dark:text-teal-100",
   FAILED:
     "border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-100",
+};
+
+const statusLabels: Record<AuditStatus, string> = {
+  PENDING: "Preparing",
+  QUEUED: "Waiting",
+  RUNNING: "Running",
+  COMPLETED: "Completed",
+  FAILED: "Needs retry",
 };
 
 function deltaStyles(delta: number | null) {
@@ -104,20 +106,31 @@ export default async function BusinessHistoryPage({
 
   if (business.audits.length === 0) {
     return (
-      <EmptyState
-        icon={<History className="size-6" />}
-        title="No audit history yet"
-        description="Confirm profiles and run your first audit to create a saved report."
-        action={
-          <Link
-            href={`/dashboard/businesses/${business.id}/confirm`}
-            className={buttonVariants({ variant: "primary" })}
-          >
-            Run first audit
-            <ArrowRight className="size-4" />
-          </Link>
-        }
-      />
+      <div className="space-y-6">
+        <PageIntro
+          eyebrow="Plan"
+          title="Audit history"
+          description="Review saved reports and meaningful changes between comparable audits."
+          icon={History}
+        />
+        <EmptyState
+          compact
+          icon={<History className="size-6" />}
+          title="No audit history yet"
+          description="Confirm profiles and run your first audit to create a saved report."
+          action={
+            <Link
+              href={`/dashboard/businesses/${business.id}/audit/run`}
+              data-customer-event="empty_state_action_clicked"
+              data-customer-surface="empty_state"
+              className={buttonVariants({ variant: "primary" })}
+            >
+              Run first audit
+              <ArrowRight className="size-4" aria-hidden="true" />
+            </Link>
+          }
+        />
+      </div>
     );
   }
 
@@ -125,6 +138,21 @@ export default async function BusinessHistoryPage({
 
   return (
     <div className="space-y-6">
+      <PageIntro
+        eyebrow="Plan"
+        title="Audit history"
+        description="Review saved reports, action progress, and changes that can be compared reliably."
+        icon={History}
+        actions={
+          <Link
+            href={`/dashboard/businesses/${business.id}/audit/run`}
+            className={buttonVariants({ variant: "secondary", size: "sm" })}
+          >
+            Run audit
+            <ArrowRight className="size-4" aria-hidden="true" />
+          </Link>
+        }
+      />
       <ContextualHelpCard {...contextualHelp.history} />
 
       {!progressComparisonCheck.allowed ? (
@@ -140,17 +168,21 @@ export default async function BusinessHistoryPage({
         />
       ) : null}
 
-      <Card>
-        <CardHeader>
-          <div className="mb-3 flex size-11 items-center justify-center rounded-lg bg-accent/10 text-accent">
-            <FileClock className="size-5" />
+      <section aria-labelledby="saved-audits-title">
+        <div className="mb-4 flex items-center gap-3">
+          <span className="flex size-9 items-center justify-center rounded-lg bg-accent/10 text-accent">
+            <FileClock className="size-4" aria-hidden="true" />
+          </span>
+          <div>
+            <h2 id="saved-audits-title" className="text-lg font-semibold">
+              Saved audits
+            </h2>
+            <p className="text-sm text-muted">
+              Newest report first.
+            </p>
           </div>
-          <CardTitle>Audit History</CardTitle>
-          <CardDescription>
-            Previous audits generated for this business.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
+        </div>
+        <div className="divide-y divide-border rounded-lg border border-border bg-card px-5">
           {business.audits.map((audit, index) => {
             const overallScore =
               audit.overallScore ??
@@ -180,7 +212,7 @@ export default async function BusinessHistoryPage({
               audit.status === AuditStatus.FAILED
                 ? "Retry audit"
                 : isComplete
-                  ? "View latest report"
+                  ? "View current overview"
                   : "View run";
             const completedRecommendations = audit.recommendations.filter(
               (recommendation) =>
@@ -190,7 +222,7 @@ export default async function BusinessHistoryPage({
             return (
               <div
                 key={audit.id}
-                className="flex flex-col gap-4 rounded-lg border border-border bg-background p-4 sm:flex-row sm:items-center sm:justify-between"
+                className="flex flex-col gap-4 py-5 sm:flex-row sm:items-center sm:justify-between"
               >
                 <div className="flex items-start gap-4">
                   <div className="flex size-14 shrink-0 flex-col items-center justify-center rounded-lg border border-border bg-card">
@@ -208,22 +240,24 @@ export default async function BusinessHistoryPage({
                           statusStyles[audit.status],
                         )}
                       >
-                        {audit.status.toLowerCase()}
+                        {statusLabels[audit.status]}
                       </span>
                       {isComplete && progressComparisonCheck.allowed ? (
                         <span
                           className={cn(
                             "rounded-full border px-2.5 py-1 text-xs font-semibold",
-                            comparison
+                            comparison && !comparison.methodologyChanged
                               ? deltaStyles(comparison.overallScoreChange)
                               : "border-zinc-200 bg-zinc-50 text-zinc-800 dark:border-zinc-800 dark:bg-zinc-950/40 dark:text-zinc-100",
                           )}
                         >
-                          {comparison
+                          {comparison?.methodologyChanged
+                            ? "Comparison limited"
+                            : comparison
                             ? `${formatDelta(
                                 comparison.overallScoreChange,
                               )} change`
-                            : "first audit"}
+                            : "First audit"}
                         </span>
                       ) : isComplete ? (
                         <span className="rounded-full border border-border bg-card px-2.5 py-1 text-xs font-semibold text-muted">
@@ -236,6 +270,18 @@ export default async function BusinessHistoryPage({
                       {completedRecommendations} of{" "}
                       {audit._count.recommendations} recommendations completed
                     </p>
+                    {comparison?.methodologyChanged ? (
+                      <details className="mt-2 text-sm">
+                        <summary className="cursor-pointer font-medium text-accent">
+                          Why comparison is limited
+                        </summary>
+                        <p className="mt-1 max-w-2xl leading-6 text-muted">
+                          The scoring method changed between these audits, so
+                          the score difference does not necessarily represent a
+                          business improvement or decline.
+                        </p>
+                      </details>
+                    ) : null}
                   </div>
                 </div>
                 <Link
@@ -243,13 +289,13 @@ export default async function BusinessHistoryPage({
                   className={buttonVariants({ variant: "secondary", size: "sm" })}
                 >
                   {auditActionLabel}
-                  <ArrowRight className="size-4" />
+                  <ArrowRight className="size-4" aria-hidden="true" />
                 </Link>
               </div>
             );
           })}
-        </CardContent>
-      </Card>
+        </div>
+      </section>
 
       <FloatingScrollControls />
     </div>

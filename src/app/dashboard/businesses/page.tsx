@@ -2,6 +2,7 @@ import { Building2, Plus } from "lucide-react";
 import Link from "next/link";
 
 import { EmptyState } from "@/components/dashboard/empty-state";
+import { PageIntro } from "@/components/dashboard/report-ui";
 import {
   Card,
   CardContent,
@@ -42,38 +43,35 @@ export default async function BusinessesPage() {
 
   return (
     <div className="mx-auto max-w-7xl space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="text-sm font-medium text-muted">Businesses</p>
-          <h1 className="mt-1 text-3xl font-semibold tracking-normal">
-            Business profiles
-          </h1>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-muted">
-            Each business gets its own profiles, audits, recommendations, and
-            chat history.
-          </p>
-        </div>
-        <Link
-          href="/dashboard/businesses/new"
-          className={buttonVariants({ variant: "primary" })}
-        >
-          <Plus className="size-4" />
-          Add Business
-        </Link>
-      </div>
+      <PageIntro
+        eyebrow="Businesses"
+        title="Business workspaces"
+        description="Each workspace keeps its own sources, audits, recommendations, competitors, and Consultant history."
+        icon={Building2}
+        actions={
+          <Link
+            href="/dashboard/businesses/new"
+            className={buttonVariants({ variant: "primary" })}
+          >
+            <Plus className="size-4" aria-hidden="true" />
+            Add business
+          </Link>
+        }
+      />
 
       {businesses.length === 0 ? (
         <EmptyState
+          compact
           icon={<Building2 className="size-6" />}
           title="No business profiles"
-          description="Start with a single smart input. Discovery and confirmation can be layered in next."
+          description="Start with a website, social profile, or business name. You will review every discovered source before the first audit."
           action={
             <Link
               href="/dashboard/businesses/new"
               className={buttonVariants({ variant: "primary" })}
             >
-              <Plus className="size-4" />
-              Add Business
+              <Plus className="size-4" aria-hidden="true" />
+              Add business
             </Link>
           }
         />
@@ -97,21 +95,10 @@ export default async function BusinessesPage() {
                     </div>
                     <CardDescription>{business.initialInput}</CardDescription>
                   </CardHeader>
-                  <CardContent className="grid grid-cols-3 gap-2 text-center text-sm">
-                    <div className="rounded-lg bg-background p-3">
-                      <p className="font-semibold">{business._count.profiles}</p>
-                      <p className="text-xs text-muted">Profiles</p>
-                    </div>
-                    <div className="rounded-lg bg-background p-3">
-                      <p className="font-semibold">{business._count.audits}</p>
-                      <p className="text-xs text-muted">Audits</p>
-                    </div>
-                    <div className="rounded-lg bg-background p-3">
-                      <p className="font-semibold">
-                        {business._count.competitors}
-                      </p>
-                      <p className="text-xs text-muted">Competitors</p>
-                    </div>
+                  <CardContent className="flex flex-wrap gap-x-4 gap-y-2 text-sm text-muted">
+                    <span>{business._count.profiles} profiles</span>
+                    <span>{business._count.audits} audits</span>
+                    <span>{business._count.competitors} competitors</span>
                   </CardContent>
                 </Card>
               </Link>

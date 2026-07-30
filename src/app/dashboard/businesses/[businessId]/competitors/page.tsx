@@ -40,8 +40,10 @@ import {
 import { LockedFeature } from "@/components/billing/locked-feature";
 import { UsageMeter } from "@/components/billing/usage-meter";
 import { ContextualHelpCard } from "@/components/dashboard/contextual-help-card";
+import { DisclosureSection } from "@/components/dashboard/disclosure-section";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { FloatingScrollControls } from "@/components/dashboard/floating-scroll-controls";
+import { PageIntro } from "@/components/dashboard/report-ui";
 import { buttonVariants } from "@/components/ui/button";
 import {
   Card,
@@ -92,6 +94,14 @@ const snapshotStatusStyles: Record<CompetitorSnapshotStatus, string> = {
     "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100",
   FAILED:
     "border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-100",
+};
+
+const snapshotStatusLabels: Record<CompetitorSnapshotStatus, string> = {
+  PENDING: "Waiting",
+  RUNNING: "Analyzing",
+  COMPLETED: "Current",
+  PARTIAL: "Limited data",
+  FAILED: "Needs retry",
 };
 
 const usableSnapshotStatuses: CompetitorSnapshotStatus[] = [
@@ -228,69 +238,65 @@ export default async function BusinessCompetitorsPage({
 
   return (
     <div className="space-y-6">
-      <Card id="overview">
-        <CardHeader>
-          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-            <div>
-              <div className="mb-3 flex size-11 items-center justify-center rounded-lg bg-accent/10 text-accent">
-                <Swords className="size-5" />
-              </div>
-              <CardTitle className="text-2xl">Competitor Intelligence</CardTitle>
-              <CardDescription className="mt-2 max-w-3xl text-base leading-7">
-                Analyze public website, search, profile, review, and positioning
-                signals, then compare them with {business.name}. Private traffic,
-                sales, and social engagement data are not available.
-              </CardDescription>
-            </div>
-            {activeCompetitors.length > 0 ? (
+      <div id="overview">
+        <PageIntro
+          eyebrow="Growth"
+          title="Competitor intelligence"
+          description={`Compare public website, search, profile, review, and positioning signals with ${business.name}. Private traffic, sales, and engagement are not inferred.`}
+          icon={Swords}
+          actions={
+            <>
+              {competitorCheck.allowed ? (
+                <a
+                  href="#add-competitor"
+                  className={buttonVariants({ variant: "primary", size: "sm" })}
+                >
+                  <Plus className="size-4" aria-hidden="true" />
+                  Add competitor
+                </a>
+              ) : null}
+              {activeCompetitors.length > 0 ? (
               <form action={refreshAllCompetitors}>
                 <input type="hidden" name="businessId" value={business.id} />
-                <SubmitButton pendingLabel="Refreshing competitors...">
+                <SubmitButton
+                  variant="secondary"
+                  size="sm"
+                  pendingLabel="Refreshing competitors..."
+                >
                   <RefreshCw className="size-4" />
                   Refresh all
                 </SubmitButton>
               </form>
-            ) : null}
-          </div>
-        </CardHeader>
-        <CardContent>
-          <nav className="flex flex-wrap gap-2" aria-label="Competitor page sections">
-            {[
-              ["Overview", "#overview"],
-              ["Competitor List", "#competitor-list"],
-              ["Comparison", "#comparison"],
-              ["Opportunities", "#opportunities"],
-            ].map(([label, href]) => (
-              <a
-                key={href}
-                href={href}
-                className={buttonVariants({ variant: "secondary", size: "sm" })}
-              >
-                {label}
-              </a>
-            ))}
-          </nav>
-        </CardContent>
-      </Card>
+              ) : null}
+            </>
+          }
+        />
+      </div>
 
       <ContextualHelpCard {...contextualHelp.competitors} />
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        {usage.competitors ? (
+      <DisclosureSection
+        title="Plan and scan limits"
+        description={`${activeCompetitors.length} active competitor${activeCompetitors.length === 1 ? "" : "s"} \u00b7 ${usage.competitorScans.used} scans used`}
+        compact
+      >
+        <div className="grid gap-4 lg:grid-cols-2">
+          {usage.competitors ? (
+            <UsageMeter
+              label="Active competitors"
+              used={usage.competitors.used}
+              limit={usage.competitors.limit}
+              detail="Competitor storage is counted per business workspace."
+            />
+          ) : null}
           <UsageMeter
-            label="Active competitors"
-            used={usage.competitors.used}
-            limit={usage.competitors.limit}
-            detail="Competitor storage is counted per business workspace."
+            label="Competitor scans"
+            used={usage.competitorScans.used}
+            limit={usage.competitorScans.limit}
+            detail={`${usage.competitorAnalysis.maxCrawlPages} pages per competitor, with fresh snapshots cached for seven days.`}
           />
-        ) : null}
-        <UsageMeter
-          label="Competitor scans"
-          used={usage.competitorScans.used}
-          limit={usage.competitorScans.limit}
-          detail={`${usage.competitorAnalysis.maxCrawlPages} pages per competitor, with fresh snapshots cached for seven days.`}
-        />
-      </div>
+        </div>
+      </DisclosureSection>
 
       {saved || analysis ? (
         <div className="flex items-start gap-2 rounded-lg border border-teal-200 bg-teal-50 px-4 py-3 text-sm font-medium text-teal-800 dark:border-teal-900 dark:bg-teal-950/40 dark:text-teal-100">
@@ -306,6 +312,7 @@ export default async function BusinessCompetitorsPage({
         </div>
       ) : null}
 
+      {activeCompetitors.length > 0 ? (
       <Card>
         <CardHeader>
           <CardTitle>Comparison Overview</CardTitle>
@@ -366,6 +373,7 @@ export default async function BusinessCompetitorsPage({
           )}
         </CardContent>
       </Card>
+      ) : null}
 
       <Card id="competitor-list">
         <CardHeader>
@@ -378,6 +386,7 @@ export default async function BusinessCompetitorsPage({
         <CardContent>
           {activeCompetitors.length === 0 ? (
             <EmptyState
+              compact
               icon={<Swords className="size-6" />}
               title="Track competitors that matter to your business."
               description="Add competitors you want to monitor, compare against, or ask the AI consultant about."
@@ -492,8 +501,8 @@ export default async function BusinessCompetitorsPage({
                         )}
                       >
                         {latestSnapshot
-                          ? latestSnapshot.status.toLowerCase()
-                          : "not analyzed"}
+                          ? snapshotStatusLabels[latestSnapshot.status]
+                          : "Not analyzed"}
                       </span>
                     </div>
 
@@ -536,7 +545,8 @@ export default async function BusinessCompetitorsPage({
                         </p>
                         {latestSnapshot?.errorMessage ? (
                           <p className="mt-1 text-xs text-rose-700 dark:text-rose-300">
-                            {latestSnapshot.errorMessage}
+                            The latest refresh failed. Any previous saved
+                            analysis was preserved.
                           </p>
                         ) : null}
                       </div>
@@ -788,6 +798,7 @@ export default async function BusinessCompetitorsPage({
         </CardContent>
       </Card>
 
+      {activeCompetitors.length > 0 ? (
       <Card id="comparison">
         <CardHeader>
           <CardTitle>Side-by-Side Comparison</CardTitle>
@@ -901,7 +912,9 @@ export default async function BusinessCompetitorsPage({
           )}
         </CardContent>
       </Card>
+      ) : null}
 
+      {activeCompetitors.length > 0 ? (
       <Card id="opportunities">
         <CardHeader>
           <CardTitle>Evidence-Based Opportunities</CardTitle>
@@ -922,9 +935,6 @@ export default async function BusinessCompetitorsPage({
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="rounded-full border border-border bg-card px-2.5 py-1 text-xs font-semibold capitalize">
                       {opportunity.category}
-                    </span>
-                    <span className="rounded-full border border-border bg-card px-2.5 py-1 text-xs font-semibold capitalize">
-                      {opportunity.confidence} confidence
                     </span>
                   </div>
                   <h3 className="mt-3 font-semibold">{opportunity.title}</h3>
@@ -981,9 +991,10 @@ export default async function BusinessCompetitorsPage({
           )}
         </CardContent>
       </Card>
+      ) : null}
 
       {competitorCheck.allowed ? (
-        <Card>
+        <Card id="add-competitor">
           <CardHeader>
             <CardTitle>Add Competitor</CardTitle>
             <CardDescription>

@@ -6,6 +6,7 @@ import { notFound } from "next/navigation";
 import { ChatPanel } from "@/components/dashboard/chat-panel";
 import { ContextualHelpCard } from "@/components/dashboard/contextual-help-card";
 import { EmptyState } from "@/components/dashboard/empty-state";
+import { PageIntro } from "@/components/dashboard/report-ui";
 import { buttonVariants } from "@/components/ui/button";
 import {
   normalizeReviewAnalysisForDisplay,
@@ -139,20 +140,31 @@ export default async function BusinessChatPage({
 
   if (business.audits.length === 0) {
     return (
-      <EmptyState
-        icon={<MessageSquareText className="size-6" />}
-        title="Run an audit before chatting with your AI consultant."
-        description="Run an audit first so the consultant can reference scores, findings, recommendations, and confirmed profiles."
-        action={
-          <Link
-            href={`/dashboard/businesses/${business.id}/confirm`}
-            className={buttonVariants({ variant: "primary" })}
-          >
-            Run Audit
-            <ArrowRight className="size-4" />
-          </Link>
-        }
-      />
+      <div className="space-y-6">
+        <PageIntro
+          eyebrow="Consultant"
+          title="Ask about your results"
+          description="The Consultant uses saved audit evidence, goals, competitors, and action progress."
+          icon={MessageSquareText}
+        />
+        <EmptyState
+          compact
+          icon={<MessageSquareText className="size-6" />}
+          title="Run an audit before chatting"
+          description="The Consultant needs a completed audit before it can answer from saved scores, findings, recommendations, and confirmed profiles."
+          action={
+            <Link
+              href={`/dashboard/businesses/${business.id}/audit/run`}
+              data-customer-event="empty_state_action_clicked"
+              data-customer-surface="empty_state"
+              className={buttonVariants({ variant: "primary" })}
+            >
+              Run audit
+              <ArrowRight className="size-4" aria-hidden="true" />
+            </Link>
+          }
+        />
+      </div>
     );
   }
 
@@ -199,7 +211,7 @@ export default async function BusinessChatPage({
     ),
   ]
     .filter((question, index, questions) => questions.indexOf(question) === index)
-    .slice(0, 6);
+    .slice(0, 3);
   const initialMessages: ChatMessageView[] =
     business.chatThreads.at(0)?.messages.map((message) => ({
       id: message.id,
@@ -212,6 +224,12 @@ export default async function BusinessChatPage({
 
   return (
     <div id="chat-page-top" className="space-y-6">
+      <PageIntro
+        eyebrow="Consultant"
+        title="Ask about your results"
+        description="Get practical answers grounded in the latest saved audit, goals, competitors, and action progress."
+        icon={MessageSquareText}
+      />
       <ContextualHelpCard {...contextualHelp.chat} />
       <ChatPanel
         businessId={business.id}

@@ -6,6 +6,8 @@ import { ManageBillingButton } from "@/components/billing/manage-billing-button"
 import { PlanBadge } from "@/components/billing/plan-badge";
 import { StripeCheckoutButton } from "@/components/billing/stripe-checkout-button";
 import { UsageMeter } from "@/components/billing/usage-meter";
+import { DisclosureSection } from "@/components/dashboard/disclosure-section";
+import { PageIntro } from "@/components/dashboard/report-ui";
 import { buttonVariants } from "@/components/ui/button";
 import {
   Card,
@@ -59,16 +61,24 @@ export default async function BillingPage() {
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
-      <div>
-        <p className="text-sm font-medium text-muted">Billing</p>
-        <h1 className="mt-1 text-3xl font-semibold tracking-normal">
-          Plan and feature limits
-        </h1>
-        <p className="mt-2 max-w-3xl text-sm leading-6 text-muted">
-          Review your current access, usage, renewal status, and secure billing
-          options.
-        </p>
-      </div>
+      <PageIntro
+        eyebrow="Billing"
+        title="Plan and feature limits"
+        description="Review your effective plan, paid or complimentary access, current usage, and verified billing actions."
+        icon={CreditCard}
+        actions={
+          accessDisplay.showCustomerPortal ? (
+            <ManageBillingButton variant="primary" />
+          ) : (
+            <a
+              href="#upgrade-options"
+              className={buttonVariants({ variant: "primary", size: "sm" })}
+            >
+              Compare plans
+            </a>
+          )
+        }
+      />
 
       <div className="grid gap-6 lg:grid-cols-[1fr_0.9fr]">
         <Card>
@@ -131,9 +141,6 @@ export default async function BillingPage() {
                     "Stripe securely handles payment methods, invoices, renewals, and subscription cancellation. Plan access is confirmed by signed Stripe events."}
                 </p>
               </div>
-              {accessDisplay.showCustomerPortal ? (
-                <ManageBillingButton />
-              ) : null}
             </div>
             {complimentaryPlan && complimentaryEntitlement ? (
               <div className="rounded-lg border border-teal-300/60 bg-teal-50 p-4 dark:border-teal-900 dark:bg-teal-950/25">
@@ -263,14 +270,12 @@ export default async function BillingPage() {
         </Card>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Upgrade Options</CardTitle>
-          <CardDescription>
-            Choose a one-time report package or an ongoing monthly workspace.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-4 lg:grid-cols-5">
+      <section id="upgrade-options">
+        <DisclosureSection
+          title="Compare plans"
+          description="Choose a one-time report package or an ongoing monthly workspace."
+        >
+          <div className="grid gap-4 lg:grid-cols-5">
           {planOrder.map((planOption) => {
             const option = planDefinitions[planOption];
             const isCurrent = planOption === plan;
@@ -328,8 +333,9 @@ export default async function BillingPage() {
               </div>
             );
           })}
-        </CardContent>
-      </Card>
+          </div>
+        </DisclosureSection>
+      </section>
 
     </div>
   );

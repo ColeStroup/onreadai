@@ -488,7 +488,7 @@ export function ChatPanel({
                 })}
               >
                 <Trash2 className="size-4" />
-                Clear Chat
+                Clear chat
               </button>
             </div>
           </div>
@@ -501,7 +501,7 @@ export function ChatPanel({
           className="px-4 py-5 sm:px-5"
         >
           {!hasMessages ? (
-            <div className="mx-auto flex min-h-[380px] max-w-3xl flex-col items-center justify-center py-8 text-center">
+            <div className="mx-auto flex min-h-[300px] max-w-3xl flex-col items-center justify-center py-8 text-center">
               <span className="mb-4 flex size-14 items-center justify-center rounded-lg bg-accent/10 text-accent">
                 <Sparkles className="size-6" />
               </span>
@@ -517,8 +517,10 @@ export function ChatPanel({
                   <button
                     key={question}
                     type="button"
-                    onClick={() => submitQuestion(question)}
-                    disabled={isSubmitting || !canSend}
+                   onClick={() => submitQuestion(question)}
+                   disabled={isSubmitting || !canSend}
+                   data-customer-event="consultant_prompt_selected"
+                   data-customer-surface="consultant"
                     className="rounded-lg border border-border bg-background p-4 text-left text-sm font-medium transition-colors hover:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <Sparkles className="mb-3 size-4 text-accent" />
@@ -534,8 +536,10 @@ export function ChatPanel({
                   <button
                     key={question}
                     type="button"
-                    onClick={() => submitQuestion(question)}
-                    disabled={isSubmitting || !canSend}
+                   onClick={() => submitQuestion(question)}
+                   disabled={isSubmitting || !canSend}
+                   data-customer-event="consultant_prompt_selected"
+                   data-customer-surface="consultant"
                     className="rounded-full border border-border bg-background px-3 py-2 text-xs font-medium text-muted transition-colors hover:border-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {question}

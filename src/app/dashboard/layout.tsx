@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import type { Metadata } from "next";
 
+import { CustomerEventBoundary } from "@/components/analytics/customer-event-boundary";
 import { DashboardShell } from "@/components/dashboard/dashboard-shell";
 import { getPartnerProgramSettings } from "@/lib/partners/config";
 import { consumePartnerReferralForUser } from "@/lib/partners/referrals";
@@ -40,6 +41,7 @@ export default async function DashboardLayout({
       isAdmin={access?.role === "ADMIN"}
       isPartner={partnerSettings.enabled && Boolean(access?.partnerProfile)}
     >
+      <CustomerEventBoundary />
       {children}
     </DashboardShell>
   );

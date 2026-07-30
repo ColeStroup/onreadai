@@ -1,5 +1,6 @@
 import {
   AuditStatus,
+  BusinessProfileStatus,
   PlanType,
   type Prisma,
   ScoreCategory,
@@ -8,7 +9,6 @@ import {
   ArrowLeft,
   ArrowRight,
   BadgeCheck,
-  BookOpenText,
   Check,
   ClipboardCheck,
   ListChecks,
@@ -67,6 +67,7 @@ import {
   type AuditSourceReadiness,
 } from "@/lib/onboarding/audit-source-readiness";
 import { prisma } from "@/lib/prisma";
+import { platformLabels } from "@/lib/profiles/platforms";
 import { sortRecommendations } from "@/lib/recommendations/utils";
 import { requireUser } from "@/lib/session";
 import { cn } from "@/lib/utils";
@@ -230,7 +231,7 @@ export default async function BusinessSetupPage({
       ) : null}
       {step === "results" ? <ResultsStep business={business} /> : null}
 
-      {step !== "results" ? (
+      {step !== "results" && step !== "goals" && step !== "audit" ? (
         <SetupControls
           businessId={business.id}
           step={step}
@@ -351,7 +352,12 @@ function ContextStep({
     ["Description", business.description],
     ["Target audience", business.targetAudience],
     ["Main offer", business.mainOffer],
-    ["Industry / type", [business.industry, business.businessType].filter(Boolean).join(" · ")],
+    [
+      "Industry / type",
+      [business.industry, business.businessType]
+        .filter(Boolean)
+        .join(" \u00b7 "),
+    ],
     ["Conversion goal", business.primaryConversionGoal],
   ];
 
@@ -376,17 +382,9 @@ function ContextStep({
           </p>
         </Card>
       ) : null}
-      <Card className="p-5">
-        <div className="flex gap-3">
-          <BookOpenText className="mt-0.5 size-5 text-accent" />
-          <p className="text-sm leading-6 text-muted">
-            Business Context helps the audit and AI understand what your business actually does and who it serves.
-          </p>
-        </div>
-      </Card>
-
       {progress.contextState === "missing" ? (
         <EmptyState
+          compact
           icon={<Sparkles className="size-6" />}
           title="No Business Context yet"
           description="Generate a draft from your saved profiles and a bounded public homepage analysis."
@@ -407,13 +405,22 @@ function ContextStep({
       ) : (
         <ReportSection
           title={progress.contextComplete ? "Confirmed context" : "Draft needs review"}
-          description={`${contextConfidenceLabel(business.contextConfidence)} · ${contextSourceLabel(business.contextSource)}`}
+          description={
+            progress.contextComplete
+              ? "This information will guide the audit and Consultant."
+              : "Review the business description, audience, offer, and conversion goal before continuing."
+          }
         >
-          <dl className="grid gap-4 md:grid-cols-2">
+          <dl className="divide-y divide-border">
             {fields.map(([label, value]) => (
-              <div key={label} className="rounded-lg bg-foreground/[0.035] p-4">
-                <dt className="text-xs font-semibold uppercase text-muted">{label}</dt>
-                <dd className="mt-2 text-sm leading-6">{value || "Not provided"}</dd>
+              <div
+                key={label}
+                className="grid gap-1 py-4 first:pt-0 last:pb-0 sm:grid-cols-[11rem_1fr]"
+              >
+                <dt className="text-sm font-medium text-muted">{label}</dt>
+                <dd className="text-sm leading-6">
+                  {value || "Not provided"}
+                </dd>
               </div>
             ))}
           </dl>
@@ -423,17 +430,19 @@ function ContextStep({
                 <input type="hidden" name="businessId" value={business.id} />
                 <input type="hidden" name="returnTo" value="setup" />
                 <SubmitButton
-                  variant="primary"
+                  variant={progress.socialFirst ? "primary" : "secondary"}
                   size="sm"
-                  pendingLabel="Confirming..."
+                  pendingLabel="Confirming context..."
+                  data-customer-event="setup_step_completed"
+                  data-customer-surface="guided_setup"
                 >
                   <BadgeCheck className="size-4" />
-                  Confirm This Looks Right
+                  Confirm this looks right
                 </SubmitButton>
               </form>
             ) : null}
             <Link href={`/dashboard/businesses/${business.id}/context`} className={buttonVariants({ variant: "secondary", size: "sm" })}>
-              Edit Context
+              Edit context
             </Link>
             <form action={regenerateBusinessContext}>
               <input type="hidden" name="businessId" value={business.id} />
@@ -444,10 +453,20 @@ function ContextStep({
                 pendingLabel="Regenerating..."
               >
                 <RefreshCw className="size-4" />
-                Regenerate
+                Regenerate draft
               </SubmitButton>
             </form>
           </div>
+          <details className="mt-4 border-t border-border pt-4 text-sm">
+            <summary className="cursor-pointer font-medium text-accent">
+              Generation details
+            </summary>
+            <p className="mt-2 leading-6 text-muted">
+              {contextConfidenceLabel(business.contextConfidence)}
+              {" \u00b7 "}
+              {contextSourceLabel(business.contextSource)}
+            </p>
+          </details>
         </ReportSection>
       )}
     </div>
@@ -460,15 +479,14 @@ function GoalsStep({ business }: { business: NonNullable<SetupBusiness> }) {
   return (
     <form action={saveBusinessGoals} className="space-y-5">
       <input type="hidden" name="businessId" value={business.id} />
-      <input type="hidden" name="returnTo" value="setup" />
-      <Card className="p-5">
-        <div className="flex gap-3">
-          <Target className="mt-0.5 size-5 text-accent" />
-          <p className="text-sm leading-6 text-muted">
-            Goals help prioritize recommendations around the outcomes that matter most to you. Select several, then choose one primary goal.
-          </p>
-        </div>
-      </Card>
+      <input type="hidden" name="returnTo" value="setup-next" />
+      <div className="flex gap-3 text-sm leading-6 text-muted">
+        <Target className="mt-0.5 size-5 shrink-0 text-accent" />
+        <p>
+          Select several outcomes, then choose one primary goal. These choices
+          shape recommendation order and Consultant guidance.
+        </p>
+      </div>
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {orderedBusinessGoals.map((goal) => (
           <Card key={goal} className="p-4">
@@ -498,12 +516,31 @@ function GoalsStep({ business }: { business: NonNullable<SetupBusiness> }) {
           </Card>
         ))}
       </div>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <p className="text-sm text-muted">
-          You can skip for now, but recommendations will be less personalized.
-        </p>
-        <SubmitButton pendingLabel="Saving goals...">Save goals</SubmitButton>
-      </div>
+      <Card className="sticky bottom-4 z-10 flex flex-col gap-3 bg-card/95 p-4 shadow-lg backdrop-blur sm:flex-row sm:items-center sm:justify-between">
+        <Link
+          href={`/dashboard/businesses/${business.id}/setup?step=context`}
+          className={buttonVariants({ variant: "secondary" })}
+        >
+          <ArrowLeft className="size-4" aria-hidden="true" />
+          Back
+        </Link>
+        <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center">
+          <Link
+            href={`/dashboard/businesses/${business.id}/setup?step=audit`}
+            className={buttonVariants({ variant: "ghost" })}
+          >
+            Skip for now
+          </Link>
+          <SubmitButton
+            pendingLabel="Saving goals..."
+            data-customer-event="setup_step_completed"
+            data-customer-surface="guided_setup"
+          >
+            Save and continue
+            <ArrowRight className="size-4" aria-hidden="true" />
+          </SubmitButton>
+        </div>
+      </Card>
     </form>
   );
 }
@@ -539,6 +576,22 @@ function AuditStep({
     ],
     ["Goals selected", progress.goalsComplete, `${business.goals.length} selected`],
   ] as const;
+  const confirmedPlatforms = business.profiles
+    .filter(
+      (profile) => profile.status === BusinessProfileStatus.CONFIRMED,
+    )
+    .map((profile) => platformLabels[profile.platform]);
+  const includedAnalysis = [
+    progress.hasConfirmedWebsite
+      ? `Website and SEO, including up to ${crawlLimit} public pages`
+      : null,
+    confirmedPlatforms.length > 0
+      ? `Confirmed profiles: ${confirmedPlatforms.join(", ")}`
+      : null,
+    "Business Context and selected goals",
+    "Reviews, trust signals, and saved competitors when available",
+    "A prioritized action plan",
+  ].filter((item): item is string => Boolean(item));
 
   return (
     <div className="space-y-5">
@@ -546,9 +599,12 @@ function AuditStep({
         title="Audit readiness"
         description="The audit can run with partial setup, but confirmed inputs produce more reliable priorities."
       >
-        <div className="space-y-3">
+        <div className="divide-y divide-border">
           {readiness.map(([label, ready, detail]) => (
-            <div key={label} className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background p-4">
+            <div
+              key={label}
+              className="flex items-center justify-between gap-3 py-4 first:pt-0 last:pb-0"
+            >
               <div className="flex items-center gap-3">
                 {ready ? (
                   <Check className="size-5 text-teal-700 dark:text-teal-200" />
@@ -562,23 +618,6 @@ function AuditStep({
           ))}
         </div>
       </ReportSection>
-
-      <section className="grid gap-3 sm:grid-cols-2">
-        <CompactMetricCard label="Current plan" value={planName} />
-        <CompactMetricCard
-          label="Website crawl"
-          value={
-            progress.hasConfirmedWebsite
-              ? `${crawlLimit} pages`
-              : "Not applicable"
-          }
-          detail={
-            progress.hasConfirmedWebsite
-              ? undefined
-              : "Add and confirm a website later to unlock Website and SEO analysis."
-          }
-        />
-      </section>
 
       {sourceReadiness.missingSources.length > 0 ? (
         <Card
@@ -603,11 +642,11 @@ function AuditStep({
               </p>
             </div>
           </div>
-          <ul className="mt-4 space-y-2">
+          <ul className="mt-4 divide-y divide-border/80 border-y border-border/80">
             {sourceReadiness.missingSources.map((source) => (
               <li
                 key={source.code}
-                className="rounded-lg border border-border/80 bg-background/80 p-3"
+                className="py-3"
               >
                 <p className="text-sm font-semibold">{source.label}</p>
                 <p className="mt-1 text-sm leading-5 text-muted">
@@ -626,12 +665,35 @@ function AuditStep({
       ) : null}
 
       <Card className="p-5">
-        <h3 className="font-semibold">What this audit analyzes</h3>
-        <p className="mt-2 text-sm leading-6 text-muted">
-          {progress.socialFirst
-            ? "Confirmed social profiles, Business Context, platform coverage, social strategy readiness, conversion paths, reviews, goals, competitors, and a prioritized action plan. Website and SEO will be marked not provided."
-            : "Confirmed profiles, website pages, SEO basics, review and trust coverage, social presence, goals, competitors, and a prioritized action plan."}
-        </p>
+        <h3 className="font-semibold">Your audit will include</h3>
+        <ul className="mt-3 space-y-2 text-sm leading-6">
+          {includedAnalysis.map((item) => (
+            <li key={item} className="flex gap-2">
+              <Check
+                className="mt-1 size-4 shrink-0 text-accent"
+                aria-hidden="true"
+              />
+              <span>{item}</span>
+            </li>
+          ))}
+        </ul>
+        {!progress.hasConfirmedWebsite ? (
+          <p className="mt-3 text-sm leading-6 text-muted">
+            Website and SEO will show as not provided, not as failed scores. Add
+            a website later to unlock those checks.
+          </p>
+        ) : null}
+        <details className="mt-4 border-t border-border pt-4 text-sm">
+          <summary className="cursor-pointer font-medium text-accent">
+            Plan and analysis limits
+          </summary>
+          <p className="mt-2 leading-6 text-muted">
+            Current plan: {planName}. Website crawl limit:{" "}
+            {progress.hasConfirmedWebsite
+              ? `${crawlLimit} pages`
+              : "not applicable"}.
+          </p>
+        </details>
         <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center">
           {requiresSourceAcknowledgement ? (
             <Link
@@ -657,11 +719,13 @@ function AuditStep({
               pendingLabel="Starting audit..."
               disabled={!canRunAudit}
               className="w-full sm:w-auto"
+              data-customer-event="setup_step_completed"
+              data-customer-surface="guided_setup"
             >
               {requiresSourceAcknowledgement
                 ? "Continue with available information"
-                : "Run My First Audit"}
-              <ArrowRight className="size-4" />
+                : "Run first audit"}
+              <ArrowRight className="size-4" aria-hidden="true" />
             </SubmitButton>
           </form>
         </div>
@@ -706,8 +770,24 @@ function ResultsStep({ business }: { business: NonNullable<SetupBusiness> }) {
     <div className="space-y-5">
       <section className="grid gap-3 sm:grid-cols-3">
         <CompactMetricCard label="Overall score" value={`${audit.overallScore ?? 0}/100`} />
-        <CompactMetricCard label="Strongest area" value={strongest ? `${scoreLabels[strongest.category] ?? strongest.category} · ${strongest.score}` : "Not available"} tone="good" />
-        <CompactMetricCard label="Largest opportunity" value={weakest ? `${scoreLabels[weakest.category] ?? weakest.category} · ${weakest.score}` : "Not available"} tone="warning" />
+        <CompactMetricCard
+          label="Strongest area"
+          value={
+            strongest
+              ? `${scoreLabels[strongest.category] ?? strongest.category} \u00b7 ${strongest.score}`
+              : "Not available"
+          }
+          tone="good"
+        />
+        <CompactMetricCard
+          label="Largest opportunity"
+          value={
+            weakest
+              ? `${scoreLabels[weakest.category] ?? weakest.category} \u00b7 ${weakest.score}`
+              : "Not available"
+          }
+          tone="warning"
+        />
       </section>
 
       <ReportSection title="Your next three moves" description="Start here before opening the full recommendation backlog.">
@@ -736,8 +816,8 @@ function ResultsStep({ business }: { business: NonNullable<SetupBusiness> }) {
             pendingLabel="Opening action plan..."
             className="w-full sm:w-auto"
           >
-            Open My Action Plan
-            <ArrowRight className="size-4" />
+            Open action plan
+            <ArrowRight className="size-4" aria-hidden="true" />
           </SubmitButton>
         </form>
         <form action={completeBusinessSetup}>
@@ -750,19 +830,19 @@ function ResultsStep({ business }: { business: NonNullable<SetupBusiness> }) {
             className="w-full sm:w-auto"
           >
             <Sparkles className="size-4" />
-            Ask the AI Consultant
+            Ask AI Consultant
           </SubmitButton>
         </form>
         <form action={completeBusinessSetup}>
           <input type="hidden" name="businessId" value={business.id} />
           <input type="hidden" name="destination" value="overview" />
           <SubmitButton
-            variant="outline"
+            variant="ghost"
             size="lg"
             pendingLabel="Opening report..."
             className="w-full sm:w-auto"
           >
-            View full report
+            View overview
           </SubmitButton>
         </form>
       </div>
@@ -789,7 +869,7 @@ function SetupControls({
         <form action={goToBusinessSetupStep}>
           <input type="hidden" name="businessId" value={businessId} />
           <input type="hidden" name="step" value={previous} />
-          <SubmitButton variant="secondary" pendingLabel="Going back...">
+          <SubmitButton variant="secondary" pendingLabel="Returning...">
             <ArrowLeft className="size-4" />
             Back
           </SubmitButton>
@@ -802,7 +882,7 @@ function SetupControls({
           <form action={goToBusinessSetupStep}>
             <input type="hidden" name="businessId" value={businessId} />
             <input type="hidden" name="step" value={next} />
-            <SubmitButton variant="ghost" pendingLabel="Saving...">
+            <SubmitButton variant="ghost" pendingLabel="Skipping step...">
               Skip for now
             </SubmitButton>
           </form>
@@ -812,11 +892,13 @@ function SetupControls({
           <input type="hidden" name="step" value={next} />
           <SubmitButton
             variant="primary"
-            pendingLabel="Saving..."
+            pendingLabel="Saving step..."
             disabled={!canContinue}
+            data-customer-event="setup_step_completed"
+            data-customer-surface="guided_setup"
           >
-            Continue
-            <ArrowRight className="size-4" />
+            Save and continue
+            <ArrowRight className="size-4" aria-hidden="true" />
           </SubmitButton>
         </form>
       </div>

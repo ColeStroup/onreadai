@@ -5,7 +5,11 @@ import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 
-export function ManageBillingButton() {
+export function ManageBillingButton({
+  variant = "secondary",
+}: {
+  variant?: "primary" | "secondary";
+}) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -37,7 +41,7 @@ export function ManageBillingButton() {
 
   return (
     <div>
-      <Button type="button" variant="secondary" onClick={() => void openPortal()} disabled={loading}>
+      <Button type="button" variant={variant} onClick={() => void openPortal()} disabled={loading}>
         {loading ? <LoaderCircle className="size-4 animate-spin" /> : <CreditCard className="size-4" />}
         {loading ? "Opening portal..." : "Manage billing"}
       </Button>

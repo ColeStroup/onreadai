@@ -22,7 +22,6 @@ import { DisclosureSection } from "@/components/dashboard/disclosure-section";
 import { FloatingScrollControls } from "@/components/dashboard/floating-scroll-controls";
 import {
   CompactMetricCard,
-  DataSourceNotice,
   PageIntro,
   ReportSection,
   SectionTabs,
@@ -38,7 +37,6 @@ import {
   canUseSocialStrategy,
 } from "@/lib/billing/entitlements";
 import {
-  contextConfidenceLabel,
   hasBusinessContext,
 } from "@/lib/business-context";
 import { contextualHelp } from "@/lib/education/help-content";
@@ -321,21 +319,29 @@ export default async function BusinessSocialPage({
         </div>
       ) : null}
 
-      <DataSourceNotice>
-        <strong>Strategy data source:</strong> Generated from Business Context,
-        confirmed and pending profile coverage, goals, review data, available
-        competitor information{websiteConfirmed ? ", and website content" : ""}.
-        Individual posts, engagement, follower counts, posting frequency, and
-        content performance have not been analyzed.
-      </DataSourceNotice>
-
       <ContextualHelpCard {...contextualHelp.social} />
+
+      <DisclosureSection
+        title="What this analysis used"
+        description="Business Context, profile coverage, goals, reviews, and available competitor data."
+        compact
+      >
+        <p className="text-sm leading-6 text-muted">
+          The strategy used confirmed and pending profile coverage, saved
+          Business Context, goals, review data, available competitor
+          information{websiteConfirmed ? ", and website content" : ""}.
+          Individual posts, engagement, follower counts, posting frequency, and
+          content performance were not analyzed.
+        </p>
+      </DisclosureSection>
 
       {!contextAvailable || !business.contextConfirmedAt ? (
         <Card className="border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/30">
           <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm leading-6 text-amber-950 dark:text-amber-100">
-              Confirm Business Context for sharper audience, offer, tone, and conversion guidance. Current context confidence: {contextConfidenceLabel(business.contextConfidence)}.
+              Confirm Business Context for sharper audience, offer, tone, and
+              conversion guidance. The current saved context still needs your
+              review.
             </p>
             <Link href={`/dashboard/businesses/${business.id}/context`} className={buttonVariants({ variant: "secondary", size: "sm" })}>
               Open context
@@ -363,12 +369,27 @@ export default async function BusinessSocialPage({
                   {social ? <span className="text-base text-muted">/100</span> : null}
                 </p>
               </div>
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <CompactMetricCard label="Confirmed" value={confirmedPlatforms.join(", ") || "None"} />
-                <CompactMetricCard label="Needs review" value={pendingPlatforms.join(", ") || "None"} />
-                <CompactMetricCard label="Potential channels" value={potentialPlatforms.slice(0, 3).join(", ") || "No priority gap"} />
-                <CompactMetricCard label="Coverage" value={social?.platformCoverageLevel ?? "Not audited"} />
-              </div>
+              <dl className="grid gap-3 sm:grid-cols-3">
+                <div className="rounded-lg bg-foreground/[0.035] p-4">
+                  <dt className="text-sm text-muted">Confirmed profiles</dt>
+                  <dd className="mt-1 font-semibold">
+                    {confirmedPlatforms.join(", ") || "None"}
+                  </dd>
+                </div>
+                <div className="rounded-lg bg-foreground/[0.035] p-4">
+                  <dt className="text-sm text-muted">Needs review</dt>
+                  <dd className="mt-1 font-semibold">
+                    {pendingPlatforms.join(", ") || "None"}
+                  </dd>
+                </div>
+                <div className="rounded-lg bg-foreground/[0.035] p-4">
+                  <dt className="text-sm text-muted">Potential channels</dt>
+                  <dd className="mt-1 font-semibold">
+                    {potentialPlatforms.slice(0, 3).join(", ") ||
+                      "No priority gap"}
+                  </dd>
+                </div>
+              </dl>
             </div>
             <div className="mt-5 border-t border-border pt-4">
               <p className="text-xs font-medium text-muted">Main opportunity</p>

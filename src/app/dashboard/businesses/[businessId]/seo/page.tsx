@@ -12,7 +12,6 @@ import { ContextualHelpCard } from "@/components/dashboard/contextual-help-card"
 import { DisclosureSection } from "@/components/dashboard/disclosure-section";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { FloatingScrollControls } from "@/components/dashboard/floating-scroll-controls";
-import { ImplementationHelpDrawer } from "@/components/implementation/implementation-help-drawer";
 import {
   CompactIssueRow,
   CompactMetricCard,
@@ -138,17 +137,30 @@ export default async function BusinessSeoPage({ params }: BusinessSeoPageProps) 
 
   if (!audit) {
     return (
-      <EmptyState
-        icon={<Search className="size-6" />}
-        title="No SEO analysis yet"
-        description="Confirm a website profile and run an audit to check search titles, descriptions, headlines, crawl rules, and sitemap setup."
-        action={
-          <Link href={`/dashboard/businesses/${business.id}/confirm`} className={buttonVariants({ variant: "primary" })}>
-            Run Audit
-            <ArrowRight className="size-4" />
-          </Link>
-        }
-      />
+      <div className="space-y-6">
+        <PageIntro
+          title="SEO analysis"
+          description="Review search titles, descriptions, page headlines, crawl rules, and sitemap setup."
+          icon={Search}
+        />
+        <EmptyState
+          compact
+          icon={<Search className="size-6" />}
+          title="No SEO analysis yet"
+          description="Confirm a website profile and run an audit to check search titles, descriptions, headlines, crawl rules, and sitemap setup."
+          action={
+            <Link
+              href={`/dashboard/businesses/${business.id}/audit/run`}
+              data-customer-event="empty_state_action_clicked"
+              data-customer-surface="empty_state"
+              className={buttonVariants({ variant: "primary" })}
+            >
+              Run audit
+              <ArrowRight className="size-4" aria-hidden="true" />
+            </Link>
+          }
+        />
+      </div>
     );
   }
 
@@ -163,6 +175,7 @@ export default async function BusinessSeoPage({ params }: BusinessSeoPageProps) 
           icon={Search}
         />
         <EmptyState
+          compact
           icon={<Search className="size-6" />}
           title="SEO not applicable yet"
           description="This social-first audit excluded SEO from the overall score. Add and confirm a website later to check search titles, descriptions, H1 structure, robots.txt, sitemap.xml, and crawl signals."
@@ -280,15 +293,23 @@ export default async function BusinessSeoPage({ params }: BusinessSeoPageProps) 
         title="SEO analysis"
         description="Checks search titles, descriptions, page headlines, canonical setup, mobile readiness, robots.txt, sitemap.xml, and multi-page SEO issues."
         icon={Search}
+        actions={
+          <Link
+            href={`/dashboard/businesses/${business.id}/action-plan?category=SEO`}
+            className={buttonVariants({ variant: "primary", size: "sm" })}
+          >
+            Review SEO actions
+            <ArrowRight className="size-4" />
+          </Link>
+        }
       />
 
       <ContextualHelpCard {...contextualHelp.seo} />
 
-      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <section className="grid gap-3 sm:grid-cols-3">
         <CompactMetricCard label="Overall SEO score" value={`${seoScore}/100`} />
         <CompactMetricCard label="Issues to fix" value={displayedIssues.length} tone={displayedIssues.length ? "warning" : "good"} />
         <CompactMetricCard label="Pages scanned" value={crawl?.pagesScanned ?? 1} />
-        <CompactMetricCard label="Pages with headline issues" value={crawl ? crawl.pagesWithNoH1 + crawl.pagesWithMultipleH1 : seo.h1Status === "good" ? 0 : 1} />
       </section>
 
       {crawl?.duplicateUrlsSkipped ? (
@@ -301,12 +322,6 @@ export default async function BusinessSeoPage({ params }: BusinessSeoPageProps) 
       <ReportSection
         title={`${displayedIssues.length} SEO issue${displayedIssues.length === 1 ? "" : "s"} to fix`}
         description="Diagnosis and next action are combined so the same issue is not repeated under separate warning and fix lists."
-        action={
-          <Link href={`/dashboard/businesses/${business.id}/action-plan?category=SEO`} className={buttonVariants({ variant: "secondary", size: "sm" })}>
-            SEO tasks
-            <ArrowRight className="size-4" />
-          </Link>
-        }
       >
         {displayedIssues.length > 0 ? displayedIssues.map((issue) => {
           const patterns: Record<string, RegExp> = {
@@ -328,23 +343,13 @@ export default async function BusinessSeoPage({ params }: BusinessSeoPageProps) 
               tone={issue.impact}
               meta={issue.affected.length > 0 ? `Affected pages: ${issue.affected.slice(0, 3).map((page) => displayPagePath(page.url)).join(", ")}` : "Site-wide technical setup"}
               action={
-                <div className="flex flex-wrap items-center gap-2">
-                  {recommendation ? (
-                    <ImplementationHelpDrawer
-                      businessId={business.id}
-                      businessName={business.name}
-                      source={{ kind: "recommendation", recommendationId: recommendation.id }}
-                      recommendationId={recommendation.id}
-                      recommendationTitle={recommendation.title}
-                      evidence={issue.detail}
-                      initialSavedCount={recommendation.implementationDrafts.length}
-                      label={/canonical|robots|sitemap|alt text/i.test(recommendation.title) ? "Show Implementation Steps" : "Generate Fix"}
-                    />
-                  ) : null}
-                  <Link href={`/dashboard/businesses/${business.id}/chat?prompt=${encodeURIComponent(issue.prompt)}`} className="text-sm font-medium text-accent hover:underline">
-                    Ask AI for help
-                  </Link>
-                </div>
+                <Link
+                  href={`/dashboard/businesses/${business.id}/action-plan?category=SEO${recommendation ? `&q=${encodeURIComponent(recommendation.title)}` : ""}`}
+                  className={buttonVariants({ variant: "secondary", size: "sm" })}
+                >
+                  Review action
+                  <ArrowRight className="size-4" />
+                </Link>
               }
             />
           );

@@ -49,6 +49,10 @@ type ImplementationHelpDrawerProps = {
   label?: string;
   compact?: boolean;
   triggerClassName?: string;
+  triggerVariant?: "primary" | "secondary" | "ghost" | "outline";
+  preserveTriggerLabel?: boolean;
+  analyticsEvent?: "task_continued";
+  analyticsSurface?: "business_overview" | "action_plan";
 };
 
 export function ImplementationHelpDrawer({
@@ -62,6 +66,10 @@ export function ImplementationHelpDrawer({
   label = "Generate Fix",
   compact = true,
   triggerClassName,
+  triggerVariant = "secondary",
+  preserveTriggerLabel = false,
+  analyticsEvent,
+  analyticsSurface,
 }: ImplementationHelpDrawerProps) {
   const router = useRouter();
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -261,14 +269,16 @@ export function ImplementationHelpDrawer({
         ref={triggerRef}
         type="button"
         onClick={openDrawer}
+        data-customer-event={analyticsEvent}
+        data-customer-surface={analyticsSurface}
         className={buttonVariants({
-          variant: "secondary",
+          variant: triggerVariant,
           size: compact ? "sm" : "md",
           className: triggerClassName,
         })}
       >
         <Sparkles className="size-4" />
-        {initialSavedCount > 0 ? "View Draft" : label}
+        {initialSavedCount > 0 && !preserveTriggerLabel ? "View Draft" : label}
       </button>
 
       {open ? (

@@ -1,15 +1,17 @@
 "use client";
 
 import { Loader2 } from "lucide-react";
-import type { ReactNode } from "react";
+import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { useFormStatus } from "react-dom";
 
 import { Button } from "@/components/ui/button";
 
-type SubmitButtonProps = {
+type SubmitButtonProps = Omit<
+  ButtonHTMLAttributes<HTMLButtonElement>,
+  "children" | "disabled"
+> & {
   children: ReactNode;
   pendingLabel?: string;
-  className?: string;
   variant?: "primary" | "secondary" | "ghost" | "outline" | "danger";
   size?: "sm" | "md" | "lg" | "icon";
   disabled?: boolean;
@@ -22,6 +24,7 @@ export function SubmitButton({
   variant,
   size,
   disabled = false,
+  ...props
 }: SubmitButtonProps) {
   const { pending } = useFormStatus();
 
@@ -33,6 +36,7 @@ export function SubmitButton({
       className={className}
       variant={variant}
       size={size}
+      {...props}
     >
       {pending ? (
         <>

@@ -7,12 +7,14 @@ import {
 import {
   AlertTriangle,
   ArrowRight,
+  CheckCircle2,
   Download,
   Globe2,
   ListChecks,
   MessageSquareText,
   MonitorPlay,
   RefreshCw,
+  Search,
   Share2,
   Sparkles,
   Star,
@@ -22,81 +24,80 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { ContextualHelpCard } from "@/components/dashboard/contextual-help-card";
+import { DisclosureSection } from "@/components/dashboard/disclosure-section";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { FloatingScrollControls } from "@/components/dashboard/floating-scroll-controls";
-import { RecommendationLearnWhy } from "@/components/dashboard/recommendation-learn-why";
-import { TaskActionRail } from "@/components/dashboard/task-action-rail";
-import { SetupChecklist } from "@/components/onboarding/setup-checklist";
+import { RecommendationPrimaryAction } from "@/components/dashboard/recommendation-primary-action";
 import {
-  CompactMetricCard,
   DataSourceNotice,
   PageIntro,
   ReportSection,
   SummaryStrip,
 } from "@/components/dashboard/report-ui";
+import { SetupChecklist } from "@/components/onboarding/setup-checklist";
 import { buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import {
   categoryLabel,
   formatDelta,
 } from "@/lib/audits/audit-comparison";
-import { categoryScore } from "@/lib/audits/audit-applicability";
+import { findingTypeLabels } from "@/lib/audits/finding-taxonomy";
 import {
   canUsePdfExport,
   canUsePresentationMode,
   canUseProgressComparison,
 } from "@/lib/billing/entitlements";
+import {
+  compactCoverageSummary,
+  plainCoverageLabel,
+  plainHealthLabel,
+  plainScoreInterpretation,
+  strongestScoredCategory,
+  summarizeFindingTypes,
+} from "@/lib/customer-experience/overview";
 import { contextualHelp } from "@/lib/education/help-content";
-import { trustedBusinessAdvantages } from "@/lib/competitors/competitor-types";
 import {
   businessGoalLabels,
   getSuggestedQuestionsForGoals,
 } from "@/lib/goals";
-import { prisma } from "@/lib/prisma";
 import { deriveBusinessSetupProgress } from "@/lib/onboarding/business-setup";
-import { buildAuditReportViewModel } from "@/lib/reports/audit-report-view-model";
+import { prisma } from "@/lib/prisma";
 import {
+  displayEffort,
+  displayImpact,
   progressForRecommendations,
   recommendationCategoryLabels,
-  recommendationPriorityStyles,
-  recommendationStatusLabels,
-  recommendationStatusStyles,
   sortRecommendations,
 } from "@/lib/recommendations/utils";
+import { buildAuditReportViewModel } from "@/lib/reports/audit-report-view-model";
 import { requireUser } from "@/lib/session";
-import { cn } from "@/lib/utils";
 
 type BusinessOverviewPageProps = {
   params: Promise<{ businessId: string }>;
 };
 
-const scoreLabels: Record<ScoreCategory, string> = {
-  OVERALL: "Overall",
-  WEBSITE: "Website",
-  SEO: "SEO",
-  BRANDING: "Branding",
-  SOCIAL: "Social",
-  REVIEWS: "Reviews",
-  COMPETITORS: "Competitors",
+const categoryRoutes: Record<Exclude<ScoreCategory, "OVERALL">, string> = {
+  WEBSITE: "website",
+  SEO: "seo",
+  BRANDING: "audit?category=BRANDING",
+  SOCIAL: "social",
+  REVIEWS: "reviews",
+  COMPETITORS: "competitors",
 };
 
-function healthFor(score: number) {
-  if (score >= 85) return { label: "Excellent", tone: "good" as const };
-  if (score >= 70) return { label: "Good", tone: "good" as const };
-  if (score >= 50) return { label: "Fair", tone: "warning" as const };
-  return { label: "Needs attention", tone: "danger" as const };
-}
-
-function scoreColor(score: number) {
-  if (score >= 78) return "text-teal-700 dark:text-teal-200";
-  if (score >= 60) return "text-blue-700 dark:text-blue-200";
-  if (score >= 45) return "text-amber-700 dark:text-amber-200";
-  return "text-rose-700 dark:text-rose-200";
-}
+const overviewCategories = [
+  ScoreCategory.WEBSITE,
+  ScoreCategory.SEO,
+  ScoreCategory.BRANDING,
+  ScoreCategory.SOCIAL,
+  ScoreCategory.REVIEWS,
+  ScoreCategory.COMPETITORS,
+] as const;
 
 function ScoreRing({ score }: { score: number }) {
   return (
     <div
+      aria-label={`Overall score ${score} out of 100`}
       className="flex size-32 shrink-0 items-center justify-center rounded-full"
       style={{
         background: `conic-gradient(var(--accent) ${score * 3.6}deg, color-mix(in srgb, var(--border) 78%, transparent) 0deg)`,
@@ -104,10 +105,69 @@ function ScoreRing({ score }: { score: number }) {
     >
       <div className="flex size-24 flex-col items-center justify-center rounded-full bg-card shadow-sm">
         <span className="text-3xl font-semibold">{score}</span>
-        <span className="text-xs text-muted">/100</span>
+        <span className="text-xs text-muted">out of 100</span>
       </div>
     </div>
   );
+}
+
+function sourcePageLabel(sourceUrl: string | null | undefined) {
+  if (!sourceUrl) return "Business-wide";
+
+  try {
+    const url = new URL(sourceUrl);
+    if (url.pathname === "/" || !url.pathname) return "Homepage";
+    const page = url.pathname
+      .split("/")
+      .filter(Boolean)
+      .at(-1)
+      ?.replace(/\.[a-z0-9]+$/i, "")
+      .replaceAll("-", " ")
+      .replaceAll("_", " ");
+    if (!page) return url.hostname;
+    return page.replace(/\b\w/g, (letter) => letter.toUpperCase());
+  } catch {
+    return "Business-wide";
+  }
+}
+
+function scoreDisplay(
+  item: {
+    score: number | null;
+    status:
+      | "scored"
+      | "not_provided"
+      | "not_applicable"
+      | "not_configured"
+      | "saved_not_analyzed"
+      | "partial";
+  },
+  hasCompetitors: boolean,
+) {
+  if (item.status === "not_provided") return "Not provided";
+  if (item.status === "not_applicable") return "Not applicable";
+  if (item.status === "not_configured") return "Not configured";
+  if (item.status === "saved_not_analyzed") return "Not analyzed";
+  if (!hasCompetitors && item.score === 0) return "Not configured";
+  return item.score === null ? "Not scored" : `${item.score}/100`;
+}
+
+function categoryIcon(category: ScoreCategory) {
+  const className = "size-4";
+  switch (category) {
+    case ScoreCategory.WEBSITE:
+      return <Globe2 className={className} aria-hidden="true" />;
+    case ScoreCategory.SEO:
+      return <Search className={className} aria-hidden="true" />;
+    case ScoreCategory.SOCIAL:
+      return <Share2 className={className} aria-hidden="true" />;
+    case ScoreCategory.REVIEWS:
+      return <Star className={className} aria-hidden="true" />;
+    case ScoreCategory.COMPETITORS:
+      return <Swords className={className} aria-hidden="true" />;
+    default:
+      return <Sparkles className={className} aria-hidden="true" />;
+  }
 }
 
 export default async function BusinessOverviewPage({
@@ -125,14 +185,7 @@ export default async function BusinessOverviewPage({
         include: {
           scores: true,
           findings: { orderBy: { createdAt: "asc" } },
-          recommendations: {
-            include: {
-              implementationDrafts: {
-                where: { status: { not: "ARCHIVED" } },
-                select: { id: true },
-              },
-            },
-          },
+          recommendations: true,
         },
       },
       profiles: {
@@ -169,22 +222,30 @@ export default async function BusinessOverviewPage({
   if (!audit) {
     return (
       <div className="space-y-6">
+        <PageIntro
+          eyebrow="Overview"
+          title="Finish setup to see your growth priorities"
+          description="Confirm the essential business information, then run your first audit."
+        />
         <SetupChecklist
           businessId={business.id}
           progress={setupProgress}
           dismissed={Boolean(business.onboardingDismissedAt)}
         />
         <EmptyState
+          compact
           icon={<AlertTriangle className="size-6" />}
           title="No audit generated yet"
-          description="Run your first audit to receive scores, findings, and an action plan."
+          description="Run your first audit to receive scores, findings, and a prioritized action plan."
           action={
             <Link
               href={`/dashboard/businesses/${business.id}/setup`}
+              data-customer-event="empty_state_action_clicked"
+              data-customer-surface="empty_state"
               className={buttonVariants({ variant: "primary" })}
             >
               Continue setup
-              <ArrowRight className="size-4" />
+              <ArrowRight className="size-4" aria-hidden="true" />
             </Link>
           }
         />
@@ -198,20 +259,7 @@ export default async function BusinessOverviewPage({
     ownerId: user.id,
   });
   if (!report) notFound();
-  const comparison = report.progress.comparison;
-  const website = report.website;
-  const websiteCrawl = report.websiteCrawl;
-  const social = report.social;
-  const assessment = report.assessment;
-  const competitorIntelligence = report.competitors.intelligence;
-  const reportBusinessAdvantages = competitorIntelligence
-    ? trustedBusinessAdvantages(competitorIntelligence.comparison)
-    : [];
-  const hasAnalyzedCompetitors =
-    (competitorIntelligence?.comparison.analyzedCompetitorCount ?? 0) > 0;
-  const reviews = report.reviews;
-  const overallScore = report.audit.overallScore;
-  const health = healthFor(overallScore);
+
   const canonicalRecommendations = report.recommendations.all.flatMap(
     (recommendation) => {
       const stored = audit.recommendations.find(
@@ -242,25 +290,41 @@ export default async function BusinessOverviewPage({
   const nextMoves = (
     activeRecommendations.length >= 3 ? activeRecommendations : recommendations
   ).slice(0, 3);
-  const progress = progressForRecommendations(audit.recommendations);
-  const confirmedSocial = social.confirmedPlatforms;
-  const confirmedCompetitorProfiles =
-    report.competitors.profileCounts.confirmedPublicProfiles;
-  const scoreBreakdown = report.scores;
-  const overallScoreEvidence =
-    report.normalizedFacts?.scoreEvidence.categories?.[ScoreCategory.OVERALL];
-  const executiveSummary = report.audit.executiveSummary;
+  const firstMove = nextMoves.at(0);
+  const followUpMoves = nextMoves.slice(1, 3);
   const reportRecommendationById = new Map(
     report.recommendations.all.map((recommendation) => [
       recommendation.id,
       recommendation,
     ]),
   );
-  const evidenceFindings = [
+  const progress = progressForRecommendations(audit.recommendations);
+  const currentAction = recommendations.find(
+    (recommendation) =>
+      recommendation.status === RecommendationStatus.IN_PROGRESS,
+  );
+  const hasMeaningfulProgress =
+    progress.completed > 0 || Boolean(currentAction);
+  const topFindings = [
     ...report.findings.warnings,
     ...report.findings.opportunities,
     ...report.findings.strengths,
-  ].slice(0, 6);
+  ].slice(0, 3);
+  const findingSummary = summarizeFindingTypes(report.findings.all);
+  const strongestCategory = strongestScoredCategory(report.scores);
+  const overallEvidence =
+    report.normalizedFacts?.scoreEvidence.categories?.[ScoreCategory.OVERALL];
+  const coverageLabel = plainCoverageLabel(
+    overallEvidence?.evidenceCompleteness,
+  );
+  const mainOpportunity =
+    firstMove?.title ??
+    report.findings.opportunities.at(0)?.title ??
+    report.findings.warnings.at(0)?.title ??
+    "Keep building on the current foundation";
+  const comparison = report.progress.comparison;
+  const social = report.social;
+  const reviews = report.reviews;
   const suggestedQuestions = getSuggestedQuestionsForGoals(
     business.goals,
     business.primaryGoal,
@@ -275,27 +339,51 @@ export default async function BusinessOverviewPage({
       primaryConversionGoal: business.primaryConversionGoal,
       contextConfirmedAt: business.contextConfirmedAt,
     },
-  ).slice(0, 5);
+  ).slice(0, 3);
   const [pdfCheck, presentationCheck, comparisonCheck] = await Promise.all([
     canUsePdfExport(user.id),
     canUsePresentationMode(user.id),
     canUseProgressComparison(user.id),
   ]);
+  const reportFindings = report.findings.all;
+
+  function evidenceFor(recommendationId: string, category: ScoreCategory) {
+    const reportRecommendation = reportRecommendationById.get(recommendationId);
+    const sourceFinding = reportRecommendation?.sourceFindingId
+      ? reportFindings.find(
+          (finding) => finding.id === reportRecommendation.sourceFindingId,
+        )
+      : reportFindings.find(
+          (finding) => finding.category === category,
+        );
+
+    return {
+      summary:
+        reportRecommendation?.evidenceSummary ??
+        sourceFinding?.evidenceSummary ??
+        sourceFinding?.description ??
+        "This action is based on the latest completed audit.",
+      sourceUrl:
+        reportRecommendation?.sourceUrl ?? sourceFinding?.sourceUrl ?? null,
+      confidence:
+        reportRecommendation?.confidence ?? sourceFinding?.confidence ?? null,
+    };
+  }
 
   return (
     <div className="space-y-6">
       <PageIntro
-        eyebrow="Growth Audit"
-        title="Your decision-ready report"
-        description={`Completed ${audit.createdAt.toLocaleDateString()}. Start with the next three moves, then open a detailed analysis when you need the evidence.`}
+        eyebrow="Overview"
+        title="Your growth priorities"
+        description={`Last audited ${audit.createdAt.toLocaleDateString()}. Start with the recommended action, then open supporting evidence when you need it.`}
         actions={
           <>
             <Link
               href={`/dashboard/businesses/${business.id}/audit/run`}
               className={buttonVariants({ variant: "secondary", size: "sm" })}
             >
-              <RefreshCw className="size-4" />
-              Run again
+              <RefreshCw className="size-4" aria-hidden="true" />
+              Run audit
             </Link>
             <Link
               href={
@@ -303,9 +391,9 @@ export default async function BusinessOverviewPage({
                   ? `/dashboard/businesses/${business.id}/audit/${audit.id}/present`
                   : "/pricing"
               }
-              className={buttonVariants({ variant: "secondary", size: "sm" })}
+              className={buttonVariants({ variant: "ghost", size: "sm" })}
             >
-              <MonitorPlay className="size-4" />
+              <MonitorPlay className="size-4" aria-hidden="true" />
               {presentationCheck.allowed ? "Present" : "Unlock presentation"}
             </Link>
             <Link
@@ -315,9 +403,9 @@ export default async function BusinessOverviewPage({
                   : "/pricing"
               }
               prefetch={false}
-              className={buttonVariants({ variant: "primary", size: "sm" })}
+              className={buttonVariants({ variant: "ghost", size: "sm" })}
             >
-              <Download className="size-4" />
+              <Download className="size-4" aria-hidden="true" />
               {pdfCheck.allowed ? "Download PDF" : "Unlock PDF"}
             </Link>
           </>
@@ -326,21 +414,244 @@ export default async function BusinessOverviewPage({
 
       <ContextualHelpCard {...contextualHelp.overview} />
 
-      {assessment.mode === "social_first" ? (
+      {report.assessment.mode === "social_first" ? (
         <DataSourceNotice>
           <strong>Social-first assessment.</strong> This report used confirmed
           and pending social profiles, Business Context, goals, reviews, and
-          competitors. Website and SEO were excluded from the overall score
-          because no confirmed website was provided. Add one later to unlock
-          those analyses.
+          competitors. Website and SEO were not counted as failures. Add a
+          website later to unlock those analyses.
         </DataSourceNotice>
       ) : null}
 
       {report.dataNotes.length > 0 ? (
         <DataSourceNotice>
-          <strong>Conflicting evidence to review.</strong>{" "}
+          <strong>Some saved information needs review.</strong>{" "}
           {report.dataNotes.join(" ")}
         </DataSourceNotice>
+      ) : null}
+
+      <Card className="overflow-hidden">
+        <div className="grid gap-6 p-5 lg:grid-cols-[auto_minmax(0,1fr)] lg:items-center lg:p-6">
+          <ScoreRing score={report.audit.overallScore} />
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-accent">Current health</p>
+            <h2 className="mt-1 text-2xl font-semibold">
+              {plainHealthLabel(report.audit.overallScore)}
+              <span className="text-muted">
+                {" "}
+                - {report.audit.overallScore}/100
+              </span>
+            </h2>
+            <div className="mt-5 grid gap-x-8 gap-y-4 sm:grid-cols-2">
+              <div>
+                <p className="text-sm text-muted">Strongest area</p>
+                <p className="mt-1 font-semibold">
+                  {strongestCategory
+                    ? recommendationCategoryLabels[strongestCategory.category]
+                    : "Not enough scored areas yet"}
+                </p>
+              </div>
+              <div>
+                <p className="text-sm text-muted">Main opportunity</p>
+                <p className="mt-1 font-semibold">{mainOpportunity}</p>
+              </div>
+              <div>
+                <p className="text-sm text-muted">Your primary goal</p>
+                <p className="mt-1 font-semibold">
+                  {business.primaryGoal
+                    ? businessGoalLabels[business.primaryGoal]
+                    : "No primary goal selected"}
+                </p>
+              </div>
+              <div>
+                <p className="text-sm text-muted">Report coverage</p>
+                <p className="mt-1 font-semibold">{coverageLabel}</p>
+              </div>
+            </div>
+            <DisclosureSection
+              title="Read executive summary"
+              description="A short explanation of the current result."
+              compact
+              className="mt-5 border-dashed shadow-none"
+            >
+              <p className="text-sm leading-6 text-muted">
+                {report.audit.executiveSummary}
+              </p>
+            </DisclosureSection>
+          </div>
+        </div>
+      </Card>
+
+      {firstMove ? (
+        <section
+          aria-labelledby="recommended-first-action"
+          className="rounded-lg border border-accent/40 bg-accent/[0.06] p-5 shadow-sm sm:p-6"
+        >
+          <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-accent">
+                Recommended first action
+              </p>
+              <h2
+                id="recommended-first-action"
+                className="mt-2 text-xl font-semibold sm:text-2xl"
+              >
+                {firstMove.title}
+              </h2>
+              <p className="mt-2 max-w-3xl text-base leading-7 text-muted">
+                {firstMove.description}
+              </p>
+              <div className="mt-4 flex flex-wrap gap-x-4 gap-y-2 text-sm text-muted">
+                <span>
+                  {recommendationCategoryLabels[firstMove.category]}
+                </span>
+                <span>Effort: {displayEffort(firstMove)}</span>
+                <span>Expected impact: {displayImpact(firstMove)}</span>
+              </div>
+            </div>
+            <RecommendationPrimaryAction
+              businessId={business.id}
+              recommendationId={firstMove.id}
+              recommendationTitle={firstMove.title}
+              status={firstMove.status}
+              surface="business_overview"
+              className="w-full sm:w-auto"
+            />
+          </div>
+          {(() => {
+            const evidence = evidenceFor(firstMove.id, firstMove.category);
+            return (
+              <DisclosureSection
+                title="See evidence"
+                description="Open the supporting source and confidence details."
+                compact
+                className="mt-5 border-accent/20 bg-background/50 shadow-none"
+                analyticsEvent="overview_evidence_expanded"
+                analyticsSurface="business_overview"
+              >
+                <div className="space-y-2 text-sm leading-6 text-muted">
+                  <p>{evidence.summary}</p>
+                  {evidence.sourceUrl ? (
+                    <p className="break-all">
+                      <strong className="text-foreground">Source:</strong>{" "}
+                      {evidence.sourceUrl}
+                    </p>
+                  ) : null}
+                  {evidence.confidence ? (
+                    <p>
+                      <strong className="text-foreground">Confidence:</strong>{" "}
+                      {evidence.confidence}
+                    </p>
+                  ) : null}
+                </div>
+              </DisclosureSection>
+            );
+          })()}
+        </section>
+      ) : (
+        <Card className="p-5">
+          <div className="flex items-start gap-3">
+            <CheckCircle2
+              className="mt-0.5 size-5 shrink-0 text-accent"
+              aria-hidden="true"
+            />
+            <div>
+              <h2 className="font-semibold">No open priority actions</h2>
+              <p className="mt-1 text-sm leading-6 text-muted">
+                Review completed work or run a fresh audit to identify the next
+                opportunity.
+              </p>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {followUpMoves.length > 0 ? (
+        <ReportSection
+          title="Next two actions"
+          description="Continue with these after the recommended first action."
+          action={
+            <Link
+              href={`/dashboard/businesses/${business.id}/action-plan`}
+              className={buttonVariants({ variant: "ghost", size: "sm" })}
+            >
+              View full plan
+              <ArrowRight className="size-4" aria-hidden="true" />
+            </Link>
+          }
+        >
+          <div className="divide-y divide-border">
+            {followUpMoves.map((recommendation, index) => (
+              <article
+                key={recommendation.id}
+                className="grid gap-4 py-5 first:pt-0 last:pb-0 sm:grid-cols-[2rem_minmax(0,1fr)] lg:grid-cols-[2rem_minmax(0,1fr)_auto] lg:items-center"
+              >
+                <span className="flex size-8 items-center justify-center rounded-lg bg-foreground/[0.06] text-sm font-semibold">
+                  {index + 2}
+                </span>
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-muted">
+                    {recommendationCategoryLabels[recommendation.category]}
+                    {" \u00b7 "}
+                    {displayEffort(recommendation)} effort
+                    {" \u00b7 "}
+                    {displayImpact(recommendation)} impact
+                  </p>
+                  <h3 className="mt-1 text-base font-semibold">
+                    {recommendation.title}
+                  </h3>
+                  <p className="mt-1 text-sm leading-6 text-muted">
+                    {recommendation.description}
+                  </p>
+                  {(() => {
+                    const evidence = evidenceFor(
+                      recommendation.id,
+                      recommendation.category,
+                    );
+                    return (
+                      <DisclosureSection
+                        title="See evidence"
+                        description="Open the supporting source and confidence details."
+                        compact
+                        className="mt-3 border-0 bg-transparent shadow-none"
+                        analyticsEvent="overview_evidence_expanded"
+                        analyticsSurface="business_overview"
+                      >
+                        <div className="space-y-2 text-sm leading-6 text-muted">
+                          <p>{evidence.summary}</p>
+                          {evidence.sourceUrl ? (
+                            <p className="break-all">
+                              <strong className="text-foreground">
+                                Source:
+                              </strong>{" "}
+                              {evidence.sourceUrl}
+                            </p>
+                          ) : null}
+                          {evidence.confidence ? (
+                            <p>
+                              <strong className="text-foreground">
+                                Confidence:
+                              </strong>{" "}
+                              {evidence.confidence}
+                            </p>
+                          ) : null}
+                        </div>
+                      </DisclosureSection>
+                    );
+                  })()}
+                </div>
+                <RecommendationPrimaryAction
+                  businessId={business.id}
+                  recommendationId={recommendation.id}
+                  recommendationTitle={recommendation.title}
+                  status={recommendation.status}
+                  surface="business_overview"
+                  className="w-full sm:col-start-2 sm:w-auto lg:col-start-auto"
+                />
+              </article>
+            ))}
+          </div>
+        </ReportSection>
       ) : null}
 
       <SetupChecklist
@@ -349,528 +660,364 @@ export default async function BusinessOverviewPage({
         dismissed={Boolean(business.onboardingDismissedAt)}
       />
 
-      <Card className="p-5">
-        <div className="grid gap-5 lg:grid-cols-[auto_1fr] lg:items-center">
-          <ScoreRing score={overallScore} />
-          <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <h3 className="text-xl font-semibold">{health.label}</h3>
-              {overallScoreEvidence ? (
-                <span className="rounded-full border border-border bg-background px-2.5 py-1 text-xs font-semibold text-muted">
-                  {overallScoreEvidence.confidence.toLowerCase()} confidence
-                  {" \u00b7 "}
-                  {overallScoreEvidence.evidenceCompleteness}% evidence
-                </span>
-              ) : null}
-              {business.primaryGoal ? (
-                <span className="rounded-full border border-border bg-background px-2.5 py-1 text-xs font-semibold text-muted">
-                  Goal: {businessGoalLabels[business.primaryGoal]}
-                </span>
-              ) : null}
-            </div>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-muted">
-              {executiveSummary}
-            </p>
-            <div className="mt-4 grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
-              {scoreBreakdown.map((item) => {
-                const { category, score } = item;
-                const notConfigured =
-                  category === ScoreCategory.COMPETITORS &&
-                  business.competitors.length === 0;
-                const savedNotAnalyzed =
-                  category === ScoreCategory.COMPETITORS &&
-                  business.competitors.length > 0 &&
-                  !hasAnalyzedCompetitors;
-                const unavailable = score === null;
-                return (
-                  <div key={category} className="rounded-lg bg-foreground/[0.035] p-3">
-                    <p className="text-xs text-muted">{scoreLabels[category]}</p>
-                    <p
-                      className={cn(
-                        "mt-1 font-semibold",
-                        unavailable || notConfigured || savedNotAnalyzed
-                          ? "text-muted"
-                          : scoreColor(score),
-                      )}
-                    >
-                      {notConfigured
-                        ? "Not configured"
-                        : savedNotAnalyzed
-                          ? "Not analyzed"
-                          : unavailable
-                            ? "Not provided"
-                            : score}
-                    </p>
-                    {item.confidence && item.evidenceCompleteness !== undefined ? (
-                      <p className="mt-1 text-[11px] text-muted">
-                        {item.confidence} confidence
-                        {" \u00b7 "}
-                        {item.evidenceCompleteness}% evidence
-                      </p>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      </Card>
-
-      {report.coverage ? (
-        <ReportSection
-          title="Analysis coverage"
-          description="Each layer is reported separately so crawl scope, technical checks, AI content review, and channel data are not mistaken for one another."
-          action={<Sparkles className="size-5 text-accent" />}
-        >
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <CompactMetricCard
-              label="Crawl coverage"
-              value={`${report.coverage.crawl.successfulPages}/${report.coverage.crawl.eligiblePages}`}
-              detail={report.coverage.crawl.explanation}
-            />
-            <CompactMetricCard
-              label="Technical coverage"
-              value={report.coverage.technical.pagesAnalyzed}
-              detail={report.coverage.technical.explanation}
-            />
-            <CompactMetricCard
-              label="AI content coverage"
-              value={`${report.coverage.aiContent.completedPages}/${report.coverage.aiContent.selectedPages}`}
-              detail={report.coverage.aiContent.explanation}
-            />
-            <CompactMetricCard
-              label="Social content analyzed"
-              value={report.coverage.socialProfiles.contentAnalyzed}
-              detail={report.coverage.socialProfiles.explanation}
-            />
-          </div>
-          <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-muted">
-            <span className="rounded-full border border-border bg-background px-2.5 py-1 font-semibold">
-              Reviews: {report.coverage.reviews.status.replaceAll("_", " ").toLowerCase()}
-            </span>
-            <span>{report.coverage.reviews.explanation}</span>
-          </div>
-        </ReportSection>
-      ) : null}
-
       <ReportSection
-        title="Your next three moves"
-        description="The highest-priority open work, ordered by impact, effort, goals, and audit priority."
+        title="Key findings"
+        description={`${findingSummary.total} findings in this audit. ${findingSummary.label}.`}
         action={
           <Link
-            href={`/dashboard/businesses/${business.id}/action-plan`}
+            href={`/dashboard/businesses/${business.id}/audit`}
+            data-customer-event="overview_view_all_findings_clicked"
+            data-customer-surface="business_overview"
             className={buttonVariants({ variant: "secondary", size: "sm" })}
           >
-            Full action plan
-            <ArrowRight className="size-4" />
+            View all findings
+            <ArrowRight className="size-4" aria-hidden="true" />
           </Link>
         }
       >
-        <div className="divide-y divide-border">
-          {nextMoves.map((recommendation, index) => {
-            const reportRecommendation = reportRecommendationById.get(
-              recommendation.id,
-            );
-            return (
-            <article
-              key={recommendation.id}
-              className="grid gap-4 py-5 first:pt-0 last:pb-0 lg:grid-cols-[2rem_minmax(0,1fr)_10rem] lg:items-start lg:gap-x-8"
-            >
-              <span className="flex size-8 items-center justify-center rounded-lg bg-accent/10 text-sm font-semibold text-accent">
-                {index + 1}
-              </span>
-              <div>
-                <div className="flex flex-wrap gap-2">
-                  <span
-                    className={cn(
-                      "rounded-full border px-2.5 py-1 text-xs font-semibold",
-                      recommendationPriorityStyles[recommendation.priority],
-                    )}
-                  >
-                    {recommendation.priority.toLowerCase()} priority
-                  </span>
-                  <span className="rounded-full border border-border bg-background px-2.5 py-1 text-xs font-semibold">
-                    {recommendationCategoryLabels[recommendation.category]}
-                  </span>
-                  <span
-                    className={cn(
-                      "rounded-full border px-2.5 py-1 text-xs font-semibold",
-                      recommendationStatusStyles[recommendation.status],
-                    )}
-                  >
-                    {recommendationStatusLabels[recommendation.status]}
-                  </span>
-                  {reportRecommendation?.sourceLabel ? (
-                    <span className="rounded-full border border-accent/30 bg-accent/10 px-2.5 py-1 text-xs font-semibold text-accent">
-                      {reportRecommendation.sourceLabel}
-                    </span>
-                  ) : null}
-                </div>
-                <h4 className="mt-3 font-semibold">{recommendation.title}</h4>
-                <p className="mt-1 text-sm leading-6 text-muted">
-                  {recommendation.description}
-                </p>
-                {reportRecommendation?.sourceLabel ===
-                "AI-reviewed opportunity" ? (
-                  <div className="mt-3 space-y-1 text-xs leading-5 text-muted">
-                    {reportRecommendation.sourceUrl ? (
-                      <p>
-                        <strong className="text-foreground">Affected page:</strong>{" "}
-                        {reportRecommendation.sourceUrl}
-                      </p>
-                    ) : null}
-                    <p>
-                      <strong className="text-foreground">Evidence:</strong>{" "}
-                      {reportRecommendation.evidenceSummary}
-                    </p>
-                    <p>
-                      <strong className="text-foreground">Confidence:</strong>{" "}
-                      {reportRecommendation.confidence}
-                    </p>
-                  </div>
-                ) : null}
-                <RecommendationLearnWhy category={recommendation.category} />
-              </div>
-              <TaskActionRail
-                businessId={business.id}
-                businessName={business.name}
-                recommendationId={recommendation.id}
-                recommendationTitle={recommendation.title}
-                status={recommendation.status}
-                evidence={
-                  reportRecommendation?.evidenceSummary ??
-                  audit.findings.find(
-                    (finding) =>
-                      finding.category === recommendation.category,
-                  )?.description
-                }
-                initialSavedCount={recommendation.implementationDrafts.length}
-                implementationLabel={/canonical|robots|sitemap|alt text/i.test(recommendation.title) ? "Show Implementation Steps" : "Generate Fix"}
-              />
-            </article>
-            );
-          })}
-        </div>
-      </ReportSection>
-
-      {evidenceFindings.length > 0 ? (
-        <ReportSection
-          title="Evidence-backed findings"
-          description="Measured technical facts and interpretive opportunities are labeled separately."
-        >
+        {topFindings.length > 0 ? (
           <div className="divide-y divide-border">
-            {evidenceFindings.map((finding) => (
-              <article key={finding.id} className="py-5 first:pt-0 last:pb-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span
-                    className={cn(
-                      "rounded-full border px-2.5 py-1 text-xs font-semibold",
-                      finding.sourceLabel === "AI-reviewed opportunity"
-                        ? "border-accent/30 bg-accent/10 text-accent"
-                        : "border-border bg-background text-muted",
-                    )}
-                  >
-                    {finding.sourceLabel ?? "Observation"}
+            {topFindings.map((finding) => (
+              <article key={finding.id} className="py-4 first:pt-0 last:pb-0">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-medium text-muted">
+                  <span>
+                    {finding.findingType
+                      ? findingTypeLabels[finding.findingType]
+                      : "Observation"}
                   </span>
-                  <span className="rounded-full border border-border bg-background px-2.5 py-1 text-xs font-semibold text-muted">
+                  <span>
                     {recommendationCategoryLabels[finding.category]}
                   </span>
-                  {finding.confidence ? (
-                    <span className="text-xs text-muted">
-                      {finding.confidence} confidence
-                    </span>
-                  ) : null}
+                  <span>{sourcePageLabel(finding.sourceUrl)}</span>
                 </div>
-                <h4 className="mt-3 font-semibold">{finding.title}</h4>
+                <h3 className="mt-2 font-semibold">{finding.title}</h3>
                 <p className="mt-1 text-sm leading-6 text-muted">
-                  {finding.description}
+                  {finding.evidenceSummary ??
+                    finding.whyItMatters ??
+                    finding.description}
                 </p>
-                {finding.sourceUrl ? (
-                  <p className="mt-2 break-all text-xs text-muted">
-                    <strong className="text-foreground">Affected page:</strong>{" "}
-                    {finding.sourceUrl}
-                  </p>
-                ) : null}
-                {finding.source === "ai_reviewed_opportunity" ? (
-                  <div className="mt-3 grid gap-2 text-xs leading-5 text-muted md:grid-cols-3">
-                    <p>
-                      <strong className="text-foreground">Evidence:</strong>{" "}
-                      {finding.evidenceSummary}
-                    </p>
-                    <p>
-                      <strong className="text-foreground">Why it matters:</strong>{" "}
-                      {finding.whyItMatters}
-                    </p>
-                    <p>
-                      <strong className="text-foreground">Suggested action:</strong>{" "}
-                      {finding.suggestedAction}
-                    </p>
+                <DisclosureSection
+                  title="See evidence"
+                  description="Open the supporting source, confidence, and recommended response."
+                  compact
+                  className="mt-3 border-0 bg-transparent shadow-none"
+                  analyticsEvent="overview_evidence_expanded"
+                  analyticsSurface="business_overview"
+                >
+                  <div className="space-y-2 text-sm leading-6 text-muted">
+                    <p>{finding.description}</p>
+                    {finding.sourceUrl ? (
+                      <p className="break-all">
+                        <strong className="text-foreground">Source:</strong>{" "}
+                        {finding.sourceUrl}
+                      </p>
+                    ) : null}
+                    {finding.confidence ? (
+                      <p>
+                        <strong className="text-foreground">
+                          Confidence:
+                        </strong>{" "}
+                        {finding.confidence}
+                      </p>
+                    ) : null}
+                    {finding.suggestedAction ? (
+                      <p>
+                        <strong className="text-foreground">
+                          Recommended response:
+                        </strong>{" "}
+                        {finding.suggestedAction}
+                      </p>
+                    ) : null}
                   </div>
-                ) : null}
+                </DisclosureSection>
               </article>
             ))}
           </div>
-        </ReportSection>
-      ) : null}
+        ) : (
+          <p className="text-sm leading-6 text-muted">
+            No detailed findings were saved for this audit.
+          </p>
+        )}
+      </ReportSection>
 
-      <div className="grid gap-4 lg:grid-cols-[1.2fr_1fr]">
-        <ReportSection title="Action progress" description={`${progress.completed} of ${progress.total} recommendations completed.`}>
-          <div className="flex items-end justify-between gap-4">
-            <span className="text-3xl font-semibold">{progress.percent}%</span>
-            <ListChecks className="size-5 text-accent" />
-          </div>
-          <div className="mt-3 h-2 overflow-hidden rounded-full bg-foreground/10">
-            <div
-              className="h-full rounded-full bg-accent"
-              style={{ width: `${progress.percent}%` }}
-            />
-          </div>
+      <div className="grid gap-4 lg:grid-cols-2">
+        <ReportSection
+          title="Action progress"
+          description={
+            hasMeaningfulProgress
+              ? `${progress.completed} of ${progress.total} actions completed.`
+              : "Begin with the recommended action above."
+          }
+        >
+          {hasMeaningfulProgress ? (
+            <div>
+              <div className="flex items-end justify-between gap-4">
+                <div>
+                  <p className="text-3xl font-semibold">{progress.percent}%</p>
+                  {currentAction ? (
+                    <p className="mt-1 text-sm text-muted">
+                      In progress: {currentAction.title}
+                    </p>
+                  ) : null}
+                </div>
+                <ListChecks
+                  className="size-5 text-accent"
+                  aria-hidden="true"
+                />
+              </div>
+              <div
+                className="mt-3 h-2 overflow-hidden rounded-full bg-foreground/10"
+                role="progressbar"
+                aria-label="Action plan progress"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={progress.percent}
+              >
+                <div
+                  className="h-full rounded-full bg-accent"
+                  style={{ width: `${progress.percent}%` }}
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-start gap-3">
+              <ListChecks
+                className="mt-0.5 size-5 shrink-0 text-accent"
+                aria-hidden="true"
+              />
+              <div>
+                <p className="font-semibold">
+                  Start with your first recommended action
+                </p>
+                <p className="mt-1 text-sm leading-6 text-muted">
+                  Progress will appear here after work begins.
+                </p>
+              </div>
+            </div>
+          )}
         </ReportSection>
 
         <ReportSection title="Since your last audit">
           {comparison.previousAuditId && comparisonCheck.allowed ? (
-            <div className="space-y-3">
-              <SummaryStrip className="border-0 bg-foreground/[0.035]">
-                <strong>Overall {formatDelta(comparison.overallScoreChange)}</strong>
-                {comparison.improvedCategories.slice(0, 2).map((item) => (
-                  <span key={item.category} className="text-teal-700 dark:text-teal-200">
-                    {categoryLabel(item.category)} {formatDelta(item.delta)}
-                  </span>
-                ))}
-                {comparison.declinedCategories.slice(0, 1).map((item) => (
-                  <span key={item.category} className="text-rose-700 dark:text-rose-200">
-                    {categoryLabel(item.category)} {formatDelta(item.delta)}
-                  </span>
-                ))}
-              </SummaryStrip>
-              <p className="text-sm leading-6 text-muted">{comparison.summary}</p>
-              {comparison.comparisonNote ? (
-                <p className="rounded-md border border-border bg-foreground/[0.025] p-3 text-xs leading-5 text-muted">
-                  {comparison.comparisonNote}
+            comparison.methodologyChanged ? (
+              <div>
+                <p className="font-semibold">Comparison limited</p>
+                <p className="mt-2 text-sm leading-6 text-muted">
+                  The scoring method changed, so the score difference does not
+                  necessarily mean the business improved or declined.
                 </p>
-              ) : null}
-            </div>
+                <details className="mt-3 text-sm">
+                  <summary className="cursor-pointer font-medium text-accent">
+                    Technical comparison details
+                  </summary>
+                  <p className="mt-2 leading-6 text-muted">
+                    {comparison.comparisonNote ??
+                      "The two audits used different scoring methods and should not be compared as a direct trend."}
+                  </p>
+                </details>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <SummaryStrip className="border-0 bg-foreground/[0.035]">
+                  <strong>
+                    Overall {formatDelta(comparison.overallScoreChange)}
+                  </strong>
+                  {comparison.improvedCategories.slice(0, 2).map((item) => (
+                    <span
+                      key={item.category}
+                      className="text-teal-700 dark:text-teal-200"
+                    >
+                      {categoryLabel(item.category)} {formatDelta(item.delta)}
+                    </span>
+                  ))}
+                  {comparison.declinedCategories.slice(0, 1).map((item) => (
+                    <span
+                      key={item.category}
+                      className="text-rose-700 dark:text-rose-200"
+                    >
+                      {categoryLabel(item.category)} {formatDelta(item.delta)}
+                    </span>
+                  ))}
+                </SummaryStrip>
+                <p className="text-sm leading-6 text-muted">
+                  {comparison.summary}
+                </p>
+              </div>
+            )
           ) : comparison.previousAuditId ? (
-            <Link href="/pricing" className="text-sm font-medium text-accent hover:underline">
+            <Link
+              href="/pricing"
+              className="text-sm font-medium text-accent hover:underline"
+            >
               Unlock progress comparison
             </Link>
           ) : (
             <p className="text-sm leading-6 text-muted">
-              This is your first audit. Future audits will show progress over time.
+              This is your first audit. Future audits will show progress over
+              time.
             </p>
           )}
         </ReportSection>
       </div>
 
-      <section className="grid gap-4 md:grid-cols-2">
-        <ReportSection
-          title="Website + SEO"
-          description="Clarity, conversion, search basics, and crawl coverage."
-          action={<Globe2 className="size-5 text-accent" />}
-        >
-          {assessment.hasWebsite ? (
-            <>
-              <div className="grid gap-3 sm:grid-cols-3">
-                <CompactMetricCard
-                  label="Website"
-                  value={categoryScore(audit.scores, ScoreCategory.WEBSITE) ?? "Not scored"}
-                />
-                <CompactMetricCard
-                  label="SEO"
-                  value={categoryScore(audit.scores, ScoreCategory.SEO) ?? "Not scored"}
-                />
-                <CompactMetricCard
-                  label="Pages scanned"
-                  value={websiteCrawl?.pagesScanned ?? 1}
-                />
-              </div>
-              <p className="mt-4 text-sm leading-6 text-muted">
-                {websiteCrawl
-                  ? `${websiteCrawl.pagesMissingMetaDescription} pages need descriptions and ${websiteCrawl.pagesWithNoH1 + websiteCrawl.pagesWithMultipleH1} have headline issues.`
-                  : website?.pageTitle
-                    ? `Homepage title found: ${website.pageTitle}`
-                    : "Open the detailed analysis for homepage evidence."}
-              </p>
-            </>
-          ) : (
-            <div className="rounded-lg border border-dashed border-border bg-background p-4">
-              <p className="font-semibold">Website and SEO: Not provided</p>
-              <p className="mt-1 text-sm leading-6 text-muted">
-                These categories were not counted as failures and were excluded
-                from the overall score. Adding a confirmed website later will
-                unlock homepage, crawl, conversion, and SEO analysis.
-              </p>
-            </div>
-          )}
-          <div className="mt-4 flex gap-2">
-            <Link href={`/dashboard/businesses/${business.id}/website`} className={buttonVariants({ variant: "secondary", size: "sm" })}>
-              Website
-            </Link>
-            <Link href={`/dashboard/businesses/${business.id}/seo`} className={buttonVariants({ variant: "secondary", size: "sm" })}>
-              SEO
-            </Link>
-          </div>
-        </ReportSection>
+      <ReportSection
+        title="Business health by area"
+        description="Each area appears once. Open a category for the detailed analysis."
+      >
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {overviewCategories.map((category) => {
+            const item = report.scores.find(
+              (score) => score.category === category,
+            );
+            if (!item) return null;
+            const isEmptyCompetitor =
+              category === ScoreCategory.COMPETITORS &&
+              business.competitors.length === 0;
+            const href = isEmptyCompetitor
+              ? `/dashboard/businesses/${business.id}/competitors`
+              : `/dashboard/businesses/${business.id}/${categoryRoutes[category]}`;
 
-        <ReportSection
-          title="Reviews + trust"
-          description="Public credibility and review-channel readiness."
-          action={<Star className="size-5 text-accent" />}
-        >
-          <div className="grid gap-3 sm:grid-cols-3">
-            <CompactMetricCard
-              label={
-                reviews.dataRequirementsMet
-                  ? "Review score"
-                  : "Listing-presence score"
-              }
-              value={reviews.score}
-              detail={
-                reviews.dataRequirementsMet
-                  ? `${reviews.scoreConfidence} confidence`
-                  : "Provisional, low confidence"
-              }
-            />
-            <CompactMetricCard label="Google Business" value={reviews.googleBusinessStatus === "confirmed" ? "Confirmed" : reviews.googleBusinessStatus === "pending" ? "Review" : "Missing"} />
-            <CompactMetricCard
-              label="Data status"
-              value={
-                reviews.dataRequirementsMet
-                  ? "Scorable"
-                  : "Limited evidence"
-              }
-            />
-          </div>
-          <p className="mt-4 text-sm leading-6 text-muted">
-            {reviews.reviewScoreExplanation}
-          </p>
-          <Link href={`/dashboard/businesses/${business.id}/reviews`} className={buttonVariants({ variant: "secondary", size: "sm", className: "mt-4" })}>
-            View reviews
-            <ArrowRight className="size-4" />
-          </Link>
-        </ReportSection>
+            return (
+              <Link
+                key={category}
+                href={href}
+                data-customer-event="category_opened"
+                data-customer-surface="category"
+                className="group flex min-h-32 flex-col justify-between rounded-lg bg-foreground/[0.035] p-4 transition-colors hover:bg-foreground/[0.065] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <span className="flex items-center gap-2 font-semibold">
+                    {categoryIcon(category)}
+                    {recommendationCategoryLabels[category]}
+                  </span>
+                  <ArrowRight
+                    className="size-4 text-muted transition-transform group-hover:translate-x-0.5"
+                    aria-hidden="true"
+                  />
+                </div>
+                <div className="mt-5">
+                  <p className="text-lg font-semibold">
+                    {scoreDisplay(item, business.competitors.length > 0)}
+                  </p>
+                  <p className="mt-1 text-sm leading-5 text-muted">
+                    {isEmptyCompetitor
+                      ? "Add a competitor for a public side-by-side comparison."
+                      : plainScoreInterpretation(item.score)}
+                  </p>
+                </div>
+              </Link>
+            );
+          })}
+        </div>
+      </ReportSection>
 
-        <ReportSection
-          title="Social presence"
-          description="Confirmed channel coverage and strategy readiness."
-          action={<Share2 className="size-5 text-accent" />}
+      {report.coverage ? (
+        <DisclosureSection
+          title="Analysis coverage"
+          description={compactCoverageSummary(report.coverage)}
+          analyticsEvent="overview_coverage_expanded"
+          analyticsSurface="business_overview"
         >
-          <div className="grid gap-3 sm:grid-cols-3">
-            <CompactMetricCard
-              label="Profile coverage score"
-              value={social?.score ?? categoryScore(audit.scores, ScoreCategory.SOCIAL) ?? "Not scored"}
-              detail="Posts and performance not analyzed"
-            />
-            <CompactMetricCard
-              label="User-confirmed"
-              value={
-                report.normalizedFacts?.profiles
-                  .userConfirmedSocialProfiles ??
-                report.business.profileSummary
-                  .userConfirmedSocialProfiles ??
-                confirmedSocial.length
-              }
-            />
-            <CompactMetricCard
-              label="Publicly detected"
-              value={
-                report.normalizedFacts?.profiles
-                  .publiclyDetectedSocialProfiles ??
-                report.business.profileSummary
-                  .publiclyDetectedSocialProfiles ??
-                0
-              }
-              detail={`${report.normalizedFacts?.profiles.pendingSocialProfiles ?? report.business.profileSummary.pendingSocialProfiles ?? 0} pending; ${report.normalizedFacts?.profiles.profileContentAnalyzed ?? report.business.profileSummary.profileContentAnalyzed ?? 0} content-analyzed`}
-            />
-          </div>
-          <p className="mt-4 text-sm leading-6 text-muted">
-            {confirmedSocial.length > 0
-              ? `Confirmed channels: ${confirmedSocial.slice(0, 4).join(", ")}.`
-              : "Confirm or add a social profile before relying on channel recommendations."}
-          </p>
-          <Link href={`/dashboard/businesses/${business.id}/social`} className={buttonVariants({ variant: "secondary", size: "sm", className: "mt-4" })}>
-            View social
-            <ArrowRight className="size-4" />
-          </Link>
-        </ReportSection>
-
-        <ReportSection
-          title="Competitor intelligence"
-          description="A compact preview of the latest evidence-based public comparison."
-          action={<Swords className="size-5 text-accent" />}
-        >
-          <div className="grid gap-3 sm:grid-cols-3">
-            <CompactMetricCard label="Active competitors" value={business.competitors.length} />
-            <CompactMetricCard
-              label="Analyzed"
-              value={competitorIntelligence?.comparison.analyzedCompetitorCount ?? 0}
-            />
-            <CompactMetricCard
-              label="Confirmed public profiles, including website"
-              value={confirmedCompetitorProfiles}
-              detail={`${report.competitors.profileCounts.confirmedSocialProfiles} confirmed social; ${report.competitors.profileCounts.pendingSocialProfiles} pending social`}
-            />
-          </div>
-          {business.competitors.length === 0 ? (
-            <p className="mt-4 text-sm leading-6 text-muted">
-              No competitors configured. Add a relevant competitor when you want a public side-by-side comparison.
-            </p>
-          ) : !hasAnalyzedCompetitors ? (
-            <p className="mt-4 text-sm leading-6 text-muted">
-              {business.competitors.length} competitor{business.competitors.length === 1 ? " is" : "s are"} saved. Full analysis has not run in this audit yet.
-            </p>
-          ) : (
-            <div className="mt-4 grid gap-3 md:grid-cols-2">
-              <div className="rounded-lg border border-border bg-background p-3">
-                <p className="text-xs font-semibold uppercase text-muted">Strongest advantage</p>
-                <p className="mt-2 text-sm font-semibold">
-                  {reportBusinessAdvantages.at(0)?.title ?? "No confirmed advantage yet"}
-                </p>
-              </div>
-              <div className="rounded-lg border border-border bg-background p-3">
-                <p className="text-xs font-semibold uppercase text-muted">Highest-priority opportunity</p>
-                <p className="mt-2 text-sm font-semibold">
-                  {competitorIntelligence?.comparison.opportunities.at(0)?.title ?? "More comparable data needed"}
-                </p>
-              </div>
-              <p className="text-xs text-muted md:col-span-2">
-                Last updated {new Date(competitorIntelligence?.generatedAt ?? audit.createdAt).toLocaleDateString()}.
+          <div className="divide-y divide-border text-sm">
+            <div className="grid gap-1 py-3 first:pt-0 sm:grid-cols-[14rem_1fr]">
+              <p className="font-semibold">Website pages checked</p>
+              <p className="leading-6 text-muted">
+                {report.coverage.crawl.explanation}
               </p>
             </div>
-          )}
-          <Link href={`/dashboard/businesses/${business.id}/competitors`} className={buttonVariants({ variant: "secondary", size: "sm", className: "mt-4" })}>
-            {hasAnalyzedCompetitors ? "View comparison" : "Manage competitors"}
-            <ArrowRight className="size-4" />
-          </Link>
-        </ReportSection>
-      </section>
+            <div className="grid gap-1 py-3 sm:grid-cols-[14rem_1fr]">
+              <p className="font-semibold">Technical website checks</p>
+              <p className="leading-6 text-muted">
+                {report.coverage.technical.explanation}
+              </p>
+            </div>
+            <div className="grid gap-1 py-3 sm:grid-cols-[14rem_1fr]">
+              <p className="font-semibold">Pages reviewed by AI</p>
+              <p className="leading-6 text-muted">
+                {report.coverage.aiContent.explanation}
+              </p>
+            </div>
+            <div className="grid gap-1 py-3 sm:grid-cols-[14rem_1fr]">
+              <p className="font-semibold">Social profiles reviewed</p>
+              <p className="leading-6 text-muted">
+                {report.coverage.socialProfiles.explanation}
+              </p>
+            </div>
+            <div className="grid gap-1 py-3 sm:grid-cols-[14rem_1fr]">
+              <p className="font-semibold">Review evidence</p>
+              <p className="leading-6 text-muted">
+                {report.coverage.reviews.explanation}
+              </p>
+            </div>
+            <div className="grid gap-1 py-3 last:pb-0 sm:grid-cols-[14rem_1fr]">
+              <p className="font-semibold">Competitor evidence</p>
+              <p className="leading-6 text-muted">
+                {report.coverage.competitors.explanation}
+              </p>
+            </div>
+          </div>
+          <details className="mt-5 border-t border-border pt-4 text-sm">
+            <summary className="cursor-pointer font-medium text-accent">
+              Technical methodology
+            </summary>
+            <dl className="mt-3 grid gap-3 text-muted sm:grid-cols-2">
+              <div>
+                <dt className="font-medium text-foreground">Scoring engine</dt>
+                <dd>{report.scoringMetadata.scoringEngineVersion}</dd>
+              </div>
+              <div>
+                <dt className="font-medium text-foreground">Report model</dt>
+                <dd>{report.scoringMetadata.reportViewModelVersion}</dd>
+              </div>
+              <div className="sm:col-span-2">
+                <dt className="font-medium text-foreground">
+                  Analyzer versions
+                </dt>
+                <dd className="break-words">
+                  {Object.entries(report.scoringMetadata.analyzerVersions)
+                    .map(([name, version]) => `${name}: ${version}`)
+                    .join(", ")}
+                </dd>
+              </div>
+            </dl>
+          </details>
+        </DisclosureSection>
+      ) : null}
 
       <Card className="p-5">
         <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex gap-3">
             <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent">
-              <MessageSquareText className="size-5" />
+              <MessageSquareText className="size-5" aria-hidden="true" />
             </span>
             <div>
-              <h3 className="font-semibold">Continue with your AI Consultant</h3>
+              <h2 className="font-semibold">
+                Continue with your AI Consultant
+              </h2>
               <p className="mt-1 text-sm leading-6 text-muted">
-                Turn this report into a focused decision, draft, or implementation plan.
+                Ask about the current audit, choose an action, or draft an
+                implementation.
               </p>
             </div>
           </div>
-          <div className="flex flex-wrap gap-2">
-            {suggestedQuestions.slice(0, 3).map((question) => (
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+            {suggestedQuestions.map((question) => (
               <Link
                 key={question}
                 href={`/dashboard/businesses/${business.id}/chat?prompt=${encodeURIComponent(question)}`}
-                className="rounded-full border border-border bg-background px-3 py-2 text-xs font-medium text-muted transition-colors hover:border-accent hover:text-foreground"
+                data-customer-event="consultant_prompt_selected"
+                data-customer-surface="consultant"
+                className="rounded-full border border-border bg-background px-3 py-2 text-sm font-medium text-muted transition-colors hover:border-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
               >
                 {question}
               </Link>
             ))}
-            <Link href={`/dashboard/businesses/${business.id}/chat`} className={buttonVariants({ variant: "primary", size: "sm" })}>
-              <MessageSquareText className="size-4" />
-              Open consultant
+            <Link
+              href={`/dashboard/businesses/${business.id}/chat`}
+              className={buttonVariants({ variant: "secondary", size: "sm" })}
+            >
+              <MessageSquareText className="size-4" aria-hidden="true" />
+              Ask Consultant
             </Link>
           </div>
         </div>

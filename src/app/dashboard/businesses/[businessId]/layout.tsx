@@ -1,3 +1,8 @@
+import {
+  BusinessProfileStatus,
+  BusinessStatus,
+  ProfilePlatform,
+} from "@prisma/client";
 import type { ReactNode } from "react";
 import { notFound } from "next/navigation";
 
@@ -27,12 +32,29 @@ export default async function BusinessLayout({
       initialInput: true,
       status: true,
       updatedAt: true,
+      profiles: {
+        where: {
+          platform: ProfilePlatform.WEBSITE,
+          status: BusinessProfileStatus.CONFIRMED,
+        },
+        orderBy: { updatedAt: "desc" },
+        take: 1,
+        select: { url: true },
+      },
     },
   });
 
   if (!business) {
     notFound();
   }
+
+  const websiteUrl = business.profiles.at(0)?.url ?? null;
+  const websiteLabel = websiteUrl ? websiteHost(websiteUrl) : null;
+  const statusLabels: Record<BusinessStatus, string> = {
+    DRAFT: "Setup in progress",
+    ACTIVE: "Active",
+    ARCHIVED: "Archived",
+  };
 
   return (
     <div className="mx-auto max-w-7xl space-y-5">
@@ -43,11 +65,11 @@ export default async function BusinessLayout({
             {business.name}
           </h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-muted">
-            {business.initialInput}
+            {websiteLabel ?? business.initialInput}
           </p>
         </div>
-        <div className="w-fit rounded-lg border border-border bg-card px-3 py-2 text-sm font-medium text-muted">
-          {business.status.toLowerCase()}
+        <div className="w-fit rounded-full border border-border bg-card px-3 py-1.5 text-sm font-medium text-muted">
+          {statusLabels[business.status]}
         </div>
       </div>
 
@@ -55,4 +77,12 @@ export default async function BusinessLayout({
       {children}
     </div>
   );
+}
+
+function websiteHost(value: string) {
+  try {
+    return new URL(value).hostname.replace(/^www\./i, "");
+  } catch {
+    return value;
+  }
 }

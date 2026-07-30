@@ -22,6 +22,7 @@ import { DisclosureSection } from "@/components/dashboard/disclosure-section";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { FloatingScrollControls } from "@/components/dashboard/floating-scroll-controls";
 import { RecommendationLearnWhy } from "@/components/dashboard/recommendation-learn-why";
+import { RecommendationPrimaryAction } from "@/components/dashboard/recommendation-primary-action";
 import { RecommendationStatusControls } from "@/components/dashboard/recommendation-status-controls";
 import { ImplementationHelpDrawer } from "@/components/implementation/implementation-help-drawer";
 import {
@@ -50,7 +51,6 @@ import {
   displayImpact,
   progressForRecommendations,
   recommendationCategoryLabels,
-  recommendationPriorityStyles,
   recommendationStatusLabels,
   recommendationStatusStyles,
   sortRecommendations,
@@ -124,21 +124,19 @@ function filterHref({
 
 function TaskBadges({ recommendation }: { recommendation: RecommendationView }) {
   return (
-    <div className="flex flex-wrap gap-2 text-xs font-semibold">
-      <span className={cn("rounded-full border px-2.5 py-1", recommendationPriorityStyles[recommendation.priority])}>
-        {recommendation.priority.toLowerCase()} priority
-      </span>
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs font-semibold">
       <span className="rounded-full border border-border bg-card px-2.5 py-1">
         {recommendationCategoryLabels[recommendation.category]}
       </span>
-      <span className="rounded-full border border-border bg-card px-2.5 py-1">
-        Impact: {displayImpact(recommendation)}
-      </span>
-      <span className="rounded-full border border-border bg-card px-2.5 py-1">
-        Effort: {displayEffort(recommendation)}
-      </span>
       <span className={cn("rounded-full border px-2.5 py-1", recommendationStatusStyles[recommendation.status])}>
         {recommendationStatusLabels[recommendation.status]}
+      </span>
+      <span className="font-medium text-muted">
+        {recommendation.priority.toLowerCase()} priority
+        {" \u00b7 "}
+        {displayImpact(recommendation)} impact
+        {" \u00b7 "}
+        {displayEffort(recommendation)} effort
       </span>
     </div>
   );
@@ -150,12 +148,14 @@ function TaskRow({
   recommendation,
   evidence,
   sourceUrl,
+  embedded = false,
 }: {
   businessId: string;
   businessName: string;
   recommendation: RecommendationView;
   evidence?: string;
   sourceUrl?: string | null;
+  embedded?: boolean;
 }) {
   const prompt = implementationPrompt(recommendation);
   const savedDraftCount = recommendation.implementationDrafts.filter(
@@ -164,41 +164,67 @@ function TaskRow({
       draft.status === ImplementationDraftStatus.APPLIED,
   ).length;
   return (
-    <div className="rounded-lg border border-border bg-background p-4">
+    <article
+      className={cn(
+        embedded
+          ? "py-5 first:pt-0 last:pb-0"
+          : "rounded-lg border border-border bg-card p-4",
+      )}
+    >
       <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-start">
         <div className="min-w-0">
           <TaskBadges recommendation={recommendation} />
-          <h3 className="mt-3 font-semibold">{recommendation.title}</h3>
+          <h3 className="mt-3 text-base font-semibold">{recommendation.title}</h3>
+          <p className="mt-1 text-sm leading-6 text-muted">
+            {recommendation.description}
+          </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-          <ImplementationHelpDrawer
-            businessId={businessId}
-            businessName={businessName}
-            source={{ kind: "recommendation", recommendationId: recommendation.id }}
-            recommendationId={recommendation.id}
-            recommendationTitle={recommendation.title}
-            evidence={evidence}
-            initialSavedCount={recommendation.implementationDrafts.length}
-            label={/canonical|robots|sitemap|alt text/i.test(recommendation.title) ? "Show Implementation Steps" : "Generate Fix"}
-          />
-          <RecommendationStatusControls
-            businessId={businessId}
-            recommendationId={recommendation.id}
-            status={recommendation.status}
-            compact
-          />
+        <div className="lg:justify-self-end">
+          {recommendation.status === RecommendationStatus.IN_PROGRESS ? (
+            <ImplementationHelpDrawer
+              businessId={businessId}
+              businessName={businessName}
+              source={{ kind: "recommendation", recommendationId: recommendation.id }}
+              recommendationId={recommendation.id}
+              recommendationTitle={recommendation.title}
+              evidence={evidence}
+              initialSavedCount={recommendation.implementationDrafts.length}
+              label="Continue action"
+              preserveTriggerLabel
+              triggerVariant="primary"
+              triggerClassName="w-full sm:w-auto"
+              analyticsEvent="task_continued"
+              analyticsSurface="action_plan"
+            />
+          ) : (
+            <RecommendationPrimaryAction
+              businessId={businessId}
+              recommendationId={recommendation.id}
+              recommendationTitle={recommendation.title}
+              status={recommendation.status}
+              surface="action_plan"
+              className="w-full sm:w-auto"
+            />
+          )}
         </div>
       </div>
-      <DisclosureSection title="Details" description={recommendation.description} compact className="mt-4 border-dashed">
-        <div className="space-y-3">
+      <DisclosureSection
+        title="Details and options"
+        description="Evidence, implementation help, and status controls."
+        compact
+        className="mt-4 border-dashed shadow-none"
+      >
+        <div className="space-y-4">
           {evidence ? (
             <div>
-              <p className="text-xs font-semibold uppercase text-muted">Related audit evidence</p>
+              <p className="text-sm font-semibold">Related audit evidence</p>
               <p className="mt-1 text-sm leading-6 text-muted">{evidence}</p>
             </div>
           ) : null}
           {recommendation.dueDate ? (
-            <p className="text-sm text-muted">Due {recommendation.dueDate.toLocaleDateString()}</p>
+            <p className="text-sm text-muted">
+              Due {recommendation.dueDate.toLocaleDateString()}
+            </p>
           ) : null}
           {sourceUrl ? (
             <Link
@@ -209,18 +235,44 @@ function TaskRow({
             </Link>
           ) : null}
           <RecommendationLearnWhy category={recommendation.category} />
-          <Link href={`/dashboard/businesses/${businessId}/chat?prompt=${encodeURIComponent(prompt)}`} className={buttonVariants({ variant: "secondary", size: "sm" })}>
-            <Sparkles className="size-4" />
-            Ask AI to help
-          </Link>
+          <div className="flex flex-wrap items-center gap-2">
+            {recommendation.status !== RecommendationStatus.IN_PROGRESS ? (
+              <ImplementationHelpDrawer
+                businessId={businessId}
+                businessName={businessName}
+                source={{ kind: "recommendation", recommendationId: recommendation.id }}
+                recommendationId={recommendation.id}
+                recommendationTitle={recommendation.title}
+                evidence={evidence}
+                initialSavedCount={recommendation.implementationDrafts.length}
+                label={/canonical|robots|sitemap|alt text/i.test(recommendation.title) ? "Show implementation steps" : "Generate implementation"}
+                triggerVariant="secondary"
+              />
+            ) : null}
+            <Link
+              href={`/dashboard/businesses/${businessId}/chat?prompt=${encodeURIComponent(prompt)}`}
+              className={buttonVariants({ variant: "ghost", size: "sm" })}
+            >
+              <Sparkles className="size-4" aria-hidden="true" />
+              Ask Consultant
+            </Link>
+            <RecommendationStatusControls
+              businessId={businessId}
+              recommendationId={recommendation.id}
+              status={recommendation.status}
+              compact
+              showPrimaryAction={false}
+            />
+          </div>
           {savedDraftCount > 0 ? (
             <p className="text-xs font-medium text-muted">
-              {savedDraftCount} saved implementation draft{savedDraftCount === 1 ? "" : "s"}
+              {savedDraftCount} saved implementation draft
+              {savedDraftCount === 1 ? "" : "s"}
             </p>
           ) : null}
         </div>
       </DisclosureSection>
-    </div>
+    </article>
   );
 }
 
@@ -420,7 +472,7 @@ export default async function BusinessActionPlanPage({
         recommendation.status === RecommendationStatus.TODO ||
         recommendation.status === RecommendationStatus.IN_PROGRESS,
     )
-    .slice(0, 5);
+    .slice(0, 3);
   const filteredRecommendations = recommendations.filter(
     (recommendation) =>
       recommendation.status === selectedStatus &&
@@ -446,53 +498,143 @@ export default async function BusinessActionPlanPage({
 
       <ContextualHelpCard {...contextualHelp.actionPlan} />
 
-      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        <CompactMetricCard label="Overall progress" value={`${progress.percent}%`} detail={`${progress.completed} of ${progress.total} complete`} />
-        <CompactMetricCard label="Active tasks" value={activeCount} />
-        <CompactMetricCard label="In progress" value={counts.IN_PROGRESS} />
-        <CompactMetricCard label="Completed" value={counts.COMPLETED} />
-        <CompactMetricCard label="Score change" value={comparison.previousAuditId ? formatDelta(comparison.overallScoreChange) : "First audit"} />
-      </section>
-
-      <div className="h-2 overflow-hidden rounded-full bg-foreground/10" aria-label={`${progress.percent}% of recommendations complete`}>
-        <div className="h-full rounded-full bg-accent" style={{ width: `${progress.percent}%` }} />
-      </div>
-
-      {comparison.previousAuditId ? (
-        <SummaryStrip>
-          <strong>Overall {formatDelta(comparison.overallScoreChange)}</strong>
-          {comparison.improvedCategories.slice(0, 3).map((item) => (
-            <span key={item.category} className="text-teal-700 dark:text-teal-200">
-              {categoryLabel(item.category)} {formatDelta(item.delta)}
-            </span>
-          ))}
-          {comparison.declinedCategories.slice(0, 2).map((item) => (
-            <span key={item.category} className="text-rose-700 dark:text-rose-200">
-              {categoryLabel(item.category)} {formatDelta(item.delta)}
-            </span>
-          ))}
-          <Link href={`/dashboard/businesses/${business.id}/history`} className="ml-auto font-medium text-accent hover:underline">Full history</Link>
-        </SummaryStrip>
-      ) : null}
-
-      <ReportSection title="Focus This Week" description="The highest-priority open work based on recommendation order, impact, effort, and your saved goals.">
-        <div className="space-y-3">
-          {focusItems.map((recommendation) => (
-            <TaskRow
-              key={recommendation.id}
-              businessId={business.id}
-              businessName={business.name}
-              recommendation={recommendation}
-              evidence={
-                storedEvidenceSummary(recommendation.evidence) ??
-                audit.findings.find(
-                  (finding) => finding.category === recommendation.category,
-                )?.description
-              }
-              sourceUrl={recommendation.sourceUrl}
+      <ReportSection
+        title="Next up"
+        description="Start with the first open action. The next two stay visible without competing for attention."
+      >
+        {focusItems.length > 0 ? (
+          <div className="divide-y divide-border">
+            {focusItems.map((recommendation) => (
+              <TaskRow
+                key={recommendation.id}
+                businessId={business.id}
+                businessName={business.name}
+                recommendation={recommendation}
+                evidence={
+                  storedEvidenceSummary(recommendation.evidence) ??
+                  audit.findings.find(
+                    (finding) => finding.category === recommendation.category,
+                  )?.description
+                }
+                sourceUrl={recommendation.sourceUrl}
+                embedded
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="flex items-start gap-3">
+            <ListChecks
+              className="mt-0.5 size-5 shrink-0 text-accent"
+              aria-hidden="true"
             />
-          ))}
-        </div>
+            <div>
+              <p className="font-semibold">All current actions are resolved</p>
+              <p className="mt-1 text-sm leading-6 text-muted">
+                Review completed work or run another audit when the business is
+                ready for a fresh set of priorities.
+              </p>
+            </div>
+          </div>
+        )}
+      </ReportSection>
+
+      <ReportSection
+        title="Your progress"
+        description={
+          progress.completed > 0 || counts.IN_PROGRESS > 0
+            ? `${progress.completed} of ${progress.total} actions completed.`
+            : "Progress becomes useful after you start the first action."
+        }
+      >
+        {progress.completed > 0 || counts.IN_PROGRESS > 0 ? (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-end justify-between gap-4">
+              <div>
+                <p className="text-3xl font-semibold">{progress.percent}%</p>
+                <p className="mt-1 text-sm text-muted">
+                  {counts.IN_PROGRESS} in progress
+                  {" \u00b7 "}
+                  {activeCount} open
+                </p>
+              </div>
+              <Link
+                href={`/dashboard/businesses/${business.id}/history`}
+                className="text-sm font-medium text-accent hover:underline"
+              >
+                View audit history
+              </Link>
+            </div>
+            <div
+              className="h-2 overflow-hidden rounded-full bg-foreground/10"
+              role="progressbar"
+              aria-label="Action plan progress"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={progress.percent}
+            >
+              <div
+                className="h-full rounded-full bg-accent"
+                style={{ width: `${progress.percent}%` }}
+              />
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-start gap-3">
+            <ListChecks
+              className="mt-0.5 size-5 shrink-0 text-accent"
+              aria-hidden="true"
+            />
+            <div>
+              <p className="font-semibold">Start your first action</p>
+              <p className="mt-1 text-sm leading-6 text-muted">
+                The completion rate and active work will appear here once you
+                begin.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {comparison.previousAuditId ? (
+          comparison.methodologyChanged ? (
+            <div className="mt-5 border-t border-border pt-4">
+              <p className="text-sm font-semibold">Comparison limited</p>
+              <p className="mt-1 text-sm leading-6 text-muted">
+                The scoring method changed, so the score difference is not a
+                reliable measure of business progress.
+              </p>
+              <details className="mt-2 text-sm">
+                <summary className="cursor-pointer font-medium text-accent">
+                  Technical comparison details
+                </summary>
+                <p className="mt-2 leading-6 text-muted">
+                  {comparison.comparisonNote}
+                </p>
+              </details>
+            </div>
+          ) : (
+            <SummaryStrip className="mt-5 border-0 bg-foreground/[0.035]">
+              <strong>
+                Latest audit {formatDelta(comparison.overallScoreChange)}
+              </strong>
+              {comparison.improvedCategories.slice(0, 2).map((item) => (
+                <span
+                  key={item.category}
+                  className="text-teal-700 dark:text-teal-200"
+                >
+                  {categoryLabel(item.category)} {formatDelta(item.delta)}
+                </span>
+              ))}
+              {comparison.declinedCategories.slice(0, 1).map((item) => (
+                <span
+                  key={item.category}
+                  className="text-rose-700 dark:text-rose-200"
+                >
+                  {categoryLabel(item.category)} {formatDelta(item.delta)}
+                </span>
+              ))}
+            </SummaryStrip>
+          )
+        ) : null}
       </ReportSection>
 
       <ReportSection title="30-Day Roadmap" description="Open one week at a time to keep the plan usable on desktop and mobile.">
@@ -525,7 +667,13 @@ export default async function BusinessActionPlanPage({
               <div key={item.id} className="flex flex-col gap-2 rounded-lg border border-border bg-background p-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="text-sm font-medium">{item.title}</p>
-                  <p className="mt-1 text-xs text-muted">{recommendationCategoryLabels[item.category]} · {displayEffort(item)} effort · {displayImpact(item)} impact</p>
+                  <p className="mt-1 text-xs text-muted">
+                    {recommendationCategoryLabels[item.category]}
+                    {" \u00b7 "}
+                    {displayEffort(item)} effort
+                    {" \u00b7 "}
+                    {displayImpact(item)} impact
+                  </p>
                 </div>
                 <span className={cn("w-fit rounded-full border px-2.5 py-1 text-xs font-semibold", recommendationStatusStyles[item.status])}>
                   {recommendationStatusLabels[item.status]}
@@ -536,19 +684,20 @@ export default async function BusinessActionPlanPage({
         </div>
       </ReportSection>
 
-      <section className="space-y-4">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <h2 className="text-lg font-semibold">Task backlog</h2>
-            <p className="mt-1 text-sm text-muted">Use status tabs, category, and search to narrow the current audit recommendations.</p>
-          </div>
+      <DisclosureSection
+        title="All actions"
+        description={`${recommendations.length} recommendations available. Open the backlog to search or filter them.`}
+        defaultOpen={Boolean(query.q || query.category || query.status)}
+      >
+        <div className="space-y-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-end">
           <form className="flex gap-2">
             <input type="hidden" name="status" value={selectedStatus} />
             {selectedCategory ? <input type="hidden" name="category" value={selectedCategory} /> : null}
             <input type="hidden" name="week" value={selectedWeek} />
             <div className="relative">
               <Search className="pointer-events-none absolute left-3 top-3 size-4 text-muted" />
-              <Input name="q" defaultValue={query.q} placeholder="Search tasks" className="pl-9" aria-label="Search tasks" />
+              <Input name="q" defaultValue={query.q} placeholder="Search actions" className="pl-9" aria-label="Search actions" />
             </div>
             <button type="submit" className={buttonVariants({ variant: "secondary" })}>Search</button>
           </form>
@@ -593,11 +742,12 @@ export default async function BusinessActionPlanPage({
             />
           )) : (
             <Card className="p-5 text-sm text-muted">
-              No {recommendationStatusLabels[selectedStatus].toLowerCase()} tasks match the current filters.
+              No {recommendationStatusLabels[selectedStatus].toLowerCase()} actions match the current filters.
             </Card>
           )}
         </div>
-      </section>
+        </div>
+      </DisclosureSection>
 
       <FloatingScrollControls />
     </div>

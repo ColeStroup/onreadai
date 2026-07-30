@@ -1,4 +1,7 @@
-import { AuditStatus } from "@prisma/client";
+import {
+  AuditStatus,
+  RecommendationStatus,
+} from "@prisma/client";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 
@@ -8,24 +11,22 @@ import { encode } from "next-auth/jwt";
 
 import { prisma } from "../src/lib/prisma";
 
-const capturePhase = process.env.OVERVIEW_ACTION_CAPTURE ?? "after";
 const artifactRoot = path.join(
   process.cwd(),
   ".artifacts",
-  "overview-action-rail",
-  capturePhase,
+  "customer-experience",
 );
 
+let businessId = "";
+let emptyBusinessId = "";
 let overviewPath = "";
 let sessionToken = "";
-const generatedDraftIds: string[] = [];
-let generationCleanup:
-  | {
-      recommendationId: string;
-      existingIds: string[];
-      generatedAfter: Date;
-    }
-  | undefined;
+let auditId = "";
+let originalRecommendations: Array<{
+  id: string;
+  status: RecommendationStatus;
+  completedAt: Date | null;
+}> = [];
 
 test.beforeAll(async () => {
   const business = await prisma.business.findFirst({
@@ -41,6 +42,17 @@ test.beforeAll(async () => {
     select: {
       id: true,
       owner: { select: { id: true, name: true, email: true } },
+      audits: {
+        where: { status: AuditStatus.COMPLETED },
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: {
+          id: true,
+          recommendations: {
+            select: { id: true, status: true, completedAt: true },
+          },
+        },
+      },
     },
   });
 
@@ -48,9 +60,17 @@ test.beforeAll(async () => {
     throw new Error("A completed Schooners audit fixture is required.");
   }
 
+  const latestAudit = business.audits.at(0);
+  if (!latestAudit?.recommendations.length) {
+    throw new Error("The Schooners fixture needs audit recommendations.");
+  }
+
   const secret = process.env.NEXTAUTH_SECRET;
   if (!secret) throw new Error("NEXTAUTH_SECRET is required for browser tests.");
 
+  businessId = business.id;
+  auditId = latestAudit.id;
+  originalRecommendations = latestAudit.recommendations;
   sessionToken = await encode({
     secret,
     token: {
@@ -61,28 +81,47 @@ test.beforeAll(async () => {
     },
   });
   overviewPath = `/dashboard/businesses/${business.id}/overview`;
+
+  await prisma.recommendation.updateMany({
+    where: { auditId },
+    data: { status: RecommendationStatus.TODO, completedAt: null },
+  });
+
+  const emptyBusiness = await prisma.business.create({
+    data: {
+      ownerId: business.owner.id,
+      name: `Customer Experience Empty ${Date.now()}`,
+      initialInput: "Customer Experience Empty Fixture",
+    },
+    select: { id: true },
+  });
+  emptyBusinessId = emptyBusiness.id;
 });
 
 test.afterAll(async () => {
-  if (generatedDraftIds.length > 0) {
-    await prisma.implementationDraft.deleteMany({
-      where: { id: { in: generatedDraftIds } },
-    });
-  }
-  if (generationCleanup) {
-    await prisma.implementationDraft.deleteMany({
-      where: {
-        recommendationId: generationCleanup.recommendationId,
-        createdAt: { gte: generationCleanup.generatedAfter },
-        id: { notIn: generationCleanup.existingIds },
-      },
-    });
+  await prisma.$transaction(
+    originalRecommendations.map((recommendation) =>
+      prisma.recommendation.update({
+        where: { id: recommendation.id },
+        data: {
+          status: recommendation.status,
+          completedAt: recommendation.completedAt,
+        },
+      }),
+    ),
+  );
+  if (emptyBusinessId) {
+    await prisma.business.deleteMany({ where: { id: emptyBusinessId } });
   }
   await prisma.$disconnect();
 });
 
 test.beforeEach(async ({ context, baseURL, page }) => {
   if (!baseURL) throw new Error("Playwright baseURL is unavailable.");
+  await prisma.recommendation.updateMany({
+    where: { auditId },
+    data: { status: RecommendationStatus.TODO, completedAt: null },
+  });
   await context.addCookies([
     {
       name: "next-auth.session-token",
@@ -95,139 +134,281 @@ test.beforeEach(async ({ context, baseURL, page }) => {
   await page.goto(overviewPath, { waitUntil: "domcontentloaded" });
 });
 
-test("Next Three Moves controls form one stable responsive action rail", async ({
+test("overview makes the first action clear at every supported viewport", async ({
   page,
 }, testInfo) => {
-  const heading = page.getByRole("heading", { name: "Your next three moves" });
-  await expect(heading).toBeVisible();
-  const section = heading.locator("xpath=../../..");
+  const firstAction = page.locator(
+    'section[aria-labelledby="recommended-first-action"]',
+  );
+  await expect(
+    page.getByRole("heading", { name: "Your growth priorities" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/Current health/).first(),
+  ).toBeVisible();
+  await expect(firstAction).toBeVisible();
+  await expect(
+    firstAction.getByRole("button", { name: "Start action" }),
+  ).toHaveCount(1);
+  await expect(
+    firstAction.getByRole("button", { name: "See evidence" }),
+  ).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByText("Start with your first recommended action")).toBeVisible();
+  await expect(page.getByText("0%", { exact: true })).toHaveCount(0);
+
+  const followUpHeading = page.getByRole("heading", {
+    name: "Next two actions",
+  });
+  await expect(followUpHeading).toBeVisible();
+  const followUpSection = followUpHeading.locator("xpath=../../..");
+  await expect(followUpSection.locator("article")).toHaveCount(2);
+  await expect(
+    followUpSection.getByRole("button", { name: "Start action" }),
+  ).toHaveCount(2);
+  await expect(page.getByText("Generate Fix", { exact: true })).toHaveCount(0);
+
+  const coverageButton = page.getByRole("button", {
+    name: /Analysis coverage/,
+  });
+  await expect(coverageButton).toHaveAttribute("aria-expanded", "false");
+  const firstActionBox = await firstAction.boundingBox();
+  const coverageBox = await coverageButton.boundingBox();
+  expect(firstActionBox).not.toBeNull();
+  expect(coverageBox).not.toBeNull();
+  expect(firstActionBox!.y).toBeLessThan(coverageBox!.y);
+
+  const findingsHeading = page.getByRole("heading", { name: "Key findings" });
+  const findingsSection = findingsHeading.locator("xpath=../../..");
+  expect(await findingsSection.locator("article").count()).toBeLessThanOrEqual(3);
+  await expect(
+    findingsSection.getByRole("link", { name: "View all findings" }),
+  ).toHaveAttribute("href", new RegExp(`/businesses/${businessId}/audit$`));
+  await expect(
+    page.getByRole("heading", { name: "Business health by area" }),
+  ).toHaveCount(1);
+
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth - window.innerWidth,
+    ),
+  ).toBeLessThanOrEqual(1);
 
   const artifactDirectory = path.join(artifactRoot, testInfo.project.name);
   await mkdir(artifactDirectory, { recursive: true });
-  await section.screenshot({
-    path: path.join(artifactDirectory, "next-three-moves.png"),
+  await page.screenshot({
+    path: path.join(artifactDirectory, "overview.png"),
+    fullPage: true,
     animations: "disabled",
   });
 
-  if (capturePhase === "before") return;
-
-  const rails = section.locator('[data-task-action-rail="true"]');
-  await expect(rails).toHaveCount(3);
-  const viewport = page.viewportSize();
-  if (!viewport) throw new Error("Playwright viewport is unavailable.");
-  const usesDesktopRail = viewport.width >= 1024;
-  expect(
-    await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth),
-  ).toBeLessThanOrEqual(1);
-
-  if (["mobile-375", "desktop-1366"].includes(testInfo.project.name)) {
+  if (["mobile-375", "tablet-portrait", "desktop-1366"].includes(testInfo.project.name)) {
     const accessibility = await new AxeBuilder({ page })
       .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
       .analyze();
     expect(accessibility.violations).toEqual([]);
   }
 
-  const railBoxes: Array<{ x: number; width: number }> = [];
-  for (let index = 0; index < 3; index += 1) {
-    const rail = rails.nth(index);
-    const controls = rail.locator("a, button, select");
-    await expect(controls).toHaveCount(4);
+  await firstAction.getByRole("button", { name: "Start action" }).click();
+  await expect(
+    firstAction.getByRole("link", { name: "Continue action" }),
+  ).toBeVisible();
+  await expect(page.getByText("In progress:", { exact: false })).toBeVisible();
+});
 
-    const boxes = await controls.evaluateAll((elements) =>
-      elements.map((element) => {
-        const box = element.getBoundingClientRect();
-        return { x: box.x, width: box.width, height: box.height };
-      }),
-    );
-    const widths = boxes.map((box) => Math.round(box.width));
-    const heights = boxes.map((box) => Math.round(box.height));
-    expect(new Set(widths).size).toBe(1);
-    expect(new Set(heights).size).toBe(1);
-    expect(heights[0]).toBeGreaterThanOrEqual(36);
+test("overview keeps evidence, coverage, and full findings accessible", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "desktop-1366",
+    "Detailed interaction flow runs once on the reference desktop viewport.",
+  );
 
-    for (let controlIndex = 0; controlIndex < 4; controlIndex += 1) {
-      await controls.nth(controlIndex).focus();
-      await expect(controls.nth(controlIndex)).toBeFocused();
+  const firstAction = page.locator(
+    'section[aria-labelledby="recommended-first-action"]',
+  );
+  const evidenceButton = firstAction.getByRole("button", {
+    name: "See evidence",
+  });
+  await expect(firstAction.getByText("Confidence:", { exact: true })).toHaveCount(0);
+  await evidenceButton.click();
+  await expect(evidenceButton).toHaveAttribute("aria-expanded", "true");
+  await expect(firstAction.getByText("Confidence:", { exact: true })).toBeVisible();
+  await evidenceButton.click();
+  await expect(evidenceButton).toHaveAttribute("aria-expanded", "false");
+
+  const coverageButton = page.getByRole("button", {
+    name: /Analysis coverage/,
+  });
+  await coverageButton.click();
+  await expect(coverageButton).toHaveAttribute("aria-expanded", "true");
+  for (const label of [
+    "Website pages checked",
+    "Technical website checks",
+    "Pages reviewed by AI",
+    "Social profiles reviewed",
+    "Review evidence",
+    "Competitor evidence",
+  ]) {
+    await expect(page.getByText(label, { exact: true })).toBeVisible();
+  }
+  await page.getByText("Technical methodology", { exact: true }).click();
+  await expect(page.getByText("Scoring engine", { exact: true })).toBeVisible();
+
+  await page.getByRole("link", { name: "View all findings" }).click();
+  await expect(page).toHaveURL(new RegExp(`/businesses/${businessId}/audit$`));
+  await expect(
+    page.getByRole("heading", { name: "Findings and evidence" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Back to overview" }),
+  ).toHaveAttribute("href", overviewPath);
+});
+
+test("changed customer routes remain readable and accessible", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "desktop-1366",
+    "Cross-route accessibility and visual review run once.",
+  );
+  test.setTimeout(300_000);
+
+  const routes = [
+    ["guided-setup", `/dashboard/businesses/${businessId}/setup?step=context`],
+    ["audit-findings", `/dashboard/businesses/${businessId}/audit`],
+    ["action-plan", `/dashboard/businesses/${businessId}/action-plan`],
+    ["consultant", `/dashboard/businesses/${businessId}/chat`],
+    ["billing", "/dashboard/billing"],
+    ["settings", "/dashboard/settings"],
+    ["website", `/dashboard/businesses/${businessId}/website`],
+    ["seo", `/dashboard/businesses/${businessId}/seo`],
+    ["social", `/dashboard/businesses/${businessId}/social`],
+    ["reviews", `/dashboard/businesses/${businessId}/reviews`],
+    ["competitors", `/dashboard/businesses/${businessId}/competitors`],
+    ["history", `/dashboard/businesses/${businessId}/history`],
+    ["dashboard", "/dashboard"],
+    ["businesses", "/dashboard/businesses"],
+    ["help", "/dashboard/help"],
+  ] as const;
+
+  const artifactDirectory = path.join(artifactRoot, "desktop-1366");
+  await mkdir(artifactDirectory, { recursive: true });
+
+  for (const [name, route] of routes) {
+    await page.goto(route, { waitUntil: "domcontentloaded" });
+    await expect(page.locator("main")).toBeVisible();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth - window.innerWidth,
+      ),
+    ).toBeLessThanOrEqual(1);
+    const accessibility = await new AxeBuilder({ page })
+      .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+      .analyze();
+    expect(accessibility.violations, `${name} accessibility`).toEqual([]);
+
+    if (name === "audit-findings") {
+      const firstStrength = page
+        .locator("article")
+        .filter({ hasText: "Verified strength" })
+        .first();
+      await expect(firstStrength).toBeVisible();
+      await expect(
+        firstStrength.getByRole("button", { name: "Start action" }),
+      ).toHaveCount(0);
     }
 
-    const railBox = await rail.boundingBox();
-    if (!railBox) throw new Error("Task action rail has no layout box.");
-    railBoxes.push({ x: railBox.x, width: railBox.width });
+    if (name === "action-plan") {
+      await expect(
+        page.getByRole("button", { name: /All actions/ }),
+      ).toHaveAttribute("aria-expanded", "false");
+    }
 
-    if (usesDesktopRail) {
-      expect(widths[0]).toBe(160);
-      expect(boxes.every((box) => Math.abs(box.x - boxes[0].x) < 1)).toBe(true);
+    if (
+      [
+        "guided-setup",
+        "audit-findings",
+        "action-plan",
+        "consultant",
+        "billing",
+      ].includes(name)
+    ) {
+      await page.screenshot({
+        path: path.join(artifactDirectory, `${name}.png`),
+        fullPage: true,
+        animations: "disabled",
+      });
     }
   }
 
-  if (usesDesktopRail) {
-    expect(railBoxes.every((box) => Math.abs(box.x - railBoxes[0].x) < 1)).toBe(
-      true,
-    );
-    expect(railBoxes.every((box) => Math.round(box.width) === 160)).toBe(true);
-  }
+  await page.goto(
+    `/dashboard/businesses/${emptyBusinessId}/competitors`,
+    { waitUntil: "domcontentloaded" },
+  );
+  await expect(
+    page.getByText("Track competitors that matter to your business."),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Side-by-Side Comparison" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: "Evidence-Based Opportunities" }),
+  ).toHaveCount(0);
+  await page.screenshot({
+    path: path.join(artifactDirectory, "empty-competitors.png"),
+    fullPage: true,
+    animations: "disabled",
+  });
 
-  if (testInfo.project.name === "desktop-1366") {
-    const firstRail = rails.first();
-    const taskLink = firstRail.getByRole("link", { name: "View Task" });
-    await expect(taskLink).toHaveAttribute("href", /\/action-plan\?q=/);
-    await expect(
-      firstRail.getByRole("button", { name: /Generate Fix|View Draft|Show Implementation Steps/ }),
-    ).toBeEnabled();
+  await page.goto(
+    `/dashboard/businesses/${businessId}/reviews?error=invalid`,
+    { waitUntil: "domcontentloaded" },
+  );
+  await expect(
+    page.getByText("Enter a valid Google Maps URL or Place ID."),
+  ).toBeVisible();
+  await page.screenshot({
+    path: path.join(artifactDirectory, "error-state.png"),
+    fullPage: true,
+    animations: "disabled",
+  });
+});
 
-    const statusSelect = firstRail.getByRole("combobox", {
-      name: "Change task status",
-    });
-    const originalStatus = await statusSelect.inputValue();
-    const primaryAction = firstRail.getByRole("button", {
-      name: /Start task|Mark complete|Move to To Do/,
-    });
-    await primaryAction.click();
-    await expect(statusSelect).not.toHaveValue(originalStatus);
-    const changedControlWidths = await firstRail
-      .locator("a, button, select")
-      .evaluateAll((elements) =>
-        elements.map((element) =>
-          Math.round(element.getBoundingClientRect().width),
-        ),
-      );
-    expect(changedControlWidths).toEqual([160, 160, 160, 160]);
-    await statusSelect.selectOption(originalStatus);
-    await expect(statusSelect).toHaveValue(originalStatus);
+test("setup actions expose immediate pending feedback", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "desktop-1366",
+    "Pending-state capture runs once.",
+  );
 
-    const recommendationId = await firstRail.getAttribute(
-      "data-recommendation-id",
-    );
-    if (!recommendationId) throw new Error("Recommendation ID is unavailable.");
-    const existingDrafts = await prisma.implementationDraft.findMany({
-      where: { recommendationId },
-      select: { id: true },
-    });
-    generationCleanup = {
-      recommendationId,
-      existingIds: existingDrafts.map((draft) => draft.id),
-      generatedAfter: new Date(),
-    };
-    await firstRail
-      .getByRole("button", {
-        name: /Generate Fix|Show Implementation Steps/,
-      })
-      .click();
-    const implementationDialog = page.getByRole("dialog");
-    await expect(implementationDialog).toBeVisible();
-    await expect(implementationDialog.getByText("Template fallback")).toBeVisible();
-    const generatedDrafts = await prisma.implementationDraft.findMany({
-      where: {
-        recommendationId,
-        createdAt: { gte: generationCleanup.generatedAfter },
-      },
-      select: { id: true },
-    });
-    expect(generatedDrafts).toHaveLength(1);
-    generatedDraftIds.push(...generatedDrafts.map((draft) => draft.id));
-    await implementationDialog
-      .getByRole("button", { name: "Close Implementation Help" })
-      .click();
-    await expect(implementationDialog).toBeHidden();
-  }
+  await page.goto(
+    `/dashboard/businesses/${businessId}/setup?step=context`,
+    { waitUntil: "domcontentloaded" },
+  );
+  let releaseRequest: (() => void) | undefined;
+  const requestGate = new Promise<void>((resolve) => {
+    releaseRequest = resolve;
+  });
+  await page.route("**/setup?step=context", async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.continue();
+      return;
+    }
+    await requestGate;
+    await route.abort();
+  });
+
+  const finishLater = page.getByRole("button", { name: "Finish later" });
+  const click = finishLater.click().catch(() => undefined);
+  await expect(page.getByRole("button", { name: "Saving..." })).toBeVisible();
+  const artifactDirectory = path.join(artifactRoot, "desktop-1366");
+  await mkdir(artifactDirectory, { recursive: true });
+  await page.screenshot({
+    path: path.join(artifactDirectory, "loading-state.png"),
+    fullPage: true,
+    animations: "disabled",
+  });
+  releaseRequest?.();
+  await click;
 });

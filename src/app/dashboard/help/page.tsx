@@ -1,30 +1,21 @@
 import { BookOpen, LifeBuoy } from "lucide-react";
 
 import { HelpFaqSearch } from "@/components/dashboard/help-faq-search";
+import { PageIntro } from "@/components/dashboard/report-ui";
 import {
   Card,
   CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
 
 export default function DashboardHelpPage() {
   return (
     <div className="mx-auto max-w-5xl space-y-6">
-      <Card>
-        <CardHeader>
-          <div className="mb-3 flex size-11 items-center justify-center rounded-lg bg-accent/10 text-accent">
-            <LifeBuoy className="size-5" />
-          </div>
-          <CardTitle className="text-3xl">Help Center</CardTitle>
-          <CardDescription className="max-w-3xl text-base leading-7">
-            Practical explanations for reading your audit, confirming profiles,
-            defining Business Context, tracking competitors, using the action
-            plan, and sharing reports.
-          </CardDescription>
-        </CardHeader>
-      </Card>
+      <PageIntro
+        eyebrow="Help"
+        title="Help center"
+        description="Practical explanations for setup, audit evidence, competitors, action plans, the Consultant, and report sharing."
+        icon={LifeBuoy}
+      />
 
       <div className="grid gap-4 md:grid-cols-3">
         <Card>

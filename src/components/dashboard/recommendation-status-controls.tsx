@@ -1,7 +1,13 @@
 "use client";
 
 import { RecommendationStatus } from "@prisma/client";
-import { CheckCircle2, ChevronDown, Clock3, RotateCcw } from "lucide-react";
+import {
+  CheckCircle2,
+  ChevronDown,
+  Clock3,
+  Loader2,
+  RotateCcw,
+} from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
@@ -16,6 +22,8 @@ type RecommendationStatusControlsProps = {
   status: RecommendationStatus;
   compact?: boolean;
   layout?: "inline" | "rail";
+  showPrimaryAction?: boolean;
+  showStatusSelect?: boolean;
 };
 
 export function RecommendationStatusControls({
@@ -24,6 +32,8 @@ export function RecommendationStatusControls({
   status,
   compact = false,
   layout = "inline",
+  showPrimaryAction = true,
+  showStatusSelect = true,
 }: RecommendationStatusControlsProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -54,7 +64,7 @@ export function RecommendationStatusControls({
   const primaryAction =
     optimisticStatus === RecommendationStatus.TODO
       ? {
-          label: "Start task",
+          label: "Start action",
           status: RecommendationStatus.IN_PROGRESS,
           icon: Clock3,
         }
@@ -88,7 +98,7 @@ export function RecommendationStatusControls({
               ? "max-w-36"
               : "max-w-44",
       })}
-      aria-label="Change task status"
+      aria-label="Change action status"
       aria-busy={isPending}
     >
       {Object.values(RecommendationStatus).map((nextStatus) => (
@@ -113,38 +123,58 @@ export function RecommendationStatusControls({
             : "flex flex-wrap items-center gap-2",
         )}
       >
-        <button
-          type="button"
-          disabled={isPending}
-          onClick={() => setStatus(primaryAction.status)}
-          aria-busy={isPending}
-          className={buttonVariants({
-            variant:
-              optimisticStatus === RecommendationStatus.COMPLETED ||
-              optimisticStatus === RecommendationStatus.DISMISSED
-                ? "secondary"
-                : "primary",
-            size: "sm",
-            className: layout === "rail" ? "w-full min-w-0" : undefined,
-          })}
-        >
-          <PrimaryIcon className="size-4" />
-          {primaryAction.label}
-        </button>
-        <label className="sr-only" htmlFor={`status-${recommendationId}`}>
-          Change task status
-        </label>
-        {layout === "rail" ? (
-          <div className="relative w-full min-w-0">
-            {statusSelect}
-            <ChevronDown
-              className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-muted"
-              aria-hidden="true"
-            />
-          </div>
-        ) : (
-          statusSelect
-        )}
+        {showPrimaryAction ? (
+          <button
+            type="button"
+            disabled={isPending}
+            onClick={() => setStatus(primaryAction.status)}
+            aria-busy={isPending}
+            data-customer-event={
+              optimisticStatus === RecommendationStatus.TODO
+                ? "task_started"
+                : undefined
+            }
+            data-customer-surface={
+              optimisticStatus === RecommendationStatus.TODO
+                ? "action_plan"
+                : undefined
+            }
+            className={buttonVariants({
+              variant:
+                optimisticStatus === RecommendationStatus.COMPLETED ||
+                optimisticStatus === RecommendationStatus.DISMISSED
+                  ? "secondary"
+                  : "primary",
+              size: "sm",
+              className: layout === "rail" ? "w-full min-w-0" : undefined,
+            })}
+          >
+            {isPending ? (
+              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <PrimaryIcon className="size-4" />
+            )}
+            {isPending ? "Updating..." : primaryAction.label}
+          </button>
+        ) : null}
+        {showStatusSelect ? (
+          <>
+            <label className="sr-only" htmlFor={`status-${recommendationId}`}>
+              Change action status
+            </label>
+            {layout === "rail" ? (
+              <div className="relative w-full min-w-0">
+                {statusSelect}
+                <ChevronDown
+                  className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-muted"
+                  aria-hidden="true"
+                />
+              </div>
+            ) : (
+              statusSelect
+            )}
+          </>
+        ) : null}
       </div>
       {error ? (
         <p className="text-xs text-rose-600" role="alert">

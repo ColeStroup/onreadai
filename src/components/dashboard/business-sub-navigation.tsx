@@ -4,6 +4,7 @@ import {
   BookOpenText,
   ChevronDown,
   ClipboardCheck,
+  FileSearch,
   Globe2,
   History,
   LayoutDashboard,
@@ -26,6 +27,7 @@ type NavigationPage = {
   label: string;
   segment: string;
   icon: typeof LayoutDashboard;
+  description: string;
 };
 
 type NavigationGroup = {
@@ -37,43 +39,118 @@ type NavigationGroup = {
 const groups: NavigationGroup[] = [
   {
     label: "Overview",
-    pages: [{ label: "Overview", segment: "overview", icon: LayoutDashboard }],
+    pages: [
+      {
+        label: "Overview",
+        segment: "overview",
+        icon: LayoutDashboard,
+        description: "Status and next actions",
+      },
+    ],
   },
   {
     label: "Setup",
     pages: [
-      { label: "Guided setup", segment: "setup", icon: ClipboardCheck },
-      { label: "Profiles", segment: "confirm", icon: SearchCheck },
-      { label: "Context", segment: "context", icon: BookOpenText },
-      { label: "Goals", segment: "goals", icon: Target },
+      {
+        label: "Guided setup",
+        segment: "setup",
+        icon: ClipboardCheck,
+        description: "Complete the essential business information",
+      },
+      {
+        label: "Profiles",
+        segment: "confirm",
+        icon: SearchCheck,
+        description: "Confirm public profiles and sources",
+      },
+      {
+        label: "Context",
+        segment: "context",
+        icon: BookOpenText,
+        description: "Describe the business, audience, and offer",
+      },
+      {
+        label: "Goals",
+        segment: "goals",
+        icon: Target,
+        description: "Choose the outcomes recommendations should prioritize",
+      },
     ],
   },
   {
     label: "Audit",
     auditRoute: true,
     pages: [
-      { label: "Website", segment: "website", icon: Globe2 },
-      { label: "SEO", segment: "seo", icon: Search },
-      { label: "Reviews", segment: "reviews", icon: Star },
+      {
+        label: "Findings",
+        segment: "audit",
+        icon: FileSearch,
+        description: "Review all findings and supporting evidence",
+      },
+      {
+        label: "Website",
+        segment: "website",
+        icon: Globe2,
+        description: "Website clarity, pages, and conversion paths",
+      },
+      {
+        label: "SEO",
+        segment: "seo",
+        icon: Search,
+        description: "Search visibility and technical basics",
+      },
+      {
+        label: "Reviews",
+        segment: "reviews",
+        icon: Star,
+        description: "Review presence and customer trust signals",
+      },
     ],
   },
   {
     label: "Growth",
     pages: [
-      { label: "Social", segment: "social", icon: Share2 },
-      { label: "Competitors", segment: "competitors", icon: Swords },
+      {
+        label: "Social",
+        segment: "social",
+        icon: Share2,
+        description: "Channel coverage, strategy, and content direction",
+      },
+      {
+        label: "Competitors",
+        segment: "competitors",
+        icon: Swords,
+        description: "Public comparisons and supported opportunities",
+      },
     ],
   },
   {
     label: "Plan",
     pages: [
-      { label: "Action Plan", segment: "action-plan", icon: ListChecks },
-      { label: "History", segment: "history", icon: History },
+      {
+        label: "Action Plan",
+        segment: "action-plan",
+        icon: ListChecks,
+        description: "Tasks and implementation",
+      },
+      {
+        label: "History",
+        segment: "history",
+        icon: History,
+        description: "Previous audits and comparable progress",
+      },
     ],
   },
   {
     label: "Consultant",
-    pages: [{ label: "AI Chat", segment: "chat", icon: MessageSquareText }],
+    pages: [
+      {
+        label: "AI Chat",
+        segment: "chat",
+        icon: MessageSquareText,
+        description: "Ask questions about your saved results",
+      },
+    ],
   },
 ];
 
@@ -139,7 +216,7 @@ export function BusinessSubNavigation({ businessId }: { businessId: string }) {
           ))}
         </select>
         <p className="mt-2 text-xs text-muted">
-          {activePage?.label ?? "Audit workspace"}
+          {activePage?.description ?? "Audit workspace"}
         </p>
       </div>
 
@@ -158,6 +235,7 @@ export function BusinessSubNavigation({ businessId }: { businessId: string }) {
                   "inline-flex h-10 items-center gap-2 rounded-lg px-3 text-sm font-medium text-muted transition-colors hover:bg-foreground/5 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent",
                   isActive && "bg-card text-foreground shadow-sm",
                 )}
+                title={directPage.description}
               >
                 <Icon className="size-4" />
                 {group.label}
@@ -218,12 +296,17 @@ export function BusinessSubNavigation({ businessId }: { businessId: string }) {
                         role="menuitem"
                         onClick={() => setOpenGroup(null)}
                         className={cn(
-                          "flex h-10 items-center gap-3 rounded-lg px-3 text-sm font-medium text-muted transition-colors hover:bg-foreground/5 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent",
+                          "flex min-h-12 items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-muted transition-colors hover:bg-foreground/5 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent",
                           isPageActive && "bg-foreground/5 text-foreground",
                         )}
                       >
-                        <Icon className="size-4" />
-                        {page.label}
+                        <Icon className="size-4 shrink-0" />
+                        <span>
+                          <span className="block">{page.label}</span>
+                          <span className="mt-0.5 block text-xs font-normal text-muted">
+                            {page.description}
+                          </span>
+                        </span>
                       </Link>
                     );
                   })}
@@ -233,7 +316,7 @@ export function BusinessSubNavigation({ businessId }: { businessId: string }) {
           );
         })}
         <span className="ml-auto px-2 text-xs font-medium text-muted">
-          Current: {activePage?.label ?? "Audit workspace"}
+          {activePage?.description ?? "Audit workspace"}
         </span>
       </div>
     </nav>

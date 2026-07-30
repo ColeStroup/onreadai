@@ -5,6 +5,10 @@ import type { ReactNode } from "react";
 import { useId, useState } from "react";
 
 import { cn } from "@/lib/utils";
+import type {
+  CustomerEventName,
+  CustomerEventSurface,
+} from "@/lib/analytics/customer-events";
 
 type DisclosureSectionProps = {
   title: string;
@@ -14,6 +18,8 @@ type DisclosureSectionProps = {
   className?: string;
   contentClassName?: string;
   compact?: boolean;
+  analyticsEvent?: CustomerEventName;
+  analyticsSurface?: CustomerEventSurface;
 };
 
 export function DisclosureSection({
@@ -24,6 +30,8 @@ export function DisclosureSection({
   className,
   contentClassName,
   compact = false,
+  analyticsEvent,
+  analyticsSurface,
 }: DisclosureSectionProps) {
   const [isOpen, setIsOpen] = useState(defaultOpen);
   const contentId = useId();
@@ -34,6 +42,8 @@ export function DisclosureSection({
         type="button"
         aria-expanded={isOpen}
         aria-controls={contentId}
+        data-customer-event={!isOpen ? analyticsEvent : undefined}
+        data-customer-surface={!isOpen ? analyticsSurface : undefined}
         onClick={() => setIsOpen((current) => !current)}
         className={cn(
           "flex w-full items-center justify-between gap-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent",

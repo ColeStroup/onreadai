@@ -2,6 +2,7 @@ import { Building2, Plus } from "lucide-react";
 import Link from "next/link";
 
 import { EmptyState } from "@/components/dashboard/empty-state";
+import { PageIntro } from "@/components/dashboard/report-ui";
 import {
   Card,
   CardContent,
@@ -42,28 +43,25 @@ export default async function DashboardPage() {
 
   return (
     <div className="mx-auto max-w-7xl space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="text-sm font-medium text-muted">Dashboard</p>
-          <h1 className="mt-1 text-3xl font-semibold tracking-normal">
-            Growth workspace
-          </h1>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-muted">
-            Track businesses, audits, recommendations, and AI strategy chats
-            from one place.
-          </p>
-        </div>
-        <Link
-          href="/dashboard/businesses/new"
-          className={buttonVariants({ variant: "primary" })}
-        >
-          <Plus className="size-4" />
-          Add Business
-        </Link>
-      </div>
+      <PageIntro
+        eyebrow="Dashboard"
+        title="Growth workspace"
+        description="Open a business to continue setup, review priorities, or work through the latest action plan."
+        icon={Building2}
+        actions={
+          <Link
+            href="/dashboard/businesses/new"
+            className={buttonVariants({ variant: "primary" })}
+          >
+            <Plus className="size-4" aria-hidden="true" />
+            Add business
+          </Link>
+        }
+      />
 
       {businesses.length === 0 ? (
         <EmptyState
+          compact
           icon={<Building2 className="size-6" />}
           title="No businesses yet"
           description="Add a website, social profile, or business name to create your first audit workspace."
@@ -72,8 +70,8 @@ export default async function DashboardPage() {
               href="/dashboard/businesses/new"
               className={buttonVariants({ variant: "primary" })}
             >
-              <Plus className="size-4" />
-              Add Business
+              <Plus className="size-4" aria-hidden="true" />
+              Add business
             </Link>
           }
         />
@@ -111,20 +109,6 @@ export default async function DashboardPage() {
         </div>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-3">
-        {[
-          ["Audit Pipeline", "No audit runs yet."],
-          ["Saved Recommendations", "Prioritized actions across businesses."],
-          ["AI Chat", "Strategy threads for each business."],
-        ].map(([title, description]) => (
-          <Card key={title}>
-            <CardHeader>
-              <CardTitle>{title}</CardTitle>
-              <CardDescription>{description}</CardDescription>
-            </CardHeader>
-          </Card>
-        ))}
-      </div>
     </div>
   );
 }
