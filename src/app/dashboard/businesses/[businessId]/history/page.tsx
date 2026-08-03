@@ -13,6 +13,11 @@ import { compareAudits, formatDelta } from "@/lib/audits/audit-comparison";
 import { canUseProgressComparison } from "@/lib/billing/entitlements";
 import { contextualHelp } from "@/lib/education/help-content";
 import { prisma } from "@/lib/prisma";
+import {
+  isWebsiteGrowthAuditSnapshot,
+  LEGACY_SCORING_LABEL,
+  WEBSITE_GROWTH_SCORE_LABEL,
+} from "@/lib/product/website-seo-scope";
 import { requireUser } from "@/lib/session";
 import { cn } from "@/lib/utils";
 
@@ -109,15 +114,15 @@ export default async function BusinessHistoryPage({
       <div className="space-y-6">
         <PageIntro
           eyebrow="Plan"
-          title="Audit history"
-          description="Review saved reports and meaningful changes between comparable audits."
+          title="Website progress"
+          description="Run your first website audit to establish a baseline for future verification and comparison."
           icon={History}
         />
         <EmptyState
           compact
           icon={<History className="size-6" />}
           title="No audit history yet"
-          description="Confirm profiles and run your first audit to create a saved report."
+          description="Add and confirm your website, then run your first audit to create a saved report."
           action={
             <Link
               href={`/dashboard/businesses/${business.id}/audit/run`}
@@ -140,8 +145,8 @@ export default async function BusinessHistoryPage({
     <div className="space-y-6">
       <PageIntro
         eyebrow="Plan"
-        title="Audit history"
-        description="Review saved reports, action progress, and changes that can be compared reliably."
+        title="Website progress"
+        description="Review saved reports, completed actions, and evidence changes between compatible audits."
         icon={History}
         actions={
           <Link
@@ -177,9 +182,7 @@ export default async function BusinessHistoryPage({
             <h2 id="saved-audits-title" className="text-lg font-semibold">
               Saved audits
             </h2>
-            <p className="text-sm text-muted">
-              Newest report first.
-            </p>
+            <p className="text-sm text-muted">Newest report first.</p>
           </div>
         </div>
         <div className="divide-y divide-border rounded-lg border border-border bg-card px-5">
@@ -194,8 +197,7 @@ export default async function BusinessHistoryPage({
               ? business.audits
                   .slice(index + 1)
                   .find(
-                    (candidate) =>
-                      candidate.status === AuditStatus.COMPLETED,
+                    (candidate) => candidate.status === AuditStatus.COMPLETED,
                   )
               : null;
             const comparison =
@@ -218,6 +220,9 @@ export default async function BusinessHistoryPage({
               (recommendation) =>
                 recommendation.status === RecommendationStatus.COMPLETED,
             ).length;
+            const websiteGrowthScore = isWebsiteGrowthAuditSnapshot(
+              audit.analysisSnapshot,
+            );
 
             return (
               <div
@@ -226,8 +231,12 @@ export default async function BusinessHistoryPage({
               >
                 <div className="flex items-start gap-4">
                   <div className="flex size-14 shrink-0 flex-col items-center justify-center rounded-lg border border-border bg-card">
-                    <span className="text-xl font-semibold">{overallScore}</span>
-                    <span className="text-xs text-muted">score</span>
+                    <span className="text-xl font-semibold">
+                      {overallScore}
+                    </span>
+                    <span className="text-center text-[0.65rem] leading-tight text-muted">
+                      {websiteGrowthScore ? "website score" : "legacy score"}
+                    </span>
                   </div>
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
@@ -242,6 +251,11 @@ export default async function BusinessHistoryPage({
                       >
                         {statusLabels[audit.status]}
                       </span>
+                      <span className="rounded-full border border-border bg-card px-2.5 py-1 text-xs font-semibold text-muted">
+                        {websiteGrowthScore
+                          ? WEBSITE_GROWTH_SCORE_LABEL
+                          : LEGACY_SCORING_LABEL}
+                      </span>
                       {isComplete && progressComparisonCheck.allowed ? (
                         <span
                           className={cn(
@@ -254,10 +268,10 @@ export default async function BusinessHistoryPage({
                           {comparison?.methodologyChanged
                             ? "Comparison limited"
                             : comparison
-                            ? `${formatDelta(
-                                comparison.overallScoreChange,
-                              )} change`
-                            : "First audit"}
+                              ? `${formatDelta(
+                                  comparison.overallScoreChange,
+                                )} change`
+                              : "First audit"}
                         </span>
                       ) : isComplete ? (
                         <span className="rounded-full border border-border bg-card px-2.5 py-1 text-xs font-semibold text-muted">
@@ -286,7 +300,10 @@ export default async function BusinessHistoryPage({
                 </div>
                 <Link
                   href={auditHref}
-                  className={buttonVariants({ variant: "secondary", size: "sm" })}
+                  className={buttonVariants({
+                    variant: "secondary",
+                    size: "sm",
+                  })}
                 >
                   {auditActionLabel}
                   <ArrowRight className="size-4" aria-hidden="true" />

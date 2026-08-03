@@ -15,7 +15,7 @@ export const contextualHelp = {
   overview: {
     title: "What is this report?",
     description:
-      "The overview turns your latest audit into a consulting-style report. It combines scores, findings, recommendations, goals, competitors, and progress since your last audit so you can quickly see what matters most.",
+      "The overview summarizes your latest website and SEO audit. It brings together the Website Growth Score, strongest evidence, top actions, and compatible progress so you can quickly see what matters most.",
   },
   context: {
     title: "What is Business Context?",
@@ -50,17 +50,17 @@ export const contextualHelp = {
   actionPlan: {
     title: "What is the Action Plan?",
     description:
-      "Your Action Plan turns recommendations into trackable tasks so you can make progress between audits and see what changed when you re-audit.",
+      "Your Action Plan turns website and SEO recommendations into trackable tasks so you can make progress between audits and verify what changed when you re-audit.",
   },
   history: {
     title: "Why audit history matters",
     description:
-      "History helps you compare completed audits over time. Use it to see whether your score improved, what changed, and how many recommendations were completed for each audit.",
+      "History helps you compare compatible completed audits over time. Methodology changes are labeled so a scoring-model change is not presented as genuine website improvement.",
   },
   chat: {
     title: "What does the AI Consultant know?",
     description:
-      "The consultant uses saved audit data, Business Context, scores, findings, recommendations, action status, confirmed profiles, goals, competitors, and progress history. If the AI provider is unavailable, chat pauses instead of presenting a generated fallback as a live AI answer.",
+      "The Website & SEO Consultant uses saved website evidence, Business Context, scores, findings, recommendations, action status, goals, and compatible progress history. Disabled future-module data is not included in its launch context.",
   },
 } as const;
 
@@ -370,7 +370,8 @@ export const helpSections: HelpSection[] = [
           "A social plan depends on who you are trying to reach and what action you want them to take. Confirming Business Context helps the app avoid generic ideas and make better calls about channels, topics, tone, and conversion steps.",
       },
       {
-        question: "Why might it recommend TikTok, Shorts, or Discord instead of LinkedIn?",
+        question:
+          "Why might it recommend TikTok, Shorts, or Discord instead of LinkedIn?",
         answer:
           "If your audience is creator-focused, gaming-oriented, community-based, local, visual, or social-first, the app may prioritize short-form video or community channels. LinkedIn becomes more relevant when your audience is professional, B2B, hiring, partnerships, or executive buyers.",
       },
@@ -434,7 +435,8 @@ export const helpSections: HelpSection[] = [
       "How public Google listing discovery, confirmation, and match confidence work.",
     entries: [
       {
-        question: "Why does the app say my Google Business Profile is not confirmed?",
+        question:
+          "Why does the app say my Google Business Profile is not confirmed?",
         answer:
           "The app may have found a possible listing, but it still needs you to confirm that it belongs to your business. This prevents the audit from relying on the wrong Google Maps listing.",
       },
@@ -571,8 +573,7 @@ export const helpSections: HelpSection[] = [
   },
   {
     title: "AI Consultant",
-    description:
-      "What the chat can answer today and what it will do later.",
+    description: "What the chat can answer today and what it will do later.",
     entries: [
       {
         question: "What does the AI Consultant know about my business?",
@@ -612,8 +613,7 @@ export const helpSections: HelpSection[] = [
   },
   {
     title: "Re-Audits and Progress",
-    description:
-      "How repeated audits show improvement and decline over time.",
+    description: "How repeated audits show improvement and decline over time.",
     entries: [
       {
         question: "How often should I run another audit?",
@@ -740,9 +740,154 @@ export const helpSections: HelpSection[] = [
           "Yes. For social-first businesses, creators, community products, local services, ecommerce, restaurants, beauty, fitness, and similar businesses, the app can treat social as the discovery layer while the website or profile link acts as the conversion layer.",
       },
       {
-        question: "Why should I confirm Business Context before generating social strategy?",
+        question:
+          "Why should I confirm Business Context before generating social strategy?",
         answer:
           "Because channel and content advice depends on the audience. A Discord-community product, local restaurant, consultant, ecommerce brand, and B2B software tool may all need different platforms and post types. Confirmed context makes the strategy more specific.",
+      },
+    ],
+  },
+];
+
+export const websiteSeoHelpSections: HelpSection[] = [
+  {
+    title: "Getting Started",
+    description:
+      "The shortest path from a website URL to a useful Action Plan.",
+    entries: [
+      {
+        question: "How do I start using Onread?",
+        answer:
+          "Add your business name and public website URL, confirm the website, review the generated Business Context, choose a goal, and run your first website audit.",
+      },
+      {
+        question: "Why do I need to confirm my website?",
+        answer:
+          "Confirmation prevents Onread from analyzing the wrong site. New audits require one confirmed public website and do not require social, competitor, or listing setup.",
+      },
+    ],
+  },
+  {
+    title: "Understanding Your Audit",
+    description: "How to read the score, evidence, findings, and limitations.",
+    entries: [
+      {
+        question: "What does the Website Growth Score mean?",
+        answer:
+          "It summarizes the Website and SEO evidence Onread could verify. Website contributes 55% and SEO contributes 45%. Read the findings and evidence to understand the score rather than treating it as a promise of business results.",
+      },
+      {
+        question: "Why is some data missing?",
+        answer:
+          "A page may block automated access, time out, return non-HTML content, or sit beyond your plan's crawl limit. Onread labels unavailable evidence and coverage limits instead of treating them as confirmed defects.",
+      },
+      {
+        question: "What is a legacy score?",
+        answer:
+          "Older audits used a broader methodology. Those reports remain unchanged and are labeled Legacy scoring model. Onread does not directly compare them with the Website Growth Score as if the difference represented website progress.",
+      },
+    ],
+  },
+  {
+    title: "Website Analysis",
+    description: "What the controlled crawl checks across public pages.",
+    entries: [
+      {
+        question: "What does the Website tab analyze?",
+        answer:
+          "It reviews the homepage and prioritized internal pages for headings, navigation, calls to action, images, links, important-page coverage, content clarity, and observable conversion paths. Crawl depth depends on your plan.",
+      },
+      {
+        question: "Why did Onread not scan every page?",
+        answer:
+          "The crawler is intentionally limited for safety and predictability. It starts with the homepage, prioritizes important internal pages, and records pages that were discovered but not scanned.",
+      },
+    ],
+  },
+  {
+    title: "SEO Analysis",
+    description: "Plain-language explanations of search-readiness checks.",
+    entries: [
+      {
+        question: "What does the SEO tab check?",
+        answer:
+          "It checks page titles, meta descriptions, heading structure, internal links, canonicals, robots.txt, sitemap.xml, indexability signals, image alt text, and related technical foundations that Onread can verify.",
+      },
+      {
+        question: "Does this guarantee rankings?",
+        answer:
+          "No. The audit identifies observable website and SEO foundations. Rankings also depend on search demand, competition, authority, content quality, location, and factors Onread may not have access to.",
+      },
+    ],
+  },
+  {
+    title: "Action Plan",
+    description: "How findings become prioritized, trackable website work.",
+    entries: [
+      {
+        question: "What should I work on first?",
+        answer:
+          "Start with the best next action shown on Overview. Priority considers evidence, expected impact, effort, your goals, and current task status. Each action remains connected to its source finding.",
+      },
+      {
+        question: "Does completing a task change my score?",
+        answer:
+          "Not by itself. Task status records your work. Run another audit after implementation so Onread can inspect the website again and verify whether the underlying evidence changed.",
+      },
+    ],
+  },
+  {
+    title: "Implementation Help",
+    description: "Drafts and instructions tied to supported recommendations.",
+    entries: [
+      {
+        question: "Does Generate Fix change my website?",
+        answer:
+          "No. It creates review-ready copy or implementation steps inside Onread. You decide what to use and publish changes through your own website tools.",
+      },
+      {
+        question: "What can it help draft?",
+        answer:
+          "Supported recommendations can produce page titles, meta descriptions, headings, calls to action, page outlines, internal-link suggestions, and ordered implementation instructions.",
+      },
+    ],
+  },
+  {
+    title: "AI Consultant",
+    description:
+      "What the Website & SEO Consultant knows and how it stays grounded.",
+    entries: [
+      {
+        question: "What does the Consultant know about my business?",
+        answer:
+          "It receives compact context from your Business Context, website and SEO scores, findings, recommendations, action status, key crawl evidence, and compatible audit progress. It must disclose missing evidence rather than invent it.",
+      },
+      {
+        question: "What can I ask it?",
+        answer:
+          "Ask what to fix first, why an issue matters, how to rewrite a title or call to action, which pages need attention, or how to verify a completed recommendation.",
+      },
+    ],
+  },
+  {
+    title: "Reports and Progress",
+    description:
+      "Sharing results and measuring compatible before-and-after evidence.",
+    entries: [
+      {
+        question: "What does the PDF include?",
+        answer:
+          "Completed paid reports can include the Website Growth Score, Website and SEO findings, top priorities, implementation guidance, crawl coverage, limitations, and a technical appendix.",
+      },
+      {
+        question: "How often should I run another audit?",
+        answer:
+          "Run one after implementing meaningful changes or on the cadence supported by your plan. Rechecking too soon, before the website has changed, is unlikely to produce useful progress evidence.",
+      },
+      {
+        question: "Why can a comparison be limited?",
+        answer:
+          "Scores are directly comparable only when the audits use compatible scoring methods. Coverage changes are also disclosed because scanning different pages can change what Onread observes.",
       },
     ],
   },

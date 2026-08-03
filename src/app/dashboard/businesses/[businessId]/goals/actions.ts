@@ -5,10 +5,11 @@ import { notFound, redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 
 import { prisma } from "@/lib/prisma";
+import { websiteSeoBusinessGoals } from "@/lib/goals";
 import { requireUser } from "@/lib/session";
 
 function isBusinessGoal(value: string): value is BusinessGoal {
-  return Object.values(BusinessGoal).includes(value as BusinessGoal);
+  return websiteSeoBusinessGoals.includes(value as BusinessGoal);
 }
 
 function uniqueGoals(values: BusinessGoal[]) {
@@ -34,13 +35,12 @@ export async function saveBusinessGoals(formData: FormData) {
   }
 
   const selectedGoals = uniqueGoals(
-    formData
-      .getAll("goals")
-      .map(String)
-      .filter(isBusinessGoal),
+    formData.getAll("goals").map(String).filter(isBusinessGoal),
   );
   const primaryGoalValue = String(formData.get("primaryGoal") ?? "");
-  const primaryGoal = isBusinessGoal(primaryGoalValue) ? primaryGoalValue : null;
+  const primaryGoal = isBusinessGoal(primaryGoalValue)
+    ? primaryGoalValue
+    : null;
   const goals =
     primaryGoal && !selectedGoals.includes(primaryGoal)
       ? [...selectedGoals, primaryGoal]

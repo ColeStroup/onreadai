@@ -25,9 +25,6 @@ export default async function DashboardPage() {
       profiles: {
         select: { status: true, platform: true, url: true, handle: true },
       },
-      googleBusinessProfiles: {
-        select: { status: true },
-      },
       audits: {
         where: { status: "COMPLETED" },
         select: { status: true },
@@ -45,8 +42,8 @@ export default async function DashboardPage() {
     <div className="mx-auto max-w-7xl space-y-6">
       <PageIntro
         eyebrow="Dashboard"
-        title="Growth workspace"
-        description="Open a business to continue setup, review priorities, or work through the latest action plan."
+        title="Website growth workspace"
+        description="Open a business to review website health, work through priorities, or verify recent improvements."
         icon={Building2}
         actions={
           <Link
@@ -64,7 +61,7 @@ export default async function DashboardPage() {
           compact
           icon={<Building2 className="size-6" />}
           title="No businesses yet"
-          description="Add a website, social profile, or business name to create your first audit workspace."
+          description="Add your business and website to create your first website audit workspace."
           action={
             <Link
               href="/dashboard/businesses/new"
@@ -99,7 +96,10 @@ export default async function DashboardPage() {
                     <CardDescription>{business.initialInput}</CardDescription>
                   </CardHeader>
                   <CardContent className="flex items-center justify-between text-sm text-muted">
-                    <span>{business._count.profiles} profiles</span>
+                    <span>
+                      {business._count.profiles} saved source
+                      {business._count.profiles === 1 ? "" : "s"}
+                    </span>
                     <span>{business._count.audits} audits</span>
                   </CardContent>
                 </Card>
@@ -108,7 +108,6 @@ export default async function DashboardPage() {
           })}
         </div>
       )}
-
     </div>
   );
 }

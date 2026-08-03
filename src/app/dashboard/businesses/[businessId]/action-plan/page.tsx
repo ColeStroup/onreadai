@@ -6,12 +6,7 @@ import {
   RecommendationStatus,
   ScoreCategory,
 } from "@prisma/client";
-import {
-  ArrowRight,
-  ListChecks,
-  Search,
-  Sparkles,
-} from "lucide-react";
+import { ArrowRight, ListChecks, Search, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
@@ -43,6 +38,7 @@ import {
 import { canAccessFullActionPlan } from "@/lib/billing/entitlements";
 import { contextualHelp } from "@/lib/education/help-content";
 import { prisma } from "@/lib/prisma";
+import { isWebsiteSeoCategory } from "@/lib/product/website-seo-scope";
 import { buildAuditReportViewModel } from "@/lib/reports/audit-report-view-model";
 import {
   actionableCategories,
@@ -83,7 +79,10 @@ type RecommendationView = {
   sourceType: string | null;
   sourceUrl: string | null;
   evidence: unknown;
-  implementationDrafts: Array<{ id: string; status: ImplementationDraftStatus }>;
+  implementationDrafts: Array<{
+    id: string;
+    status: ImplementationDraftStatus;
+  }>;
 };
 
 const statuses = [
@@ -95,11 +94,16 @@ const statuses = [
 
 function implementationPrompt(recommendation: RecommendationView) {
   const title = recommendation.title.toLowerCase();
-  if (/h1|headline/.test(title)) return "Help me create a homepage headline for this business.";
-  if (/meta description|search description/.test(title)) return "Draft a shorter meta description using my saved business context.";
-  if (/proof|testimonial|review/.test(title)) return "Draft a customer proof section and a simple review-request message.";
-  if (recommendation.category === ScoreCategory.SOCIAL) return "Help me refine this week's content plan for this recommendation.";
-  if (recommendation.category === ScoreCategory.COMPETITORS) return `Help me implement this competitor recommendation: ${recommendation.title}`;
+  if (/h1|headline/.test(title))
+    return "Help me create a homepage headline for this business.";
+  if (/meta description|search description/.test(title))
+    return "Draft a shorter meta description using my saved business context.";
+  if (/proof|testimonial|review/.test(title))
+    return "Draft a customer proof section and a simple review-request message.";
+  if (recommendation.category === ScoreCategory.SOCIAL)
+    return "Help me refine this week's content plan for this recommendation.";
+  if (recommendation.category === ScoreCategory.COMPETITORS)
+    return `Help me implement this competitor recommendation: ${recommendation.title}`;
   return `Help me implement this recommendation for my business: ${recommendation.title}`;
 }
 
@@ -122,13 +126,22 @@ function filterHref({
   return `/dashboard/businesses/${businessId}/action-plan${suffix ? `?${suffix}` : ""}`;
 }
 
-function TaskBadges({ recommendation }: { recommendation: RecommendationView }) {
+function TaskBadges({
+  recommendation,
+}: {
+  recommendation: RecommendationView;
+}) {
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs font-semibold">
       <span className="rounded-full border border-border bg-card px-2.5 py-1">
         {recommendationCategoryLabels[recommendation.category]}
       </span>
-      <span className={cn("rounded-full border px-2.5 py-1", recommendationStatusStyles[recommendation.status])}>
+      <span
+        className={cn(
+          "rounded-full border px-2.5 py-1",
+          recommendationStatusStyles[recommendation.status],
+        )}
+      >
         {recommendationStatusLabels[recommendation.status]}
       </span>
       <span className="font-medium text-muted">
@@ -174,7 +187,9 @@ function TaskRow({
       <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-start">
         <div className="min-w-0">
           <TaskBadges recommendation={recommendation} />
-          <h3 className="mt-3 text-base font-semibold">{recommendation.title}</h3>
+          <h3 className="mt-3 text-base font-semibold">
+            {recommendation.title}
+          </h3>
           <p className="mt-1 text-sm leading-6 text-muted">
             {recommendation.description}
           </p>
@@ -184,7 +199,10 @@ function TaskRow({
             <ImplementationHelpDrawer
               businessId={businessId}
               businessName={businessName}
-              source={{ kind: "recommendation", recommendationId: recommendation.id }}
+              source={{
+                kind: "recommendation",
+                recommendationId: recommendation.id,
+              }}
               recommendationId={recommendation.id}
               recommendationTitle={recommendation.title}
               evidence={evidence}
@@ -240,12 +258,21 @@ function TaskRow({
               <ImplementationHelpDrawer
                 businessId={businessId}
                 businessName={businessName}
-                source={{ kind: "recommendation", recommendationId: recommendation.id }}
+                source={{
+                  kind: "recommendation",
+                  recommendationId: recommendation.id,
+                }}
                 recommendationId={recommendation.id}
                 recommendationTitle={recommendation.title}
                 evidence={evidence}
                 initialSavedCount={recommendation.implementationDrafts.length}
-                label={/canonical|robots|sitemap|alt text/i.test(recommendation.title) ? "Show implementation steps" : "Generate implementation"}
+                label={
+                  /canonical|robots|sitemap|alt text/i.test(
+                    recommendation.title,
+                  )
+                    ? "Show implementation steps"
+                    : "Generate implementation"
+                }
                 triggerVariant="secondary"
               />
             ) : null}
@@ -319,22 +346,40 @@ function FreePreview({
         icon={ListChecks}
       />
       <div className="grid gap-3 sm:grid-cols-3">
-        <CompactMetricCard label="Progress" value={`${progress.percent}%`} detail={`${progress.completed} of ${progress.total} completed`} />
-        <CompactMetricCard label="Preview items" value={Math.min(3, recommendations.length)} />
-        <CompactMetricCard label="Total recommendations" value={recommendations.length} />
+        <CompactMetricCard
+          label="Progress"
+          value={`${progress.percent}%`}
+          detail={`${progress.completed} of ${progress.total} completed`}
+        />
+        <CompactMetricCard
+          label="Preview items"
+          value={Math.min(3, recommendations.length)}
+        />
+        <CompactMetricCard
+          label="Total recommendations"
+          value={recommendations.length}
+        />
       </div>
       <ReportSection title="Top recommendations preview">
         <div className="space-y-3">
           {recommendations.slice(0, 3).map((recommendation) => (
-            <div key={recommendation.id} className="rounded-lg border border-border bg-background p-4">
+            <div
+              key={recommendation.id}
+              className="rounded-lg border border-border bg-background p-4"
+            >
               <TaskBadges recommendation={recommendation} />
               <p className="mt-3 font-semibold">{recommendation.title}</p>
-              <p className="mt-1 text-sm leading-6 text-muted">{recommendation.description}</p>
+              <p className="mt-1 text-sm leading-6 text-muted">
+                {recommendation.description}
+              </p>
               <div className="mt-3">
                 <ImplementationHelpDrawer
                   businessId={businessId}
                   businessName={businessName}
-                  source={{ kind: "recommendation", recommendationId: recommendation.id }}
+                  source={{
+                    kind: "recommendation",
+                    recommendationId: recommendation.id,
+                  }}
                   recommendationId={recommendation.id}
                   recommendationTitle={recommendation.title}
                   initialSavedCount={recommendation.implementationDrafts.length}
@@ -354,7 +399,10 @@ function FreePreview({
           "AI implementation help with editable prompts",
         ]}
       />
-      <Link href={`/dashboard/businesses/${businessId}/overview`} className={buttonVariants({ variant: "secondary" })}>
+      <Link
+        href={`/dashboard/businesses/${businessId}/overview`}
+        className={buttonVariants({ variant: "secondary" })}
+      >
         Back to overview
       </Link>
     </div>
@@ -369,7 +417,8 @@ export default async function BusinessActionPlanPage({
   const { businessId } = await params;
   const query = searchParams ? await searchParams : {};
   const selectedCategory =
-    actionableCategories.find((category) => category === query.category) ?? null;
+    actionableCategories.find((category) => category === query.category) ??
+    null;
   const selectedStatus = statuses.includes(query.status as RecommendationStatus)
     ? (query.status as RecommendationStatus)
     : RecommendationStatus.TODO;
@@ -409,7 +458,10 @@ export default async function BusinessActionPlanPage({
         title="No action plan yet"
         description="Run a completed audit to turn recommendations into trackable action items."
         action={
-          <Link href={`/dashboard/businesses/${business.id}/audit/run`} className={buttonVariants({ variant: "primary" })}>
+          <Link
+            href={`/dashboard/businesses/${business.id}/audit/run`}
+            className={buttonVariants({ variant: "primary" })}
+          >
             Run Audit
             <ArrowRight className="size-4" />
           </Link>
@@ -445,7 +497,25 @@ export default async function BusinessActionPlanPage({
     canonicalRecommendations && canonicalRecommendations.length > 0
       ? canonicalRecommendations
       : audit.recommendations,
-  );
+  ).filter((recommendation) => isWebsiteSeoCategory(recommendation.category));
+  if (recommendations.length === 0) {
+    return (
+      <EmptyState
+        icon={<ListChecks className="size-6" />}
+        title="No Website or SEO actions in this report"
+        description="Run a new website audit to create a focused implementation plan from current evidence."
+        action={
+          <Link
+            href={`/dashboard/businesses/${business.id}/audit/run`}
+            className={buttonVariants({ variant: "primary" })}
+          >
+            Run website audit
+            <ArrowRight className="size-4" />
+          </Link>
+        }
+      />
+    );
+  }
   const progress = progressForRecommendations(recommendations);
   const actionPlanCheck = await canAccessFullActionPlan(user.id);
   if (!actionPlanCheck.allowed) {
@@ -462,7 +532,9 @@ export default async function BusinessActionPlanPage({
   const counts = Object.fromEntries(
     statuses.map((status) => [
       status,
-      recommendations.filter((recommendation) => recommendation.status === status).length,
+      recommendations.filter(
+        (recommendation) => recommendation.status === status,
+      ).length,
     ]),
   ) as Record<RecommendationStatus, number>;
   const activeCount = counts.TODO + counts.IN_PROGRESS;
@@ -492,7 +564,7 @@ export default async function BusinessActionPlanPage({
     <div className="space-y-6">
       <PageIntro
         title="Action Plan"
-        description="Focus on the few actions that matter now, track progress, and keep the full recommendation backlog available without giving every task equal weight."
+        description="Work through prioritized Website and SEO improvements, use implementation help, and verify the result in your next audit."
         icon={ListChecks}
       />
 
@@ -637,7 +709,10 @@ export default async function BusinessActionPlanPage({
         ) : null}
       </ReportSection>
 
-      <ReportSection title="30-Day Roadmap" description="Open one week at a time to keep the plan usable on desktop and mobile.">
+      <ReportSection
+        title="30-Day Roadmap"
+        description="Open one week at a time to keep the plan usable on desktop and mobile."
+      >
         <SectionTabs
           items={thirtyDayPlan.map((week, index) => ({
             label: week.week,
@@ -654,32 +729,55 @@ export default async function BusinessActionPlanPage({
         <div className="mt-5">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <p className="text-xs font-semibold uppercase text-accent">{currentWeek.week}</p>
+              <p className="text-xs font-semibold uppercase text-accent">
+                {currentWeek.week}
+              </p>
               <h3 className="mt-1 font-semibold">{currentWeek.title}</h3>
-              <p className="mt-1 text-sm text-muted">{currentWeek.description}</p>
+              <p className="mt-1 text-sm text-muted">
+                {currentWeek.description}
+              </p>
             </div>
             <span className="rounded-full border border-border px-3 py-1 text-xs font-semibold">
-              {currentWeek.items.filter((item) => item.status === RecommendationStatus.COMPLETED).length} of {currentWeek.items.length} complete
+              {
+                currentWeek.items.filter(
+                  (item) => item.status === RecommendationStatus.COMPLETED,
+                ).length
+              }{" "}
+              of {currentWeek.items.length} complete
             </span>
           </div>
           <div className="mt-4 space-y-2">
-            {currentWeek.items.length > 0 ? currentWeek.items.map((item) => (
-              <div key={item.id} className="flex flex-col gap-2 rounded-lg border border-border bg-background p-3 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <p className="text-sm font-medium">{item.title}</p>
-                  <p className="mt-1 text-xs text-muted">
-                    {recommendationCategoryLabels[item.category]}
-                    {" \u00b7 "}
-                    {displayEffort(item)} effort
-                    {" \u00b7 "}
-                    {displayImpact(item)} impact
-                  </p>
+            {currentWeek.items.length > 0 ? (
+              currentWeek.items.map((item) => (
+                <div
+                  key={item.id}
+                  className="flex flex-col gap-2 rounded-lg border border-border bg-background p-3 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div>
+                    <p className="text-sm font-medium">{item.title}</p>
+                    <p className="mt-1 text-xs text-muted">
+                      {recommendationCategoryLabels[item.category]}
+                      {" \u00b7 "}
+                      {displayEffort(item)} effort
+                      {" \u00b7 "}
+                      {displayImpact(item)} impact
+                    </p>
+                  </div>
+                  <span
+                    className={cn(
+                      "w-fit rounded-full border px-2.5 py-1 text-xs font-semibold",
+                      recommendationStatusStyles[item.status],
+                    )}
+                  >
+                    {recommendationStatusLabels[item.status]}
+                  </span>
                 </div>
-                <span className={cn("w-fit rounded-full border px-2.5 py-1 text-xs font-semibold", recommendationStatusStyles[item.status])}>
-                  {recommendationStatusLabels[item.status]}
-                </span>
-              </div>
-            )) : <p className="text-sm text-muted">No open recommendations are assigned to this week.</p>}
+              ))
+            ) : (
+              <p className="text-sm text-muted">
+                No open recommendations are assigned to this week.
+              </p>
+            )}
           </div>
         </div>
       </ReportSection>
@@ -691,61 +789,96 @@ export default async function BusinessActionPlanPage({
       >
         <div className="space-y-4">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-end">
-          <form className="flex gap-2">
-            <input type="hidden" name="status" value={selectedStatus} />
-            {selectedCategory ? <input type="hidden" name="category" value={selectedCategory} /> : null}
-            <input type="hidden" name="week" value={selectedWeek} />
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-3 size-4 text-muted" />
-              <Input name="q" defaultValue={query.q} placeholder="Search actions" className="pl-9" aria-label="Search actions" />
-            </div>
-            <button type="submit" className={buttonVariants({ variant: "secondary" })}>Search</button>
-          </form>
-        </div>
+            <form className="flex gap-2">
+              <input type="hidden" name="status" value={selectedStatus} />
+              {selectedCategory ? (
+                <input type="hidden" name="category" value={selectedCategory} />
+              ) : null}
+              <input type="hidden" name="week" value={selectedWeek} />
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-3 size-4 text-muted" />
+                <Input
+                  name="q"
+                  defaultValue={query.q}
+                  placeholder="Search actions"
+                  className="pl-9"
+                  aria-label="Search actions"
+                />
+              </div>
+              <button
+                type="submit"
+                className={buttonVariants({ variant: "secondary" })}
+              >
+                Search
+              </button>
+            </form>
+          </div>
 
-        <SectionTabs
-          items={statuses.map((status) => ({
-            label: recommendationStatusLabels[status],
-            href: filterHref({ businessId: business.id, status, category: selectedCategory, week: selectedWeek }),
-            active: selectedStatus === status,
-            count: counts[status],
-          }))}
-        />
+          <SectionTabs
+            items={statuses.map((status) => ({
+              label: recommendationStatusLabels[status],
+              href: filterHref({
+                businessId: business.id,
+                status,
+                category: selectedCategory,
+                week: selectedWeek,
+              }),
+              active: selectedStatus === status,
+              count: counts[status],
+            }))}
+          />
 
-        <div className="flex flex-wrap gap-2">
-          <FilterLink href={filterHref({ businessId: business.id, status: selectedStatus, week: selectedWeek })} active={!selectedCategory}>All categories</FilterLink>
-          {actionableCategories.map((category) => (
+          <div className="flex flex-wrap gap-2">
             <FilterLink
-              key={category}
-              href={filterHref({ businessId: business.id, status: selectedStatus, category, week: selectedWeek })}
-              active={selectedCategory === category}
+              href={filterHref({
+                businessId: business.id,
+                status: selectedStatus,
+                week: selectedWeek,
+              })}
+              active={!selectedCategory}
             >
-              {recommendationCategoryLabels[category]}
+              All categories
             </FilterLink>
-          ))}
-        </div>
+            {actionableCategories.map((category) => (
+              <FilterLink
+                key={category}
+                href={filterHref({
+                  businessId: business.id,
+                  status: selectedStatus,
+                  category,
+                  week: selectedWeek,
+                })}
+                active={selectedCategory === category}
+              >
+                {recommendationCategoryLabels[category]}
+              </FilterLink>
+            ))}
+          </div>
 
-        <div className="space-y-3">
-          {filteredRecommendations.length > 0 ? filteredRecommendations.map((recommendation) => (
-            <TaskRow
-              key={recommendation.id}
-              businessId={business.id}
-              businessName={business.name}
-              recommendation={recommendation}
-              evidence={
-                storedEvidenceSummary(recommendation.evidence) ??
-                audit.findings.find(
-                  (finding) => finding.category === recommendation.category,
-                )?.description
-              }
-              sourceUrl={recommendation.sourceUrl}
-            />
-          )) : (
-            <Card className="p-5 text-sm text-muted">
-              No {recommendationStatusLabels[selectedStatus].toLowerCase()} actions match the current filters.
-            </Card>
-          )}
-        </div>
+          <div className="space-y-3">
+            {filteredRecommendations.length > 0 ? (
+              filteredRecommendations.map((recommendation) => (
+                <TaskRow
+                  key={recommendation.id}
+                  businessId={business.id}
+                  businessName={business.name}
+                  recommendation={recommendation}
+                  evidence={
+                    storedEvidenceSummary(recommendation.evidence) ??
+                    audit.findings.find(
+                      (finding) => finding.category === recommendation.category,
+                    )?.description
+                  }
+                  sourceUrl={recommendation.sourceUrl}
+                />
+              ))
+            ) : (
+              <Card className="p-5 text-sm text-muted">
+                No {recommendationStatusLabels[selectedStatus].toLowerCase()}{" "}
+                actions match the current filters.
+              </Card>
+            )}
+          </div>
         </div>
       </DisclosureSection>
 

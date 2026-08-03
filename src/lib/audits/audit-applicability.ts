@@ -24,7 +24,7 @@ export type PresenceProfile = {
 export type AuditAssessmentMode = "website_enabled" | "social_first";
 
 export type AuditAssessment = {
-  version: 1;
+  version: 1 | 2;
   mode: AuditAssessmentMode;
   hasWebsite: boolean;
   confirmedSocialProfilesCount: number;
@@ -55,6 +55,11 @@ const socialFirstWeights: Partial<Record<ScoreCategory, number>> = {
   [ScoreCategory.COMPETITORS]: 20,
 };
 
+const websiteGrowthWeights: Partial<Record<ScoreCategory, number>> = {
+  [ScoreCategory.WEBSITE]: 55,
+  [ScoreCategory.SEO]: 45,
+};
+
 export function hasConfirmedWebsite(profiles: PresenceProfile[]) {
   return profiles.some(
     (profile) =>
@@ -74,106 +79,48 @@ export function confirmedSocialProfiles(profiles: PresenceProfile[]) {
 }
 
 export function hasConfirmedAuditablePresence(profiles: PresenceProfile[]) {
-  return (
-    hasConfirmedWebsite(profiles) ||
-    confirmedSocialProfiles(profiles).length > 0 ||
-    profiles.some(
-      (profile) =>
-        profile.platform === ProfilePlatform.GOOGLE_BUSINESS &&
-        profile.status === BusinessProfileStatus.CONFIRMED &&
-        Boolean(profile.url?.trim() || profile.handle?.trim()),
-    )
-  );
+  return hasConfirmedWebsite(profiles);
 }
 
 export function buildAuditAssessment({
   profiles,
   hasWebsite = hasConfirmedWebsite(profiles),
-  competitorComparisonAvailable = true,
 }: {
   profiles: PresenceProfile[];
   hasWebsite?: boolean;
   competitorComparisonAvailable?: boolean;
 }): AuditAssessment {
-  const confirmedSocialCount = confirmedSocialProfiles(profiles).length;
-
-  const withCompetitorApplicability = (
-    categories: ScoreCategory[],
-    weights: Partial<Record<ScoreCategory, number>>,
-  ) => ({
-    applicableCategories: competitorComparisonAvailable
-      ? categories
-      : categories.filter(
-          (category) => category !== ScoreCategory.COMPETITORS,
-        ),
-    scoreWeights: competitorComparisonAvailable
-      ? weights
-      : Object.fromEntries(
-          Object.entries(weights).filter(
-            ([category]) => category !== ScoreCategory.COMPETITORS,
-          ),
-        ),
-  });
-
   if (hasWebsite) {
-    const applicability = withCompetitorApplicability(
-      [
-        ScoreCategory.WEBSITE,
-        ScoreCategory.SEO,
-        ScoreCategory.SOCIAL,
-        ScoreCategory.BRANDING,
-        ScoreCategory.REVIEWS,
-        ScoreCategory.COMPETITORS,
-      ],
-      websiteEnabledWeights,
-    );
     return {
-      version: 1,
+      version: 2,
       mode: "website_enabled",
       hasWebsite: true,
-      confirmedSocialProfilesCount: confirmedSocialCount,
-      applicableCategories: applicability.applicableCategories,
-      unavailableCategories: competitorComparisonAvailable
-        ? []
-        : [
-            {
-              category: ScoreCategory.COMPETITORS,
-              status: "not_provided",
-              reason:
-                "No usable competitor snapshot was available, so competitive position was excluded from scoring.",
-            },
-          ],
-      scoreWeights: applicability.scoreWeights,
+      confirmedSocialProfilesCount: 0,
+      applicableCategories: [ScoreCategory.WEBSITE, ScoreCategory.SEO],
+      unavailableCategories: [],
+      scoreWeights: websiteGrowthWeights,
       dataUsed: [
         "Confirmed website",
-        "Confirmed and pending business profiles",
+        "Deterministic homepage analysis",
+        "Controlled multi-page crawl",
+        "Website and technical SEO evidence",
         "Business Context",
         "Selected goals",
-        "Review and trust signals",
-        "Saved competitors and competitor profiles",
       ],
       limitations: [
-        "Social post content, engagement, posting frequency, and follower performance were not analyzed.",
+        "The Website Growth Score includes Website (55%) and SEO (45%) only.",
+        "Social, competitor, review-count, and Google Business data do not affect this score.",
+        "Pages outside the crawl limit are not treated as confirmed defects.",
       ],
     };
   }
 
-  const applicability = withCompetitorApplicability(
-    [
-      ScoreCategory.SOCIAL,
-      ScoreCategory.BRANDING,
-      ScoreCategory.REVIEWS,
-      ScoreCategory.COMPETITORS,
-    ],
-    socialFirstWeights,
-  );
-
   return {
-    version: 1,
-    mode: "social_first",
+    version: 2,
+    mode: "website_enabled",
     hasWebsite: false,
-    confirmedSocialProfilesCount: confirmedSocialCount,
-    applicableCategories: applicability.applicableCategories,
+    confirmedSocialProfilesCount: 0,
+    applicableCategories: [],
     unavailableCategories: [
       {
         category: ScoreCategory.WEBSITE,
@@ -185,29 +132,12 @@ export function buildAuditAssessment({
         status: "not_provided",
         reason: "SEO analysis requires a confirmed website.",
       },
-      ...(!competitorComparisonAvailable
-        ? [
-            {
-              category: ScoreCategory.COMPETITORS,
-              status: "not_provided" as const,
-              reason:
-                "No usable competitor snapshot was available, so competitive position was excluded from scoring.",
-            },
-          ]
-        : []),
     ],
-    scoreWeights: applicability.scoreWeights,
-    dataUsed: [
-      "Confirmed and pending social profiles",
-      "Business Context",
-      "Selected goals",
-      "Review and trust signals",
-      "Saved competitors and competitor profiles",
-    ],
+    scoreWeights: {},
+    dataUsed: [],
     limitations: [
-      "No website or SEO analysis was performed because no confirmed website was provided.",
-      "Social profile coverage was analyzed, but individual posts, engagement, posting frequency, and content performance were not.",
-      "Profile bios and link-in-bio destinations were not inspected unless their URLs were explicitly saved.",
+      "A confirmed website is required for the Website & SEO launch product.",
+      "No score should be generated from unavailable website evidence.",
     ],
   };
 }
@@ -261,7 +191,62 @@ export function getAuditAssessment(snapshot: unknown): AuditAssessment {
   }
 
   const hasWebsite = Boolean(isRecord(snapshot) && isRecord(snapshot.website));
-  return buildAuditAssessment({ profiles: [], hasWebsite });
+  return buildLegacyAuditAssessment({ hasWebsite });
+}
+
+function buildLegacyAuditAssessment({ hasWebsite }: { hasWebsite: boolean }) {
+  if (hasWebsite) {
+    return {
+      version: 1 as const,
+      mode: "website_enabled" as const,
+      hasWebsite: true,
+      confirmedSocialProfilesCount: 0,
+      applicableCategories: [
+        ScoreCategory.WEBSITE,
+        ScoreCategory.SEO,
+        ScoreCategory.SOCIAL,
+        ScoreCategory.BRANDING,
+        ScoreCategory.REVIEWS,
+        ScoreCategory.COMPETITORS,
+      ],
+      unavailableCategories: [],
+      scoreWeights: websiteEnabledWeights,
+      dataUsed: ["Legacy audit snapshot"],
+      limitations: [
+        "This audit predates the Website Growth Score and uses the legacy scoring model.",
+      ],
+    } satisfies AuditAssessment;
+  }
+
+  return {
+    version: 1 as const,
+    mode: "social_first" as const,
+    hasWebsite: false,
+    confirmedSocialProfilesCount: 0,
+    applicableCategories: [
+      ScoreCategory.SOCIAL,
+      ScoreCategory.BRANDING,
+      ScoreCategory.REVIEWS,
+      ScoreCategory.COMPETITORS,
+    ],
+    unavailableCategories: [
+      {
+        category: ScoreCategory.WEBSITE,
+        status: "not_provided" as const,
+        reason: "No confirmed website was provided for this legacy audit.",
+      },
+      {
+        category: ScoreCategory.SEO,
+        status: "not_provided" as const,
+        reason: "SEO analysis required a confirmed website.",
+      },
+    ],
+    scoreWeights: socialFirstWeights,
+    dataUsed: ["Legacy audit snapshot"],
+    limitations: [
+      "This audit predates the Website Growth Score and uses the legacy scoring model.",
+    ],
+  } satisfies AuditAssessment;
 }
 
 export function isCategoryApplicable(

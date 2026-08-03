@@ -141,10 +141,7 @@ test("overview makes the first action clear at every supported viewport", async 
     'section[aria-labelledby="recommended-first-action"]',
   );
   await expect(
-    page.getByRole("heading", { name: "Your growth priorities" }),
-  ).toBeVisible();
-  await expect(
-    page.getByText(/Current health/).first(),
+    page.getByRole("heading", { name: "Your website growth priorities" }),
   ).toBeVisible();
   await expect(firstAction).toBeVisible();
   await expect(
@@ -184,7 +181,7 @@ test("overview makes the first action clear at every supported viewport", async 
     findingsSection.getByRole("link", { name: "View all findings" }),
   ).toHaveAttribute("href", new RegExp(`/businesses/${businessId}/audit$`));
   await expect(
-    page.getByRole("heading", { name: "Business health by area" }),
+    page.getByRole("heading", { name: /(?:Business|Website) health by area/ }),
   ).toHaveCount(1);
 
   expect(
@@ -346,7 +343,9 @@ test("changed customer routes remain readable and accessible", async ({
     { waitUntil: "domcontentloaded" },
   );
   await expect(
-    page.getByText("Track competitors that matter to your business."),
+    page.getByRole("heading", {
+      name: "Competitive Intelligence is not part of the launch product",
+    }),
   ).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Side-by-Side Comparison" }),
@@ -365,7 +364,9 @@ test("changed customer routes remain readable and accessible", async ({
     { waitUntil: "domcontentloaded" },
   );
   await expect(
-    page.getByText("Enter a valid Google Maps URL or Place ID."),
+    page.getByRole("heading", {
+      name: "Local Growth is not part of the launch product",
+    }),
   ).toBeVisible();
   await page.screenshot({
     path: path.join(artifactDirectory, "error-state.png"),

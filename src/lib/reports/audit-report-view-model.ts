@@ -14,11 +14,15 @@ import {
 } from "@prisma/client";
 
 import {
+  analyzeReviews,
   normalizeReviewAnalysisForDisplay,
   type ReviewAnalysis,
 } from "@/lib/analyzers/review-analyzer";
 import type { SeoAnalysis } from "@/lib/analyzers/seo-analyzer";
-import type { SocialAnalysis } from "@/lib/analyzers/social-analyzer";
+import {
+  analyzeSocialProfiles,
+  type SocialAnalysis,
+} from "@/lib/analyzers/social-analyzer";
 import type { WebsiteCrawlResult } from "@/lib/analyzers/website-crawler";
 import type { WebsiteAnalysis } from "@/lib/analyzers/website-analyzer";
 import { getPrimaryCtaAssessment } from "@/lib/analyzers/action-classifier";
@@ -71,16 +75,21 @@ import type {
   AuditCompetitorIntelligence,
   CompetitorComparisonResult,
 } from "@/lib/competitors/competitor-types";
-import { businessGoalLabels } from "@/lib/goals";
+import { businessGoalLabels, websiteSeoBusinessGoals } from "@/lib/goals";
 import { cleanReportCopy } from "@/lib/pdf/text-sanitize";
 import { prisma } from "@/lib/prisma";
+import {
+  isWebsiteGrowthAuditSnapshot,
+  LEGACY_SCORE_LABEL,
+  WEBSITE_GROWTH_SCORE_LABEL,
+  isWebsiteSeoCategory,
+  isWebsiteSeoReportCategory,
+} from "@/lib/product/website-seo-scope";
 import {
   aggregateCompetitorProfileCounts,
   aggregateProfileCounts,
 } from "@/lib/profiles/profile-counts";
-import {
-  canonicalRecommendationIssueKey,
-} from "@/lib/recommendations/recommendation-deduplication";
+import { canonicalRecommendationIssueKey } from "@/lib/recommendations/recommendation-deduplication";
 import {
   classifyReportBusiness,
   filterBusinessCompatibleContent,
@@ -195,6 +204,9 @@ export type ReportScoringMetadata = {
 };
 
 export type AuditReportViewModel = {
+  productScope: "website_seo" | "legacy_presence";
+  scoreLabel: string;
+  legacyScoring: boolean;
   business: {
     id: string;
     name: string;
@@ -248,17 +260,14 @@ export type AuditReportViewModel = {
   reviews: ReviewAnalysis;
   socialStrategy: {
     data: SocialStrategyData;
-    source: "ai_generated" | "deterministic_fallback";
-    sourceLabel: "AI generated" | "Deterministic fallback";
+    source: "ai_generated" | "deterministic_fallback" | "disabled";
+    sourceLabel:
+      "AI generated" | "Deterministic fallback" | "Not part of this report";
     freshness: DerivedFreshness;
     scopeNote: string;
   };
   competitors: {
-    status:
-      | "not_configured"
-      | "saved_not_analyzed"
-      | "partial"
-      | "current";
+    status: "not_configured" | "saved_not_analyzed" | "partial" | "current";
     score: number | null;
     label: string;
     activeCount: number;
@@ -344,6 +353,81 @@ type ReportBusinessRecord = Prisma.BusinessGetPayload<{
   };
 }>;
 
+function disabledSocialAnalysis(): SocialAnalysis {
+  const base = analyzeSocialProfiles({ businessProfiles: [] });
+  return {
+    ...base,
+    score: 0,
+    evidenceCompleteness: 0,
+    dataRequirementsMet: false,
+    missingRecommendedPlatforms: [],
+    strengths: [],
+    warnings: [],
+    opportunities: [],
+    recommendedFixes: [],
+    dataUsed: [],
+    limitations: ["Social Growth is not part of this report."],
+  };
+}
+
+function disabledReviewAnalysis(): ReviewAnalysis {
+  const base = analyzeReviews({ businessProfiles: [] });
+  return {
+    ...base,
+    score: 0,
+    evidenceCompleteness: 0,
+    dataRequirementsMet: false,
+    missingInputs: [],
+    reviewScoreExplanation:
+      "Local Growth and review performance are not part of this report.",
+    trustStrengths: [],
+    trustWarnings: [],
+    opportunities: [],
+    recommendedFixes: [],
+    competitorReviewCoverage: [],
+  };
+}
+
+function unavailableModuleFreshness(
+  sourceAuditId: string,
+  reason: string,
+): DerivedFreshness {
+  return {
+    status: "UNAVAILABLE",
+    generatedAt: null,
+    sourceAuditId,
+    dependencyFingerprint: "disabled-launch-module",
+    storedDependencyFingerprint: null,
+    generatorVersion: "disabled-launch-module",
+    reason,
+  };
+}
+
+function disabledSocialStrategy(
+  auditId: string,
+): AuditReportViewModel["socialStrategy"] {
+  return {
+    data: {
+      recommendedPlatforms: [],
+      contentPillars: [],
+      weeklyPlan: [],
+      suggestedPosts: [],
+      conversionTips: [],
+      competitorOpportunities: [],
+      confidence: 0,
+      reasoningSummary: "Social Growth is not part of this report.",
+    },
+    source: "disabled",
+    sourceLabel: "Not part of this report",
+    freshness: unavailableModuleFreshness(
+      auditId,
+      "Social Growth is not part of this report.",
+    ),
+    scopeNote:
+      "Social Growth is disabled for the Website & SEO launch product.",
+  };
+}
+
 export async function buildAuditReportViewModel({
   businessId,
   auditId,
@@ -416,25 +500,38 @@ export async function buildAuditReportViewModel({
       recommendations: true,
     },
   });
-  const currentState = await buildCurrentCompetitorComparison({
-    businessId,
-    ownerId,
-    auditId,
-  });
+  const business = audit.business;
+  const focusedWebsiteSeoReport = isWebsiteGrowthAuditSnapshot(
+    audit.analysisSnapshot,
+  );
+  const currentState = focusedWebsiteSeoReport
+    ? {
+        currentSocial: analyzeSocialProfiles({ businessProfiles: [] }),
+        currentReviews: analyzeReviews({ businessProfiles: [] }),
+        comparison: null,
+      }
+    : await buildCurrentCompetitorComparison({
+        businessId,
+        ownerId,
+        auditId,
+      });
 
   if (!currentState) return null;
 
-  const business = audit.business;
   const assessment = getAuditAssessment(audit.analysisSnapshot);
   const website = getSnapshotValue<WebsiteAnalysis>(
     audit.analysisSnapshot,
     "website",
-    (value) => typeof value.normalizedUrl === "string" && typeof value.score === "number",
+    (value) =>
+      typeof value.normalizedUrl === "string" &&
+      typeof value.score === "number",
   );
   const websiteCrawl = getSnapshotValue<WebsiteCrawlResult>(
     audit.analysisSnapshot,
     "websiteCrawl",
-    (value) => Array.isArray(value.pageResults) && typeof value.pagesScanned === "number",
+    (value) =>
+      Array.isArray(value.pageResults) &&
+      typeof value.pagesScanned === "number",
   );
   const seo = getSnapshotValue<SeoAnalysis>(
     audit.analysisSnapshot,
@@ -442,28 +539,36 @@ export async function buildAuditReportViewModel({
     (value) => typeof value.score === "number",
   );
   const aiAnalysis = readSelectiveAiAuditSnapshot(audit.analysisSnapshot);
-  const savedSocial = getSnapshotValue<SocialAnalysis>(
-    audit.analysisSnapshot,
-    "social",
-    (value) =>
-      typeof value.score === "number" &&
-      Array.isArray(value.confirmedPlatforms) &&
-      Array.isArray(value.pendingPlatforms),
-  );
-  const savedReviews = getSnapshotValue<ReviewAnalysis>(
-    audit.analysisSnapshot,
-    "reviews",
-    (value) =>
-      typeof value.score === "number" &&
-      typeof value.googleBusinessStatus === "string" &&
-      Array.isArray(value.googleBusinessProfiles),
-  );
-  const social = normalizeSocialAnalysisForDisplay(
-    savedSocial ?? currentState.currentSocial,
-  );
-  const reviews = normalizeReviewAnalysisForDisplay(
-    savedReviews ?? currentState.currentReviews,
-  );
+  const savedSocial = focusedWebsiteSeoReport
+    ? null
+    : getSnapshotValue<SocialAnalysis>(
+        audit.analysisSnapshot,
+        "social",
+        (value) =>
+          typeof value.score === "number" &&
+          Array.isArray(value.confirmedPlatforms) &&
+          Array.isArray(value.pendingPlatforms),
+      );
+  const savedReviews = focusedWebsiteSeoReport
+    ? null
+    : getSnapshotValue<ReviewAnalysis>(
+        audit.analysisSnapshot,
+        "reviews",
+        (value) =>
+          typeof value.score === "number" &&
+          typeof value.googleBusinessStatus === "string" &&
+          Array.isArray(value.googleBusinessProfiles),
+      );
+  const social = focusedWebsiteSeoReport
+    ? disabledSocialAnalysis()
+    : normalizeSocialAnalysisForDisplay(
+        savedSocial ?? currentState.currentSocial,
+      );
+  const reviews = focusedWebsiteSeoReport
+    ? disabledReviewAnalysis()
+    : normalizeReviewAnalysisForDisplay(
+        savedReviews ?? currentState.currentReviews,
+      );
   const currentComparison = currentState.comparison;
   const competitorSummary = currentComparison
     ? buildDeterministicSummary(business.name, currentComparison)
@@ -560,7 +665,7 @@ export async function buildAuditReportViewModel({
             ? "No active competitors are configured."
             : "No completed comparable competitor snapshot is available.",
   };
-  const scores = buildScoreItems({
+  const builtScores = buildScoreItems({
     auditScores: audit.scores,
     assessment,
     social,
@@ -568,6 +673,9 @@ export async function buildAuditReportViewModel({
     competitorStatus,
     normalizedFacts,
   });
+  const scores = focusedWebsiteSeoReport
+    ? builtScores.filter((score) => isWebsiteSeoReportCategory(score.category))
+    : builtScores;
   const overallScore =
     audit.overallScore ??
     categoryScore(audit.scores, ScoreCategory.OVERALL) ??
@@ -584,10 +692,16 @@ export async function buildAuditReportViewModel({
     websiteCrawl,
     currentComparison,
   });
-  const businessProfilesForCounts = business.profiles.map((profile) => ({
-    platform: profile.platform,
-    status: profile.status,
-  }));
+  const businessProfilesForCounts = business.profiles
+    .filter(
+      (profile) =>
+        !focusedWebsiteSeoReport ||
+        profile.platform === ProfilePlatform.WEBSITE,
+    )
+    .map((profile) => ({
+      platform: profile.platform,
+      status: profile.status,
+    }));
   if (
     reviews.googleBusinessStatus === "confirmed" &&
     !businessProfilesForCounts.some(
@@ -603,7 +717,7 @@ export async function buildAuditReportViewModel({
     businessProfilesForCounts,
   );
   const competitorProfileCounts = aggregateCompetitorProfileCounts(
-    business.competitors.map((competitor) => ({
+    (focusedWebsiteSeoReport ? [] : business.competitors).map((competitor) => ({
       id: competitor.id,
       name: competitor.name,
       profiles: competitor.discoveredProfiles,
@@ -643,7 +757,7 @@ export async function buildAuditReportViewModel({
         scoring: scoringMetadata.scoringEngineVersion,
       },
     }).snapshot;
-  const allFindings = buildCurrentFindings({
+  const builtFindings = buildCurrentFindings({
     auditFindings: audit.findings,
     reviews,
     social,
@@ -651,7 +765,10 @@ export async function buildAuditReportViewModel({
     sourceEvidence,
     context: compatibilityContext,
   });
-  const recommendationSet = buildCurrentRecommendations({
+  const allFindings = focusedWebsiteSeoReport
+    ? builtFindings.filter((finding) => isWebsiteSeoCategory(finding.category))
+    : builtFindings;
+  const builtRecommendationSet = buildCurrentRecommendations({
     auditRecommendations: audit.recommendations,
     auditFindings: audit.findings,
     business,
@@ -665,43 +782,67 @@ export async function buildAuditReportViewModel({
     currentComparison,
     evidenceIntegrity,
   });
-  const socialStrategy = buildCurrentSocialStrategy({
-    auditId: audit.id,
-    auditSnapshot: audit.analysisSnapshot,
-    auditCreatedAt: audit.createdAt,
-    business,
-    social,
-    reviews,
-    website,
-    recommendations: recommendationSet.all,
-    context: compatibilityContext,
-    sourceEvidence,
-  });
+  const recommendationSet = focusedWebsiteSeoReport
+    ? focusedRecommendationSet(builtRecommendationSet)
+    : builtRecommendationSet;
+  const socialStrategy = focusedWebsiteSeoReport
+    ? disabledSocialStrategy(audit.id)
+    : buildCurrentSocialStrategy({
+        auditId: audit.id,
+        auditSnapshot: audit.analysisSnapshot,
+        auditCreatedAt: audit.createdAt,
+        business,
+        social,
+        reviews,
+        website,
+        recommendations: recommendationSet.all,
+        context: compatibilityContext,
+        sourceEvidence,
+      });
   const nextMoves = buildNextMoves({
     assessment,
     social,
     recommendations: recommendationSet.primary,
   });
-  const executiveSummary = buildExecutiveSummary({
-    businessName: business.name,
-    overallScore,
-    scores,
-    reviews,
-    currentComparison,
-    nextMoves,
-    normalizedFacts,
-  });
+  const executiveSummary = focusedWebsiteSeoReport
+    ? buildWebsiteSeoExecutiveSummary({
+        businessName: business.name,
+        overallScore,
+        scores,
+        nextMoves,
+      })
+    : buildExecutiveSummary({
+        businessName: business.name,
+        overallScore,
+        scores,
+        reviews,
+        currentComparison,
+        nextMoves,
+        normalizedFacts,
+      });
   const snapshotDate = latestDate(
     currentComparison?.freshness.map((item) => item.scannedAt) ?? [],
   );
+  const reportGoals = focusedWebsiteSeoReport
+    ? business.goals.filter((goal) => websiteSeoBusinessGoals.includes(goal))
+    : business.goals;
+  const reportPrimaryGoal =
+    business.primaryGoal && reportGoals.includes(business.primaryGoal)
+      ? business.primaryGoal
+      : null;
   return {
+    productScope: focusedWebsiteSeoReport ? "website_seo" : "legacy_presence",
+    scoreLabel: focusedWebsiteSeoReport
+      ? WEBSITE_GROWTH_SCORE_LABEL
+      : LEGACY_SCORE_LABEL,
+    legacyScoring: !focusedWebsiteSeoReport,
     business: {
       id: business.id,
       name: business.name,
       initialInput: business.initialInput,
       archetype,
-      selectedGoals: business.goals,
-      primaryGoal: business.primaryGoal,
+      selectedGoals: reportGoals,
+      primaryGoal: reportPrimaryGoal,
       context: {
         description: contextNormalization.description,
         targetAudience: business.targetAudience,
@@ -716,38 +857,55 @@ export async function buildAuditReportViewModel({
         needsReview: contextNormalization.needsReview,
         reviewNote: contextNormalization.reviewNote,
       },
-      userSelectedGrowthGoal: business.primaryGoal
-        ? businessGoalLabels[business.primaryGoal]
+      userSelectedGrowthGoal: reportPrimaryGoal
+        ? businessGoalLabels[reportPrimaryGoal]
         : "Not selected",
-      secondaryGoals: business.goals
-        .filter((goal) => goal !== business.primaryGoal)
+      secondaryGoals: reportGoals
+        .filter((goal) => goal !== reportPrimaryGoal)
         .map((goal) => businessGoalLabels[goal]),
       profileSummary: {
         confirmed: business.profiles.filter(
-          (profile) => profile.status === BusinessProfileStatus.CONFIRMED,
+          (profile) =>
+            profile.status === BusinessProfileStatus.CONFIRMED &&
+            (!focusedWebsiteSeoReport ||
+              profile.platform === ProfilePlatform.WEBSITE),
         ).length,
         pending: business.profiles.filter(
-          (profile) => profile.status === BusinessProfileStatus.PENDING,
+          (profile) =>
+            profile.status === BusinessProfileStatus.PENDING &&
+            (!focusedWebsiteSeoReport ||
+              profile.platform === ProfilePlatform.WEBSITE),
         ).length,
         removed: business.profiles.filter(
-          (profile) => profile.status === BusinessProfileStatus.REMOVED,
+          (profile) =>
+            profile.status === BusinessProfileStatus.REMOVED &&
+            (!focusedWebsiteSeoReport ||
+              profile.platform === ProfilePlatform.WEBSITE),
         ).length,
         confirmedPlatforms: business.profiles
           .filter(
-            (profile) => profile.status === BusinessProfileStatus.CONFIRMED,
+            (profile) =>
+              profile.status === BusinessProfileStatus.CONFIRMED &&
+              (!focusedWebsiteSeoReport ||
+                profile.platform === ProfilePlatform.WEBSITE),
           )
           .map((profile) => platformLabel(profile.platform)),
         counts: businessProfileCounts,
-        userConfirmedSocialProfiles:
-          normalizedFacts.profiles.userConfirmedSocialProfiles,
-        publiclyDetectedSocialProfiles:
-          normalizedFacts.profiles.publiclyDetectedSocialProfiles,
-        additionalDetectedPlatforms:
-          normalizedFacts.profiles.additionalDetectedPlatforms,
-        pendingSocialProfiles:
-          normalizedFacts.profiles.pendingSocialProfiles,
-        profileContentAnalyzed:
-          normalizedFacts.profiles.profileContentAnalyzed,
+        userConfirmedSocialProfiles: focusedWebsiteSeoReport
+          ? 0
+          : normalizedFacts.profiles.userConfirmedSocialProfiles,
+        publiclyDetectedSocialProfiles: focusedWebsiteSeoReport
+          ? 0
+          : normalizedFacts.profiles.publiclyDetectedSocialProfiles,
+        additionalDetectedPlatforms: focusedWebsiteSeoReport
+          ? []
+          : normalizedFacts.profiles.additionalDetectedPlatforms,
+        pendingSocialProfiles: focusedWebsiteSeoReport
+          ? 0
+          : normalizedFacts.profiles.pendingSocialProfiles,
+        profileContentAnalyzed: focusedWebsiteSeoReport
+          ? 0
+          : normalizedFacts.profiles.profileContentAnalyzed,
       },
     },
     audit: {
@@ -767,32 +925,44 @@ export async function buildAuditReportViewModel({
     reviews,
     socialStrategy,
     competitors: {
-      status: competitorStatus,
+      status: focusedWebsiteSeoReport ? "not_configured" : competitorStatus,
       score:
-        competitorStatus === "current" || competitorStatus === "partial"
+        !focusedWebsiteSeoReport &&
+        (competitorStatus === "current" || competitorStatus === "partial")
           ? categoryScore(audit.scores, ScoreCategory.COMPETITORS)
           : null,
-      label: competitorStatusLabel(competitorStatus),
-      activeCount: business.competitors.length,
-      confirmedProfilesCount: business.competitors.reduce(
-        (total, competitor) =>
-          total +
-          competitor.discoveredProfiles.filter(
-            (profile) =>
-              profile.status === BusinessProfileStatus.CONFIRMED,
-          ).length,
-        0,
-      ),
+      label: focusedWebsiteSeoReport
+        ? "Not part of this report"
+        : competitorStatusLabel(competitorStatus),
+      activeCount: focusedWebsiteSeoReport ? 0 : business.competitors.length,
+      confirmedProfilesCount: focusedWebsiteSeoReport
+        ? 0
+        : business.competitors.reduce(
+            (total, competitor) =>
+              total +
+              competitor.discoveredProfiles.filter(
+                (profile) => profile.status === BusinessProfileStatus.CONFIRMED,
+              ).length,
+            0,
+          ),
       profileCounts: competitorProfileCounts.totals,
       profilesByCompetitor: competitorProfileCounts.competitors,
-      names: business.competitors.map((competitor) => competitor.name),
-      intelligence: competitorIntelligence,
-      comparison: currentComparison,
-      methodologyNote:
-        "Competitive Position reflects comparable public website, SEO, confirmed profile-coverage, review, and messaging signals. Missing data is not scored as a loss.",
-      snapshotDate,
+      names: focusedWebsiteSeoReport
+        ? []
+        : business.competitors.map((competitor) => competitor.name),
+      intelligence: focusedWebsiteSeoReport ? null : competitorIntelligence,
+      comparison: focusedWebsiteSeoReport ? null : currentComparison,
+      methodologyNote: focusedWebsiteSeoReport
+        ? "Competitive Intelligence is disabled for the Website & SEO launch product."
+        : "Competitive Position reflects comparable public website, SEO, confirmed profile-coverage, review, and messaging signals. Missing data is not scored as a loss.",
+      snapshotDate: focusedWebsiteSeoReport ? null : snapshotDate,
       businessAuditDate: audit.createdAt,
-      freshness: competitorFreshness,
+      freshness: focusedWebsiteSeoReport
+        ? unavailableModuleFreshness(
+            audit.id,
+            "Competitive Intelligence is not part of this report.",
+          )
+        : competitorFreshness,
     },
     findings: groupFindings(allFindings),
     recommendations: recommendationSet,
@@ -801,8 +971,7 @@ export async function buildAuditReportViewModel({
       comparison,
       previousScore: previousAudit?.overallScore ?? null,
       currentScore: overallScore,
-      note:
-        "Audit scores change only when new analysis detects different evidence or the scoring or data coverage changes. Marking an Action Plan task complete does not directly change audit scores.",
+      note: "Audit scores change only when new analysis detects different evidence or the scoring or data coverage changes. Marking an Action Plan task complete does not directly change audit scores.",
     },
     freshness: {
       businessContext: hasBusinessContext(business)
@@ -811,15 +980,19 @@ export async function buildAuditReportViewModel({
           : "CURRENT"
         : "UNAVAILABLE",
       socialStrategy: socialStrategy.freshness.status,
-      competitorComparison: competitorFreshness.status,
-      reviews: "CURRENT",
+      competitorComparison: focusedWebsiteSeoReport
+        ? "UNAVAILABLE"
+        : competitorFreshness.status,
+      reviews: focusedWebsiteSeoReport ? "UNAVAILABLE" : "CURRENT",
     },
     confidence: {
       pagesScanned: normalizedFacts.coverage.crawl.successfulPages,
       crawlLimit: normalizedFacts.coverage.crawl.crawlLimit,
       crawlStatus: normalizedFacts.coverage.crawl.explanation,
       importantPagesIncluded: websiteCrawl?.importantPagesFound ?? [],
-      googleBusinessStatus: reviews.googleBusinessStatus,
+      googleBusinessStatus: focusedWebsiteSeoReport
+        ? "Not assessed"
+        : reviews.googleBusinessStatus,
       businessContextStatus: !hasBusinessContext(business)
         ? "Not generated"
         : contextNormalization.needsReview
@@ -827,13 +1000,24 @@ export async function buildAuditReportViewModel({
           : business.contextConfirmedAt
             ? "Confirmed"
             : "Generated and awaiting confirmation",
-      socialStrategyStatus: `${socialStrategy.freshness.status} - ${socialStrategy.sourceLabel}`,
-      competitorComparisonStatus: competitorStatusLabel(competitorStatus),
+      socialStrategyStatus: focusedWebsiteSeoReport
+        ? "Not part of this report"
+        : `${socialStrategy.freshness.status} - ${socialStrategy.sourceLabel}`,
+      competitorComparisonStatus: focusedWebsiteSeoReport
+        ? "Not part of this report"
+        : competitorStatusLabel(competitorStatus),
       limitations: uniqueStrings([
         ...assessment.limitations,
-        ...(currentComparison?.limitations ?? []),
-        "Individual social posts, engagement, posting frequency, reach, impressions, and content performance were not analyzed.",
-        "Competitor positioning is inferred from publicly observable messaging and is not private market or revenue data.",
+        ...(!focusedWebsiteSeoReport
+          ? [
+              ...(currentComparison?.limitations ?? []),
+              "Individual social posts, engagement, posting frequency, reach, impressions, and content performance were not analyzed.",
+              "Competitor positioning is inferred from publicly observable messaging and is not private market or revenue data.",
+            ]
+          : [
+              "The Website Growth Score covers Website and SEO evidence only.",
+              "Pages outside the saved crawl coverage were not treated as verified issues.",
+            ]),
       ]),
     },
     scoringMetadata,
@@ -841,25 +1025,30 @@ export async function buildAuditReportViewModel({
     normalizedFacts,
     coverage: normalizedFacts.coverage,
     aiAnalysis,
-    dataNotes: evidenceIntegrity.dataConflicts.map(
-      (conflict) => `${conflict.explanation} ${conflict.action}`,
-    ),
+    dataNotes: focusedWebsiteSeoReport
+      ? []
+      : evidenceIntegrity.dataConflicts.map(
+          (conflict) => `${conflict.explanation} ${conflict.action}`,
+        ),
     technicalAppendix: {
       detectedActionLinks:
         website?.actionSummary?.detectedActionLinks?.map(
           (action) => `${action.label} (${action.actionType})`,
-        ) ?? website?.actionSummary?.rawCandidates ?? website?.ctaCandidates ?? [],
+        ) ??
+        website?.actionSummary?.rawCandidates ??
+        website?.ctaCandidates ??
+        [],
       pagesWithNoDetectedActionLinks: websiteCrawl?.pagesWithNoCTA ?? null,
       pagesWithDetectedActionLinks: websiteCrawl
-        ? websiteCrawl.pagesWithDetectedActionLinks ??
+        ? (websiteCrawl.pagesWithDetectedActionLinks ??
           websiteCrawl.pageResults.filter(
             (page) =>
               page.actionSummary?.hasDetectedActionLinks ??
               (page.actionSummary?.primaryActions?.length ?? 0) > 0,
-          ).length
+          ).length)
         : website
-          ? website.actionSummary?.hasDetectedActionLinks ??
-            (website.actionSummary?.primaryActions?.length ?? 0) > 0
+          ? (website.actionSummary?.hasDetectedActionLinks ??
+            (website.actionSummary?.primaryActions?.length ?? 0) > 0)
             ? 1
             : 0
           : null,
@@ -886,15 +1075,74 @@ export async function buildAuditReportViewModel({
       homepagePrimaryCtaAssessment: website
         ? getPrimaryCtaAssessment(website.actionSummary)
         : null,
-      duplicateUrlVariantsSkipped:
-        websiteCrawl?.duplicateUrlsSkipped ?? null,
+      duplicateUrlVariantsSkipped: websiteCrawl?.duplicateUrlsSkipped ?? null,
       pageResults: websiteCrawl?.pageResults ?? [],
-      pageSelection: selectReportCrawlPages(
-        websiteCrawl?.pageResults ?? [],
-      ),
+      pageSelection: selectReportCrawlPages(websiteCrawl?.pageResults ?? []),
       findings: allFindings,
     },
   };
+}
+
+function focusedRecommendationSet(
+  recommendations: AuditReportViewModel["recommendations"],
+): AuditReportViewModel["recommendations"] {
+  const all = recommendations.all.filter((recommendation) =>
+    isWebsiteSeoCategory(recommendation.category),
+  );
+
+  return {
+    primary: all
+      .filter(
+        (recommendation) =>
+          recommendation.status !== RecommendationStatus.COMPLETED &&
+          recommendation.status !== RecommendationStatus.DISMISSED,
+      )
+      .slice(0, 3),
+    technical: all
+      .filter((recommendation) => recommendation.technical)
+      .slice(0, 5),
+    all,
+    completed: all.filter(
+      (recommendation) =>
+        recommendation.status === RecommendationStatus.COMPLETED,
+    ).length,
+    total: all.length,
+  };
+}
+
+function buildWebsiteSeoExecutiveSummary({
+  businessName,
+  overallScore,
+  scores,
+  nextMoves,
+}: {
+  businessName: string;
+  overallScore: number;
+  scores: ReportScoreItem[];
+  nextMoves: ReportNextMove[];
+}) {
+  const scoredCategories = scores
+    .filter(
+      (score) =>
+        score.category !== ScoreCategory.OVERALL &&
+        score.status === "scored" &&
+        score.score !== null,
+    )
+    .sort((left, right) => (left.score ?? 0) - (right.score ?? 0));
+  const weakest = scoredCategories.at(0);
+  const nextAction = nextMoves.at(0);
+
+  return cleanReportCopy(
+    `${businessName}'s Website Growth Score is ${overallScore}/100, based on the website and SEO evidence captured in this audit.${
+      weakest
+        ? ` ${weakest.label} is the clearest area for improvement at ${weakest.score}/100.`
+        : ""
+    }${
+      nextAction
+        ? ` Start with: ${nextAction.title}.`
+        : " Review the evidence and coverage notes before choosing the next change."
+    }`,
+  );
 }
 
 function buildCurrentSocialStrategy({
@@ -949,7 +1197,10 @@ function buildCurrentSocialStrategy({
       ...competitor.snapshots.map((snapshot) => snapshot.updatedAt),
     ]),
   ]);
-  const snapshotStrategy = getSnapshotRecord(auditSnapshot, "reportSocialStrategy");
+  const snapshotStrategy = getSnapshotRecord(
+    auditSnapshot,
+    "reportSocialStrategy",
+  );
   const snapshotData = snapshotStrategy
     ? parseSnapshotSocialStrategy(snapshotStrategy.data)
     : null;
@@ -964,7 +1215,9 @@ function buildCurrentSocialStrategy({
       snapshotStrategy?.dependencyFingerprint,
     ),
     generatorVersion: SOCIAL_STRATEGY_GENERATOR_VERSION,
-    storedGeneratorVersion: stringFromUnknown(snapshotStrategy?.generatorVersion),
+    storedGeneratorVersion: stringFromUnknown(
+      snapshotStrategy?.generatorVersion,
+    ),
     latestDependencyAt,
     contentValid: snapshotCompatible,
   });
@@ -1159,7 +1412,11 @@ function buildCurrentRecommendations({
       let title = recommendation.title;
       const text = `${title} ${description}`;
 
-      if (/content cadence|posting frequency|engagement|top-performing content/i.test(text)) {
+      if (
+        /content cadence|posting frequency|engagement|top-performing content/i.test(
+          text,
+        )
+      ) {
         title = "Review public competitor positioning periodically";
         description = publicCompetitorMonitoringCopy(
           business.competitors.map((competitor) => competitor.name),
@@ -1215,87 +1472,85 @@ function buildCurrentRecommendations({
     diagnosticLabel: `pdf:${business.id}`,
   });
 
-  const deduped: ReportRecommendation[] = dedupeRecommendations(compatible).map((recommendation) => {
-    const canonicalEvidence = readCanonicalRecommendationEvidence(
-      recommendation.evidence,
-    );
-    const aiEvidence = readAiReviewedOpportunityEvidence(
-      recommendation.evidence,
-    );
-    const relatedFinding =
-      auditFindings.find(
+  const deduped: ReportRecommendation[] = dedupeRecommendations(compatible).map(
+    (recommendation) => {
+      const canonicalEvidence = readCanonicalRecommendationEvidence(
+        recommendation.evidence,
+      );
+      const aiEvidence = readAiReviewedOpportunityEvidence(
+        recommendation.evidence,
+      );
+      const relatedFinding = auditFindings.find(
         (finding) =>
           finding.id ===
           (canonicalEvidence?.sourceFindingId ??
             recommendation.sourceReferenceId),
       );
-    const technical =
-      recommendation.sourceType === "ai_reviewed_opportunity"
-        ? false
-        : isTechnicalRecommendation(recommendation);
-    const evidenceSummary = aiEvidence?.excerpt ??
-      canonicalEvidence?.reportEvidence ??
-      relatedFinding?.description ??
-      evidenceForCategory({
-        category: recommendation.category,
-        website,
-        websiteCrawl,
-        reviews,
-        social,
-        currentComparison,
-      });
+      const technical =
+        recommendation.sourceType === "ai_reviewed_opportunity"
+          ? false
+          : isTechnicalRecommendation(recommendation);
+      const evidenceSummary =
+        aiEvidence?.excerpt ??
+        canonicalEvidence?.reportEvidence ??
+        relatedFinding?.description ??
+        evidenceForCategory({
+          category: recommendation.category,
+          website,
+          websiteCrawl,
+          reviews,
+          social,
+          currentComparison,
+        });
 
-    return {
-      id: recommendation.id,
-      title: cleanReportCopy(recommendation.title.replace(/[.]+$/, "")),
-      description: cleanReportCopy(recommendation.description),
-      category: recommendation.category,
-      priority: recommendation.priority,
-      status: recommendation.status,
-      estimatedEffort:
-        recommendation.estimatedEffort ?? recommendation.effort ?? "Medium",
-      expectedImpact:
-        recommendation.expectedImpact ?? recommendation.impact ?? "Medium",
-      sourceCategory: categoryLabel(recommendation.category),
-      sourceFindingId:
-        canonicalEvidence?.sourceFindingId ??
-        recommendation.sourceReferenceId ??
-        relatedFinding?.id ??
-        null,
-      evidenceSummary: completeEvidenceSummary(evidenceSummary),
-      businessRelevance: businessRelevance(
-        recommendation.category,
-        context,
-      ),
-      confidence: aiEvidence
-        ? evidenceConfidenceLabel(aiEvidence.confidence)
-        : canonicalEvidence
-        ? evidenceConfidenceLabel(canonicalEvidence.evidenceConfidence)
-        : relatedFinding || recommendation.sourceType
-          ? "High" as const
-          : "Medium" as const,
-      freshness:
-        recommendation.sourceType === "current_live_state"
-          ? "Current live state" as const
-          : canonicalEvidence || relatedFinding
-            ? "Current audit" as const
-            : "General best practice" as const,
-      technical,
-      sourceLabel:
-        canonicalEvidence?.findingType
+      return {
+        id: recommendation.id,
+        title: cleanReportCopy(recommendation.title.replace(/[.]+$/, "")),
+        description: cleanReportCopy(recommendation.description),
+        category: recommendation.category,
+        priority: recommendation.priority,
+        status: recommendation.status,
+        estimatedEffort:
+          recommendation.estimatedEffort ?? recommendation.effort ?? "Medium",
+        expectedImpact:
+          recommendation.expectedImpact ?? recommendation.impact ?? "Medium",
+        sourceCategory: categoryLabel(recommendation.category),
+        sourceFindingId:
+          canonicalEvidence?.sourceFindingId ??
+          recommendation.sourceReferenceId ??
+          relatedFinding?.id ??
+          null,
+        evidenceSummary: completeEvidenceSummary(evidenceSummary),
+        businessRelevance: businessRelevance(recommendation.category, context),
+        confidence: aiEvidence
+          ? evidenceConfidenceLabel(aiEvidence.confidence)
+          : canonicalEvidence
+            ? evidenceConfidenceLabel(canonicalEvidence.evidenceConfidence)
+            : relatedFinding || recommendation.sourceType
+              ? ("High" as const)
+              : ("Medium" as const),
+        freshness:
+          recommendation.sourceType === "current_live_state"
+            ? ("Current live state" as const)
+            : canonicalEvidence || relatedFinding
+              ? ("Current audit" as const)
+              : ("General best practice" as const),
+        technical,
+        sourceLabel: canonicalEvidence?.findingType
           ? findingTypeLabels[canonicalEvidence.findingType]
           : recommendation.sourceType === "ai_reviewed_opportunity"
-          ? "AI-reviewed opportunity" as const
-          : technical
-            ? "Verified technical issue" as const
-            : undefined,
-      sourceUrl:
-        recommendation.sourceUrl ??
-        canonicalEvidence?.affectedUrls?.at(0) ??
-        aiEvidence?.sourceUrl ??
-        null,
-    };
-  });
+            ? ("AI-reviewed opportunity" as const)
+            : technical
+              ? ("Verified technical issue" as const)
+              : undefined,
+        sourceUrl:
+          recommendation.sourceUrl ??
+          canonicalEvidence?.affectedUrls?.at(0) ??
+          aiEvidence?.sourceUrl ??
+          null,
+      };
+    },
+  );
   const sorted = deduped.sort(recommendationSort);
 
   return {
@@ -1318,8 +1573,9 @@ function buildNextMoves({
   social: SocialAnalysis;
   recommendations: ReportRecommendation[];
 }) {
-  const moves = recommendations.slice(0, 3).map<ReportNextMove>(
-    (recommendation) => ({
+  const moves = recommendations
+    .slice(0, 3)
+    .map<ReportNextMove>((recommendation) => ({
       title: recommendation.title,
       whyItMatters: recommendation.businessRelevance,
       expectedOutcome: expectedOutcomeForCategory(recommendation.category),
@@ -1328,8 +1584,7 @@ function buildNextMoves({
       category: recommendation.category,
       effort: recommendation.estimatedEffort,
       impact: recommendation.expectedImpact,
-    }),
-  );
+    }));
 
   if (moves.length === 0 && !assessment.hasWebsite) {
     moves.push({
@@ -1400,9 +1655,7 @@ function buildExecutiveSummary({
     weakest.length
       ? `The clearest attention areas are ${joinNaturally(weakest)}.`
       : null,
-    nextMoves.at(0)
-      ? `Start with: ${nextMoves[0].title}.`
-      : null,
+    nextMoves.at(0) ? `Start with: ${nextMoves[0].title}.` : null,
     normalizedFacts.profiles.profileContentAnalyzed === 0
       ? "Social profile presence was assessed, but individual posts, engagement, posting frequency, and content performance were not analyzed."
       : null,
@@ -1436,30 +1689,29 @@ function buildCurrentFindings({
 }) {
   const hasCurrentComparison =
     (currentComparison?.analyzedCompetitorCount ?? 0) > 0;
-  const filtered = auditFindings
-    .filter((finding) => {
-      const text = `${finding.title} ${finding.description}`;
+  const filtered = auditFindings.filter((finding) => {
+    const text = `${finding.title} ${finding.description}`;
 
-      if (
-        hasCurrentComparison &&
-        /future analysis can compare|competitor analysis (?:is|has) not|competitor data needs|saved competitor only|comparison unavailable/i.test(
-          text,
-        )
-      ) {
-        return false;
-      }
+    if (
+      hasCurrentComparison &&
+      /future analysis can compare|competitor analysis (?:is|has) not|competitor data needs|saved competitor only|comparison unavailable/i.test(
+        text,
+      )
+    ) {
+      return false;
+    }
 
-      if (
-        reviews.googleBusinessStatus === "confirmed" &&
-        /google business.{0,60}(missing|pending|unconfirmed|needs confirmation)|(?:add|confirm|claim).{0,60}google business/i.test(
-          text,
-        )
-      ) {
-        return false;
-      }
+    if (
+      reviews.googleBusinessStatus === "confirmed" &&
+      /google business.{0,60}(missing|pending|unconfirmed|needs confirmation)|(?:add|confirm|claim).{0,60}google business/i.test(
+        text,
+      )
+    ) {
+      return false;
+    }
 
-      return true;
-    });
+    return true;
+  });
   const compatible = filterBusinessCompatibleContent({
     items: filtered,
     context,
@@ -1481,9 +1733,7 @@ function buildCurrentFindings({
       category: finding.category,
       severity: finding.severity,
       findingType,
-      source: aiEvidence
-        ? "ai_reviewed_opportunity"
-        : "selected_audit",
+      source: aiEvidence ? "ai_reviewed_opportunity" : "selected_audit",
       sourceLabel: findingTypeLabels[findingType],
       sourceUrl: finding.sourceUrl ?? aiEvidence?.sourceUrl ?? null,
       evidenceSummary: aiEvidence?.excerpt ?? finding.description,
@@ -1614,8 +1864,7 @@ function buildScoreItems({
           category === ScoreCategory.WEBSITE
             ? "not_provided"
             : "not_applicable",
-        note:
-          "Adding and confirming a website later will unlock website and SEO analysis.",
+        note: "Adding and confirming a website later will unlock website and SEO analysis.",
         ...evidenceDetails,
       };
     }
@@ -1646,8 +1895,7 @@ function buildScoreItems({
         label: "Social profile coverage",
         score: normalizedFacts.scoreEvidence.social.score,
         status: "partial",
-        note:
-          "This score measures confirmed platform coverage only. Posts, activity, engagement, and performance were not analyzed.",
+        note: "This score measures confirmed platform coverage only. Posts, activity, engagement, and performance were not analyzed.",
         confidence: evidenceConfidenceLabel(
           normalizedFacts.scoreEvidence.social.confidence,
         ),
@@ -1714,15 +1962,13 @@ function buildScoringMetadata({
 
   return {
     scoringEngineVersion:
-      stringFromUnknown(saved?.scoringEngineVersion) ??
-      "legacy-growth-score",
+      stringFromUnknown(saved?.scoringEngineVersion) ?? "legacy-growth-score",
     reportViewModelVersion: REPORT_VIEW_MODEL_VERSION,
     analyzerVersions: {
       website:
         stringFromUnknown(savedAnalyzers.website) ?? WEBSITE_ANALYZER_VERSION,
       seo: stringFromUnknown(savedAnalyzers.seo) ?? SEO_ANALYZER_VERSION,
-      social:
-        stringFromUnknown(savedAnalyzers.social) ?? "social-analyzer-v2",
+      social: stringFromUnknown(savedAnalyzers.social) ?? "social-analyzer-v2",
       reviews:
         stringFromUnknown(savedAnalyzers.reviews) ?? "review-analyzer-v2",
       competitors:
@@ -1760,7 +2006,10 @@ function getCompetitorStatus({
   if (!comparison || comparison.analyzedCompetitorCount === 0) {
     return "saved_not_analyzed";
   }
-  if (comparison.staleCompetitorCount > 0 || comparison.failedCompetitorCount > 0) {
+  if (
+    comparison.staleCompetitorCount > 0 ||
+    comparison.failedCompetitorCount > 0
+  ) {
     return "partial";
   }
   return "current";
@@ -1879,14 +2128,16 @@ function validateSocialStrategy(
     ]),
   ].join(" ");
 
-  return validateBusinessCompatibleContent({
-    item: { title: "Social Strategy", description: content },
-    context,
-    sourceEvidence,
-  }).compatible &&
+  return (
+    validateBusinessCompatibleContent({
+      item: { title: "Social Strategy", description: content },
+      context,
+      sourceEvidence,
+    }).compatible &&
     !/adding competitor data|absence of a google business|google business profile.{0,40}(missing|unconfirmed)/i.test(
       content,
-    );
+    )
+  );
 }
 
 function parseSnapshotSocialStrategy(value: unknown) {
@@ -2043,9 +2294,9 @@ function isTechnicalRecommendation(item: {
   );
 }
 
-function dedupeRecommendations<T extends { title: string; description: string }>(
-  items: T[],
-) {
+function dedupeRecommendations<
+  T extends { title: string; description: string },
+>(items: T[]) {
   const seen = new Set<string>();
   return items.filter((item) => {
     const key = item.title
@@ -2128,8 +2379,7 @@ function normalizeSocialAnalysisForDisplay(
     scoreScope: social.scoreScope ?? "PROFILE_COVERAGE",
     scoreConfidence:
       social.scoreConfidence ??
-      (social.confirmedProfilesCount > 0 &&
-      social.pendingProfilesCount === 0
+      (social.confirmedProfilesCount > 0 && social.pendingProfilesCount === 0
         ? "MEDIUM"
         : "LOW"),
     scoreStatus: social.scoreStatus ?? "COVERAGE_ONLY",

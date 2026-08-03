@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   compactCoverageSummary,
+  compactWebsiteSeoCoverageSummary,
   plainCoverageLabel,
   plainHealthLabel,
   plainScoreInterpretation,
@@ -81,6 +82,56 @@ test("overview coverage and finding summaries remain compact", () => {
   assert.equal(
     coverage,
     "9 pages checked \u00b7 9 reviewed by AI \u00b7 3 social profiles found \u00b7 Review data limited",
+  );
+  assert.equal(
+    compactWebsiteSeoCoverageSummary({
+      version: "audit-coverage-v2",
+      crawl: {
+        eligiblePages: 9,
+        successfulPages: 9,
+        failedPages: 0,
+        excludedPages: 0,
+        crawlLimit: 10,
+        crawlLimitReached: false,
+        status: "COMPLETE_FOR_ELIGIBLE_CRAWLED_PAGES",
+        explanation: "All pages checked.",
+      },
+      technical: {
+        pagesAnalyzed: 9,
+        status: "COMPLETE",
+        explanation: "Technical checks completed.",
+      },
+      aiContent: {
+        selectedPages: 9,
+        completedPages: 9,
+        failedPages: 0,
+        deterministicOnlyPages: 0,
+        status: "COMPLETE_FOR_SELECTED_PAGES",
+        explanation: "AI review completed.",
+      },
+      socialProfiles: {
+        userConfirmed: 99,
+        publiclyDetected: 99,
+        pending: 99,
+        contentAnalyzed: 0,
+        status: "PROFILE_ONLY",
+        explanation: "Profiles checked.",
+      },
+      reviews: {
+        listingConfirmed: true,
+        ratingAvailable: true,
+        countAvailable: true,
+        status: "SCORABLE",
+        explanation: "Review data available.",
+      },
+      competitors: {
+        configured: true,
+        analyzed: true,
+        status: "ANALYZED",
+        explanation: "Competitors checked.",
+      },
+    }),
+    "9 pages checked \u00b7 9 reviewed by AI \u00b7 Website and SEO evidence only",
   );
 
   assert.equal(

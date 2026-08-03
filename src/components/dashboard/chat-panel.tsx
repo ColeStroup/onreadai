@@ -267,10 +267,7 @@ export function ChatPanel({
         const height = Math.ceil(
           composerElement.getBoundingClientRect().height,
         );
-        panelElement.style.setProperty(
-          "--chat-composer-height",
-          `${height}px`,
-        );
+        panelElement.style.setProperty("--chat-composer-height", `${height}px`);
         if (isNearBottomRef.current) {
           bottomAnchorRef.current?.scrollIntoView({
             behavior: "auto",
@@ -300,10 +297,7 @@ export function ChatPanel({
     window.requestAnimationFrame(() => inputRef.current?.focus());
   }
 
-  async function requestResponse(
-    question: string,
-    exchangeId: string,
-  ) {
+  async function requestResponse(question: string, exchangeId: string) {
     if (requestInFlightRef.current) return;
 
     requestInFlightRef.current = true;
@@ -357,9 +351,7 @@ export function ChatPanel({
       }
     } catch {
       setPendingExchange((current) =>
-        current?.id === exchangeId
-          ? { ...current, state: "error" }
-          : current,
+        current?.id === exchangeId ? { ...current, state: "error" } : current,
       );
     } finally {
       requestInFlightRef.current = false;
@@ -452,221 +444,226 @@ export function ChatPanel({
   return (
     <Card className="relative overflow-visible">
       <div ref={chatPanelRef}>
-      <CardContent className="p-0">
-        <div className="shrink-0 border-b border-border px-4 py-4 sm:px-5">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-center gap-3">
-              <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent">
-                <MessageSquareText className="size-5" />
-              </span>
-              <div>
-                <h2 className="font-semibold">AI Consultant</h2>
-                <p className="text-sm text-muted">
-                  Answers from your audit, goals, action plan, and progress.
-                </p>
+        <CardContent className="p-0">
+          <div className="shrink-0 border-b border-border px-4 py-4 sm:px-5">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-3">
+                <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent">
+                  <MessageSquareText className="size-5" />
+                </span>
+                <div>
+                  <h2 className="font-semibold">AI Consultant</h2>
+                  <p className="text-sm text-muted">
+                    Answers from your audit, goals, action plan, and progress.
+                  </p>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span
+                  className={cn(
+                    "rounded-full border px-3 py-1.5 text-xs font-semibold",
+                    mode === "ai"
+                      ? "border-teal-200 bg-teal-50 text-teal-800 dark:border-teal-900 dark:bg-teal-950/40 dark:text-teal-100"
+                      : "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100",
+                  )}
+                >
+                  {mode === "ai" ? "Powered by AI" : "Temporarily unavailable"}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setIsConfirmOpen(true)}
+                  disabled={!hasMessages || isSubmitting || isClearing}
+                  className={buttonVariants({
+                    variant: "secondary",
+                    size: "sm",
+                    className:
+                      "disabled:pointer-events-none disabled:opacity-45",
+                  })}
+                >
+                  <Trash2 className="size-4" />
+                  Clear chat
+                </button>
               </div>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <span
-                className={cn(
-                  "rounded-full border px-3 py-1.5 text-xs font-semibold",
-                  mode === "ai"
-                    ? "border-teal-200 bg-teal-50 text-teal-800 dark:border-teal-900 dark:bg-teal-950/40 dark:text-teal-100"
-                    : "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100",
-                )}
-              >
-                {mode === "ai" ? "Powered by AI" : "Temporarily unavailable"}
-              </span>
+          </div>
+
+          <div
+            id="chat-conversation"
+            role="log"
+            aria-label="AI Consultant conversation"
+            className="px-4 py-5 sm:px-5"
+          >
+            {!hasMessages ? (
+              <div className="mx-auto flex min-h-[300px] max-w-3xl flex-col items-center justify-center py-8 text-center">
+                <span className="mb-4 flex size-14 items-center justify-center rounded-lg bg-accent/10 text-accent">
+                  <Sparkles className="size-6" />
+                </span>
+                <h2 className="text-2xl font-semibold">
+                  Ask your AI Consultant
+                </h2>
+                <p className="mt-3 max-w-xl text-sm leading-6 text-muted">
+                  Ask about website findings, SEO, priorities, implementation,
+                  or how to verify your next improvement.
+                </p>
+                <div className="mt-6 grid w-full gap-2 sm:grid-cols-2">
+                  {suggestedQuestions.map((question) => (
+                    <button
+                      key={question}
+                      type="button"
+                      onClick={() => submitQuestion(question)}
+                      disabled={isSubmitting || !canSend}
+                      data-customer-event="consultant_prompt_selected"
+                      data-customer-surface="consultant"
+                      className="rounded-lg border border-border bg-background p-4 text-left text-sm font-medium transition-colors hover:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <Sparkles className="mb-3 size-4 text-accent" />
+                      {question}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="mx-auto max-w-4xl space-y-5">
+                <div className="flex flex-wrap gap-2 pb-2">
+                  {suggestedQuestions.map((question) => (
+                    <button
+                      key={question}
+                      type="button"
+                      onClick={() => submitQuestion(question)}
+                      disabled={isSubmitting || !canSend}
+                      data-customer-event="consultant_prompt_selected"
+                      data-customer-surface="consultant"
+                      className="rounded-full border border-border bg-background px-3 py-2 text-xs font-medium text-muted transition-colors hover:border-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {question}
+                    </button>
+                  ))}
+                </div>
+
+                {messages.map((message) => (
+                  <MessageCard key={message.id} message={message} />
+                ))}
+
+                {pendingExchange ? (
+                  <>
+                    <MessageCard
+                      message={{
+                        id: `${pendingExchange.id}-user`,
+                        role: "USER",
+                        content: pendingExchange.question,
+                        createdAt: pendingExchange.createdAt,
+                      }}
+                    />
+                    {pendingExchange.state === "thinking" ? (
+                      <ThinkingCard createdAt={pendingExchange.createdAt} />
+                    ) : (
+                      <FailedResponseCard
+                        createdAt={pendingExchange.createdAt}
+                        disabled={isSubmitting}
+                        onRetry={retryPendingExchange}
+                      />
+                    )}
+                  </>
+                ) : null}
+              </div>
+            )}
+            <div
+              aria-hidden="true"
+              className="h-[calc(var(--chat-composer-height,112px)+1.5rem)]"
+            />
+            <div ref={bottomAnchorRef} aria-hidden="true" className="h-px" />
+          </div>
+
+          <div className="sr-only" aria-live="polite" aria-atomic="true">
+            {announcement}
+          </div>
+
+          <form
+            ref={composerRef}
+            onSubmit={onSubmit}
+            className="sticky bottom-0 z-30 border-t border-border bg-card px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-[0_-10px_28px_rgba(0,0,0,0.08)] sm:px-5"
+          >
+            {showJumpToLatest && hasMessages ? (
               <button
                 type="button"
-                onClick={() => setIsConfirmOpen(true)}
-                disabled={!hasMessages || isSubmitting || isClearing}
-                className={buttonVariants({
-                  variant: "secondary",
-                  size: "sm",
-                  className: "disabled:pointer-events-none disabled:opacity-45",
-                })}
+                onClick={() => scrollToLatest("smooth")}
+                aria-label="Jump to latest message"
+                className="absolute -top-14 left-1/2 flex size-10 -translate-x-1/2 items-center justify-center rounded-full border border-border bg-card text-foreground shadow-lg transition-colors hover:border-accent hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
               >
-                <Trash2 className="size-4" />
-                Clear chat
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div
-          id="chat-conversation"
-          role="log"
-          aria-label="AI Consultant conversation"
-          className="px-4 py-5 sm:px-5"
-        >
-          {!hasMessages ? (
-            <div className="mx-auto flex min-h-[300px] max-w-3xl flex-col items-center justify-center py-8 text-center">
-              <span className="mb-4 flex size-14 items-center justify-center rounded-lg bg-accent/10 text-accent">
-                <Sparkles className="size-6" />
-              </span>
-              <h2 className="text-2xl font-semibold">
-                Ask your AI Consultant
-              </h2>
-              <p className="mt-3 max-w-xl text-sm leading-6 text-muted">
-                Ask about your audit, website, social media, recommendations,
-                competitors, or what to fix next.
-              </p>
-              <div className="mt-6 grid w-full gap-2 sm:grid-cols-2">
-                {suggestedQuestions.map((question) => (
-                  <button
-                    key={question}
-                    type="button"
-                   onClick={() => submitQuestion(question)}
-                   disabled={isSubmitting || !canSend}
-                   data-customer-event="consultant_prompt_selected"
-                   data-customer-surface="consultant"
-                    className="rounded-lg border border-border bg-background p-4 text-left text-sm font-medium transition-colors hover:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    <Sparkles className="mb-3 size-4 text-accent" />
-                    {question}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <div className="mx-auto max-w-4xl space-y-5">
-              <div className="flex flex-wrap gap-2 pb-2">
-                {suggestedQuestions.map((question) => (
-                  <button
-                    key={question}
-                    type="button"
-                   onClick={() => submitQuestion(question)}
-                   disabled={isSubmitting || !canSend}
-                   data-customer-event="consultant_prompt_selected"
-                   data-customer-surface="consultant"
-                    className="rounded-full border border-border bg-background px-3 py-2 text-xs font-medium text-muted transition-colors hover:border-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {question}
-                  </button>
-                ))}
-              </div>
-
-              {messages.map((message) => (
-                <MessageCard key={message.id} message={message} />
-              ))}
-
-              {pendingExchange ? (
-                <>
-                  <MessageCard
-                    message={{
-                      id: `${pendingExchange.id}-user`,
-                      role: "USER",
-                      content: pendingExchange.question,
-                      createdAt: pendingExchange.createdAt,
-                    }}
+                <ArrowDown className="size-4" />
+                {hasUnseenLatest ? (
+                  <span
+                    aria-hidden="true"
+                    className="absolute right-0.5 top-0.5 size-2 rounded-full bg-accent ring-2 ring-card"
                   />
-                  {pendingExchange.state === "thinking" ? (
-                    <ThinkingCard createdAt={pendingExchange.createdAt} />
-                  ) : (
-                    <FailedResponseCard
-                      createdAt={pendingExchange.createdAt}
-                      disabled={isSubmitting}
-                      onRetry={retryPendingExchange}
-                    />
-                  )}
-                </>
-              ) : null}
-            </div>
-          )}
-          <div
-            aria-hidden="true"
-            className="h-[calc(var(--chat-composer-height,112px)+1.5rem)]"
-          />
-          <div ref={bottomAnchorRef} aria-hidden="true" className="h-px" />
-        </div>
-
-        <div className="sr-only" aria-live="polite" aria-atomic="true">
-          {announcement}
-        </div>
-
-        <form
-          ref={composerRef}
-          onSubmit={onSubmit}
-          className="sticky bottom-0 z-30 border-t border-border bg-card px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-[0_-10px_28px_rgba(0,0,0,0.08)] sm:px-5"
-        >
-          {showJumpToLatest && hasMessages ? (
-            <button
-              type="button"
-              onClick={() => scrollToLatest("smooth")}
-              aria-label="Jump to latest message"
-              className="absolute -top-14 left-1/2 flex size-10 -translate-x-1/2 items-center justify-center rounded-full border border-border bg-card text-foreground shadow-lg transition-colors hover:border-accent hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-            >
-              <ArrowDown className="size-4" />
-              {hasUnseenLatest ? (
-                <span
-                  aria-hidden="true"
-                  className="absolute right-0.5 top-0.5 size-2 rounded-full bg-accent ring-2 ring-card"
-                />
-              ) : null}
-            </button>
-          ) : null}
-          <div className="mx-auto max-w-4xl">
-            <div className="flex items-end gap-3">
-              <label htmlFor="consultant-message" className="sr-only">
-                Message your AI Consultant
-              </label>
-              <AutoResizeTextarea
-                id="consultant-message"
-                ref={inputRef}
-                value={input}
-                onChange={(event) => setInput(event.target.value)}
-                onKeyDown={(event) => {
-                  if (
-                    event.key !== "Enter" ||
-                    event.shiftKey ||
-                    event.nativeEvent.isComposing
-                  ) {
-                    return;
-                  }
-
-                  event.preventDefault();
-                  if (!input.trim() || requestInFlightRef.current) return;
-                  event.currentTarget.form?.requestSubmit();
-                }}
-                aria-describedby={
-                  error || !canSend
-                    ? "chat-composer-help chat-composer-error"
-                    : "chat-composer-help"
-                }
-                placeholder="Ask about your audit, website, social media, or next steps..."
-                maxLength={2000}
-                maxHeight={208}
-              />
-              <Button
-                type="submit"
-                size="icon"
-                className="mb-1 shrink-0"
-                disabled={isSubmitting || !input.trim() || !canSend}
-                aria-label={isSubmitting ? "Waiting for consultant response" : "Send message"}
-                title="Send message"
-              >
-                <ArrowUp className="size-4" />
-              </Button>
-            </div>
-            <div className="mt-2 flex flex-col gap-1 text-xs text-muted sm:flex-row sm:items-center sm:justify-between">
-              <p id="chat-composer-help">
-                Enter to send | Shift + Enter for a new line
-              </p>
-              {input.length >= 1600 ? <span>{input.length}/2000</span> : null}
-            </div>
-            {error || !canSend ? (
-              <p
-                id="chat-composer-error"
-                role="alert"
-                className="mt-2 text-xs font-medium text-amber-700 dark:text-amber-200"
-              >
-                {error || sendDisabledReason || "AI message limit reached."}
-              </p>
+                ) : null}
+              </button>
             ) : null}
-          </div>
-        </form>
-      </CardContent>
+            <div className="mx-auto max-w-4xl">
+              <div className="flex items-end gap-3">
+                <label htmlFor="consultant-message" className="sr-only">
+                  Message your AI Consultant
+                </label>
+                <AutoResizeTextarea
+                  id="consultant-message"
+                  ref={inputRef}
+                  value={input}
+                  onChange={(event) => setInput(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (
+                      event.key !== "Enter" ||
+                      event.shiftKey ||
+                      event.nativeEvent.isComposing
+                    ) {
+                      return;
+                    }
+
+                    event.preventDefault();
+                    if (!input.trim() || requestInFlightRef.current) return;
+                    event.currentTarget.form?.requestSubmit();
+                  }}
+                  aria-describedby={
+                    error || !canSend
+                      ? "chat-composer-help chat-composer-error"
+                      : "chat-composer-help"
+                  }
+                  placeholder="Ask about your website audit, SEO, or next step..."
+                  maxLength={2000}
+                  maxHeight={208}
+                />
+                <Button
+                  type="submit"
+                  size="icon"
+                  className="mb-1 shrink-0"
+                  disabled={isSubmitting || !input.trim() || !canSend}
+                  aria-label={
+                    isSubmitting
+                      ? "Waiting for consultant response"
+                      : "Send message"
+                  }
+                  title="Send message"
+                >
+                  <ArrowUp className="size-4" />
+                </Button>
+              </div>
+              <div className="mt-2 flex flex-col gap-1 text-xs text-muted sm:flex-row sm:items-center sm:justify-between">
+                <p id="chat-composer-help">
+                  Enter to send | Shift + Enter for a new line
+                </p>
+                {input.length >= 1600 ? <span>{input.length}/2000</span> : null}
+              </div>
+              {error || !canSend ? (
+                <p
+                  id="chat-composer-error"
+                  role="alert"
+                  className="mt-2 text-xs font-medium text-amber-700 dark:text-amber-200"
+                >
+                  {error || sendDisabledReason || "AI message limit reached."}
+                </p>
+              ) : null}
+            </div>
+          </form>
+        </CardContent>
       </div>
 
       {isConfirmOpen ? (

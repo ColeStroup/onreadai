@@ -30,12 +30,12 @@ export function plainCoverageLabel(evidenceCompleteness?: number | null) {
 export function strongestScoredCategory(
   scores: Array<{ category: ScoreCategory; score: number | null }>,
 ) {
-  return scores
-    .filter(
-      (item) => item.category !== "OVERALL" && item.score !== null,
-    )
-    .sort((left, right) => (right.score ?? 0) - (left.score ?? 0))
-    .at(0) ?? null;
+  return (
+    scores
+      .filter((item) => item.category !== "OVERALL" && item.score !== null)
+      .sort((left, right) => (right.score ?? 0) - (left.score ?? 0))
+      .at(0) ?? null
+  );
 }
 
 export function compactCoverageSummary(coverage: AuditCoverageV2) {
@@ -68,6 +68,23 @@ export function compactCoverageSummary(coverage: AuditCoverageV2) {
         : "Reviews not configured",
   );
 
+  return parts.join(" \u00b7 ");
+}
+
+export function compactWebsiteSeoCoverageSummary(coverage: AuditCoverageV2) {
+  const parts: string[] = [];
+
+  if (coverage.crawl.status !== "NOT_APPLICABLE") {
+    parts.push(`${coverage.crawl.successfulPages} pages checked`);
+  }
+  if (
+    coverage.aiContent.status !== "NOT_APPLICABLE" &&
+    coverage.aiContent.status !== "NOT_ENABLED"
+  ) {
+    parts.push(`${coverage.aiContent.completedPages} reviewed by AI`);
+  }
+
+  parts.push("Website and SEO evidence only");
   return parts.join(" \u00b7 ");
 }
 

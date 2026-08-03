@@ -8,8 +8,13 @@ import {
 
 test("customer event validation accepts only the documented non-sensitive values", () => {
   assert.equal(isCustomerEventName("task_started"), true);
+  assert.equal(isCustomerEventName("implementation_help_opened"), true);
+  assert.equal(isCustomerEventName("report_exported"), true);
   assert.equal(isCustomerEventName("business_name:Acme"), false);
   assert.equal(isCustomerEventName(""), false);
   assert.equal(isCustomerEventSurface("business_overview"), true);
-  assert.equal(isCustomerEventSurface("/dashboard/businesses/private-id"), false);
+  assert.equal(
+    isCustomerEventSurface("/dashboard/businesses/private-id"),
+    false,
+  );
 });

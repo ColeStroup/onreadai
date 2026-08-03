@@ -24,9 +24,6 @@ export default async function BusinessesPage() {
       profiles: {
         select: { status: true, platform: true, url: true, handle: true },
       },
-      googleBusinessProfiles: {
-        select: { status: true },
-      },
       audits: {
         where: { status: "COMPLETED" },
         select: { status: true },
@@ -34,7 +31,6 @@ export default async function BusinessesPage() {
       _count: {
         select: {
           audits: true,
-          competitors: true,
           profiles: true,
         },
       },
@@ -45,8 +41,8 @@ export default async function BusinessesPage() {
     <div className="mx-auto max-w-7xl space-y-6">
       <PageIntro
         eyebrow="Businesses"
-        title="Business workspaces"
-        description="Each workspace keeps its own sources, audits, recommendations, competitors, and Consultant history."
+        title="Website audit workspaces"
+        description="Each workspace keeps its own website evidence, audits, Action Plan, Consultant history, and verified progress."
         icon={Building2}
         actions={
           <Link
@@ -63,8 +59,8 @@ export default async function BusinessesPage() {
         <EmptyState
           compact
           icon={<Building2 className="size-6" />}
-          title="No business profiles"
-          description="Start with a website, social profile, or business name. You will review every discovered source before the first audit."
+          title="No business websites"
+          description="Add a business name and public website URL, confirm the source, and run your first audit."
           action={
             <Link
               href="/dashboard/businesses/new"
@@ -96,9 +92,11 @@ export default async function BusinessesPage() {
                     <CardDescription>{business.initialInput}</CardDescription>
                   </CardHeader>
                   <CardContent className="flex flex-wrap gap-x-4 gap-y-2 text-sm text-muted">
-                    <span>{business._count.profiles} profiles</span>
+                    <span>
+                      {business._count.profiles} saved source
+                      {business._count.profiles === 1 ? "" : "s"}
+                    </span>
                     <span>{business._count.audits} audits</span>
-                    <span>{business._count.competitors} competitors</span>
                   </CardContent>
                 </Card>
               </Link>

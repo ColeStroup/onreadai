@@ -1,10 +1,6 @@
 export type PresentationDensity = "spacious" | "standard" | "compact";
 
-export type PresentationTone =
-  | "positive"
-  | "warning"
-  | "critical"
-  | "neutral";
+export type PresentationTone = "positive" | "warning" | "critical" | "neutral";
 
 export type PresentationScore = {
   label: string;
@@ -46,6 +42,9 @@ export type PresentationOpportunity = {
 };
 
 export type PresentationDeckData = {
+  productScope: "website_seo" | "legacy_presence";
+  scoreLabel: string;
+  legacyScoring: boolean;
   businessId: string;
   auditId: string;
   businessName: string;

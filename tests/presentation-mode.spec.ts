@@ -200,7 +200,7 @@ test("Schooners deck is fixed, concise, navigable, and visually stable", async (
   expect(fullText).not.toMatch(/\bcm[a-z0-9]{20,}\b/i);
   expect(fullText).not.toMatch(/\.{3}|\u2026/);
   expect(fullText).not.toMatch(/engagement rate|social performance score/i);
-  expect(fullText).toContain("2 confirmed social profiles");
+  expect(fullText).toContain("2 confirmed / 4 detected");
   const competitorText = allSlideText.find((text) =>
     text.includes("The public side-by-side"),
   ) ?? "";

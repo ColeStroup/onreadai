@@ -7,6 +7,11 @@ import type { ReactNode } from "react";
 import { notFound } from "next/navigation";
 
 import { BusinessSubNavigation } from "@/components/dashboard/business-sub-navigation";
+import {
+  isCompetitorIntelligenceEnabled,
+  isLocalGrowthEnabled,
+  isSocialGrowthEnabled,
+} from "@/lib/features/feature-flags";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
 
@@ -73,7 +78,14 @@ export default async function BusinessLayout({
         </div>
       </div>
 
-      <BusinessSubNavigation businessId={business.id} />
+      <BusinessSubNavigation
+        businessId={business.id}
+        enabledModules={{
+          social: isSocialGrowthEnabled(),
+          competitors: isCompetitorIntelligenceEnabled(),
+          local: isLocalGrowthEnabled(),
+        }}
+      />
       {children}
     </div>
   );

@@ -60,7 +60,11 @@ export default async function SettingsPage() {
           <CardContent className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="name">Name</Label>
-              <Input id="name" value={account?.name ?? user.name ?? ""} readOnly />
+              <Input
+                id="name"
+                value={account?.name ?? user.name ?? ""}
+                readOnly
+              />
             </div>
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
@@ -181,16 +185,16 @@ export default async function SettingsPage() {
               <div>
                 <CardTitle>Integrations</CardTitle>
                 <CardDescription>
-                  How Onread currently uses external business sources.
+                  How Onread currently uses your public website.
                 </CardDescription>
               </div>
             </div>
           </CardHeader>
           <CardContent>
             <p className="text-sm leading-6 text-muted">
-              Social profiles, websites, Google Business listings, and
-              competitors are saved as public analysis sources. Onread does not
-              require connected social-account permissions in this version.
+              Onread analyzes the confirmed public website saved in each
+              workspace. Historical sources from earlier product versions stay
+              stored, but disabled growth modules are not used by new audits.
             </p>
             <Link
               href="/dashboard/businesses"

@@ -1,9 +1,6 @@
 "use server";
 
-import {
-  PlanType,
-  ProfilePlatform,
-} from "@prisma/client";
+import { PlanType, ProfilePlatform } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { notFound, redirect } from "next/navigation";
 
@@ -11,10 +8,9 @@ import {
   createPendingAuditRun,
   revalidateAuditPaths,
 } from "@/lib/audits/audit-runner";
-import {
-  hasConfirmedAuditablePresence,
-} from "@/lib/audits/audit-applicability";
+import { hasConfirmedAuditablePresence } from "@/lib/audits/audit-applicability";
 import { getUserPlan } from "@/lib/billing/entitlements";
+import { isWebsiteSeoLaunchScope } from "@/lib/features/feature-flags";
 import { deriveAuditSourceReadiness } from "@/lib/onboarding/audit-source-readiness";
 import { logInfo } from "@/lib/observability/log";
 import { prisma } from "@/lib/prisma";
@@ -109,17 +105,36 @@ function profileErrorPath(
   return `${path}${path.includes("?") ? "&" : "?"}error=${error}`;
 }
 
+function launchProfileIsAllowed(
+  business: Awaited<ReturnType<typeof requireOwnedBusiness>>,
+  profileId: string,
+) {
+  return (
+    !isWebsiteSeoLaunchScope() ||
+    business.profiles.some(
+      (profile) =>
+        profile.id === profileId &&
+        profile.platform === ProfilePlatform.WEBSITE,
+    )
+  );
+}
+
 export async function confirmProfile(formData: FormData) {
   const businessId = String(formData.get("businessId") ?? "");
   const profileId = String(formData.get("profileId") ?? "");
 
   const business = await requireOwnedBusiness(businessId);
+  if (!launchProfileIsAllowed(business, profileId)) {
+    redirect(profileErrorPath(formData, businessId, "unsupported-source"));
+  }
   await enforceProfileMutationLimit(formData, businessId, business.ownerId);
   try {
     await confirmBusinessProfile({ businessId, profileId });
   } catch (error) {
     if (error instanceof ProfileMutationError) {
-      redirect(profileErrorPath(formData, businessId, error.code.toLowerCase()));
+      redirect(
+        profileErrorPath(formData, businessId, error.code.toLowerCase()),
+      );
     }
     throw error;
   }
@@ -133,12 +148,17 @@ export async function removeProfile(formData: FormData) {
   const profileId = String(formData.get("profileId") ?? "");
 
   const business = await requireOwnedBusiness(businessId);
+  if (!launchProfileIsAllowed(business, profileId)) {
+    redirect(profileErrorPath(formData, businessId, "unsupported-source"));
+  }
   await enforceProfileMutationLimit(formData, businessId, business.ownerId);
   try {
     await removeBusinessProfile({ businessId, profileId });
   } catch (error) {
     if (error instanceof ProfileMutationError) {
-      redirect(profileErrorPath(formData, businessId, error.code.toLowerCase()));
+      redirect(
+        profileErrorPath(formData, businessId, error.code.toLowerCase()),
+      );
     }
     throw error;
   }
@@ -152,12 +172,17 @@ export async function restoreProfile(formData: FormData) {
   const profileId = String(formData.get("profileId") ?? "");
 
   const business = await requireOwnedBusiness(businessId);
+  if (!launchProfileIsAllowed(business, profileId)) {
+    redirect(profileErrorPath(formData, businessId, "unsupported-source"));
+  }
   await enforceProfileMutationLimit(formData, businessId, business.ownerId);
   try {
     await restoreBusinessProfile({ businessId, profileId });
   } catch (error) {
     if (error instanceof ProfileMutationError) {
-      redirect(profileErrorPath(formData, businessId, error.code.toLowerCase()));
+      redirect(
+        profileErrorPath(formData, businessId, error.code.toLowerCase()),
+      );
     }
     throw error;
   }
@@ -174,7 +199,10 @@ export async function updateProfile(formData: FormData) {
   const business = await requireOwnedBusiness(businessId);
   await enforceProfileMutationLimit(formData, businessId, business.ownerId);
   const profile = business.profiles.find((item) => item.id === profileId);
-  if (!profile) {
+  if (
+    !profile ||
+    (isWebsiteSeoLaunchScope() && profile.platform !== ProfilePlatform.WEBSITE)
+  ) {
     redirect(profileErrorPath(formData, businessId, "profile-value"));
   }
   try {
@@ -186,7 +214,9 @@ export async function updateProfile(formData: FormData) {
     });
   } catch (error) {
     if (error instanceof ProfileMutationError) {
-      redirect(profileErrorPath(formData, businessId, error.code.toLowerCase()));
+      redirect(
+        profileErrorPath(formData, businessId, error.code.toLowerCase()),
+      );
     }
     throw error;
   }
@@ -203,7 +233,10 @@ export async function addManualProfile(formData: FormData) {
   const business = await requireOwnedBusiness(businessId);
   await enforceProfileMutationLimit(formData, businessId, business.ownerId);
 
-  if (!isProfilePlatform(platformValue)) {
+  if (
+    !isProfilePlatform(platformValue) ||
+    (isWebsiteSeoLaunchScope() && platformValue !== ProfilePlatform.WEBSITE)
+  ) {
     redirect(profileErrorPath(formData, businessId, "manual-profile"));
   }
   try {
@@ -214,7 +247,9 @@ export async function addManualProfile(formData: FormData) {
     });
   } catch (error) {
     if (error instanceof ProfileMutationError) {
-      redirect(profileErrorPath(formData, businessId, error.code.toLowerCase()));
+      redirect(
+        profileErrorPath(formData, businessId, error.code.toLowerCase()),
+      );
     }
     throw error;
   }
@@ -230,14 +265,7 @@ export async function prepareAuditRun(formData: FormData) {
     formData.get("acknowledgeMissingSources") === "1";
 
   const business = await requireOwnedBusiness(businessId);
-  const hasConfirmedGoogleCandidate = business.googleBusinessProfiles.some(
-    (profile) => profile.status.toLowerCase() === "confirmed",
-  );
-
-  if (
-    !hasConfirmedAuditablePresence(business.profiles) &&
-    !hasConfirmedGoogleCandidate
-  ) {
+  if (!hasConfirmedAuditablePresence(business.profiles)) {
     redirect(
       `/dashboard/businesses/${businessId}/confirm?error=confirmed-presence`,
     );
@@ -269,7 +297,15 @@ export async function prepareAuditRun(formData: FormData) {
   }
 
   const audit = await createPendingAuditRun(businessId);
-  logInfo("guided_audit_started", {
+  const completedAuditCount = await prisma.audit.count({
+    where: {
+      businessId,
+      status: "COMPLETED",
+    },
+  });
+  const auditStartEvent =
+    completedAuditCount === 0 ? "first_audit_started" : "verification_started";
+  logInfo(auditStartEvent, {
     businessId,
     auditId: audit.id,
     plan,

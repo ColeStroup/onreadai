@@ -28,6 +28,7 @@ const comparisonOrder = ["website", "seo", "reviews", "social", "positioning"];
 export function buildPresentationViewModel(
   report: AuditReportViewModel,
 ): PresentationDeckData {
+  const focusedWebsiteSeoReport = report.productScope === "website_seo";
   const presentationEvidence = buildPresentationEvidence(report);
   const activeRecommendations = report.recommendations.all.filter(
     (item) =>
@@ -36,19 +37,26 @@ export function buildPresentationViewModel(
   );
   const scores = categoryOrder
     .map((category) => report.scores.find((item) => item.category === category))
-    .filter((item): item is AuditReportViewModel["scores"][number] => Boolean(item))
+    .filter((item): item is AuditReportViewModel["scores"][number] =>
+      Boolean(item),
+    )
     .map<PresentationScore>((item) => ({
       label: item.label,
       score: item.score,
       displayValue:
-        item.score === null ? scoreStatusLabel(item.status) : `${item.score}/100`,
+        item.score === null
+          ? scoreStatusLabel(item.status)
+          : `${item.score}/100`,
     }));
   const scored = scores.filter(
-    (item): item is PresentationScore & { score: number } => item.score !== null,
+    (item): item is PresentationScore & { score: number } =>
+      item.score !== null,
   );
   const strongest = [...scored].sort((a, b) => b.score - a.score).slice(0, 2);
   const weakest = [...scored].sort((a, b) => a.score - b.score).slice(0, 2);
-  const primaryComparison = buildPrimaryCompetitorComparison(report);
+  const primaryComparison = focusedWebsiteSeoReport
+    ? disabledCompetitorSlide()
+    : buildPrimaryCompetitorComparison(report);
   const topPriorities = buildTopPriorities(report);
   const actionTypes = report.website?.actionSummary.detectedActionTypes ?? [];
   const contextConflict = report.evidenceIntegrity.dataConflicts.find(
@@ -56,6 +64,9 @@ export function buildPresentationViewModel(
   );
 
   return {
+    productScope: report.productScope,
+    scoreLabel: report.scoreLabel,
+    legacyScoring: report.legacyScoring,
     businessId: report.business.id,
     auditId: report.audit.id,
     businessName: report.business.name,
@@ -70,7 +81,7 @@ export function buildPresentationViewModel(
     summary: {
       working: unique([
         ...strongest.map((item) => `${item.label}: ${item.score}/100`),
-        reviewTrustSignal(report),
+        focusedWebsiteSeoReport ? null : reviewTrustSignal(report),
       ]).slice(0, 3),
       attention: unique([
         ...weakest.map((item) => `${item.label}: ${item.score}/100`),
@@ -110,52 +121,115 @@ export function buildPresentationViewModel(
     scores,
     website: buildWebsiteSlide(report, presentationEvidence),
     seo: buildSeoSlide(report),
-    reviews: {
-      score: report.reviews.score,
-      scoreLabel: report.reviews.dataRequirementsMet
-        ? "Reviews & Trust score"
-        : "Listing-presence score",
-      scoreDetail: report.reviews.reviewScoreExplanation,
-      googleStatus:
-        report.reviews.googleBusinessStatus === "confirmed"
-          ? "Google listing verified"
-          : titleCase(report.reviews.googleBusinessStatus),
-      listingName: report.reviews.googleBusinessListingName,
-      rating:
-        typeof report.reviews.googleRating === "number"
-          ? `${report.reviews.googleRating.toFixed(1)} / 5`
-          : "Unavailable",
-      reviewCount:
-        typeof report.reviews.googleReviewCount === "number"
-          ? report.reviews.googleReviewCount.toLocaleString("en-US")
-          : "Unavailable",
-      confirmedPlatforms: report.reviews.confirmedReviewPlatforms,
-      keyOpportunity: conciseText(
-        report.reviews.opportunities.at(0) ??
-          "Keep trust signals visible near important customer decisions.",
-        180,
-      ),
-      recommendedActions: report.reviews.recommendedFixes
-        .slice(0, 2)
-        .map((item) => conciseText(item, 160)),
-      sourceLabel: report.reviews.dataRequirementsMet
-        ? "Saved audit-time rating and review-count evidence"
-        : "Saved audit-time listing presence; review performance unavailable",
-    },
-    social: buildSocialSlide(report),
-    socialStrategy: buildSocialStrategySlide(report, actionTypes),
+    reviews: focusedWebsiteSeoReport
+      ? {
+          score: 0,
+          scoreLabel: "Not part of this report",
+          scoreDetail: "Local Growth is disabled for the launch product.",
+          googleStatus: "Not assessed",
+          listingName: null,
+          rating: "Unavailable",
+          reviewCount: "Unavailable",
+          confirmedPlatforms: [],
+          keyOpportunity: "Not assessed in this report.",
+          recommendedActions: [],
+          sourceLabel: "Not part of this report",
+        }
+      : {
+          score: report.reviews.score,
+          scoreLabel: report.reviews.dataRequirementsMet
+            ? "Reviews & Trust score"
+            : "Listing-presence score",
+          scoreDetail: report.reviews.reviewScoreExplanation,
+          googleStatus:
+            report.reviews.googleBusinessStatus === "confirmed"
+              ? "Google listing verified"
+              : titleCase(report.reviews.googleBusinessStatus),
+          listingName: report.reviews.googleBusinessListingName,
+          rating:
+            typeof report.reviews.googleRating === "number"
+              ? `${report.reviews.googleRating.toFixed(1)} / 5`
+              : "Unavailable",
+          reviewCount:
+            typeof report.reviews.googleReviewCount === "number"
+              ? report.reviews.googleReviewCount.toLocaleString("en-US")
+              : "Unavailable",
+          confirmedPlatforms: report.reviews.confirmedReviewPlatforms,
+          keyOpportunity: conciseText(
+            report.reviews.opportunities.at(0) ??
+              "Keep trust signals visible near important customer decisions.",
+            180,
+          ),
+          recommendedActions: report.reviews.recommendedFixes
+            .slice(0, 2)
+            .map((item) => conciseText(item, 160)),
+          sourceLabel: report.reviews.dataRequirementsMet
+            ? "Saved audit-time rating and review-count evidence"
+            : "Saved audit-time listing presence; review performance unavailable",
+        },
+    social: focusedWebsiteSeoReport
+      ? {
+          score: 0,
+          brandingScore: null,
+          confirmedCount: 0,
+          detectedCount: 0,
+          pendingCount: 0,
+          contentAnalyzedCount: 0,
+          confirmedPlatforms: [],
+          recommendedChannels: [],
+          coverageNote: "Not part of this report.",
+        }
+      : buildSocialSlide(report),
+    socialStrategy: focusedWebsiteSeoReport
+      ? {
+          available: false,
+          sourceLabel: "Not part of this report",
+          scopeNote: "Social Growth is disabled for the launch product.",
+          contentPillars: [],
+          contentIdeas: [],
+          conversionTip: "Not assessed in this report.",
+        }
+      : buildSocialStrategySlide(report, actionTypes),
     competitor: primaryComparison,
     topPriorities,
-    actionPlan: buildPresentationActionPlan(activeRecommendations),
+    actionPlan: buildPresentationActionPlan(
+      activeRecommendations,
+      focusedWebsiteSeoReport,
+    ),
     consultant: {
-      lead: "This does not stop at diagnosis. The Consultant helps implement the fixes.",
-      prompts: buildImplementationPrompts({
-        report,
-        recommendations: activeRecommendations,
-        competitorName: primaryComparison.competitorName,
-        actionTypes,
-      }),
+      lead: focusedWebsiteSeoReport
+        ? "Use the Website & SEO Consultant to understand findings and turn recommendations into finished improvements."
+        : "This does not stop at diagnosis. The Consultant helps implement the fixes.",
+      prompts: focusedWebsiteSeoReport
+        ? [
+            "What should I fix first?",
+            "Explain why this issue matters.",
+            "Help me rewrite this page title.",
+            "Draft a stronger call to action.",
+            "How can I verify this recommendation?",
+          ]
+        : buildImplementationPrompts({
+            report,
+            recommendations: activeRecommendations,
+            competitorName: primaryComparison.competitorName,
+            actionTypes,
+          }),
     },
+  };
+}
+
+function disabledCompetitorSlide(): PresentationDeckData["competitor"] {
+  return {
+    available: false,
+    competitorName: null,
+    rows: [],
+    highlightedOpportunity: "Not assessed in this report.",
+    snapshotLabel: null,
+    confirmedSocialSummary: "Not assessed",
+    pendingSocialSummary: null,
+    opportunities: [],
+    limitationsNote:
+      "Competitive Intelligence is disabled for the launch product.",
   };
 }
 
@@ -229,7 +303,11 @@ function buildSeoSlide(
   }
 
   const checks: PresentationStatus[] = [
-    statusFromSeo("Page title", seo.titleStatus, `${seo.titleLength} characters`),
+    statusFromSeo(
+      "Page title",
+      seo.titleStatus,
+      `${seo.titleLength} characters`,
+    ),
     statusFromSeo(
       "Meta description",
       seo.metaDescriptionStatus,
@@ -345,7 +423,8 @@ function buildSocialStrategySlide(
   ];
 
   return {
-    available: strategy.contentPillars.length > 0 || strategy.suggestedPosts.length > 0,
+    available:
+      strategy.contentPillars.length > 0 || strategy.suggestedPosts.length > 0,
     sourceLabel:
       report.socialStrategy.source === "deterministic_fallback"
         ? "Evidence-based strategy"
@@ -381,11 +460,13 @@ function buildPrimaryCompetitorComparison(
   const comparison = report.competitors.comparison;
   const competitorName =
     comparison?.freshness.find((item) => item.status === "current")
-      ?.competitorName ?? comparison?.categoryComparisons.at(0)?.competitorName ?? null;
+      ?.competitorName ??
+    comparison?.categoryComparisons.at(0)?.competitorName ??
+    null;
   const categories = competitorName
-    ? comparison?.categoryComparisons.filter(
+    ? (comparison?.categoryComparisons.filter(
         (item) => item.competitorName === competitorName,
-      ) ?? []
+      ) ?? [])
     : [];
   const rows = comparisonOrder
     .map((category) => categories.find((item) => item.category === category))
@@ -400,12 +481,18 @@ function buildPrimaryCompetitorComparison(
         item.category === "social"
           ? confirmedOnlyDisplay(item.competitorDisplay)
           : conciseComparisonValue(item.competitorDisplay),
-      result: comparisonResultLabel(item.category, item.status, report.business.name),
+      result: comparisonResultLabel(
+        item.category,
+        item.status,
+        report.business.name,
+      ),
       tone: comparisonTone(item.status),
     }));
   const opportunities =
     comparison?.opportunities
-      .filter((item) => !competitorName || item.competitorName === competitorName)
+      .filter(
+        (item) => !competitorName || item.competitorName === competitorName,
+      )
       .slice(0, 3)
       .map<PresentationOpportunity>((item) => ({
         title: item.title,
@@ -447,6 +534,7 @@ function buildPrimaryCompetitorComparison(
 
 function buildPresentationActionPlan(
   recommendations: ReportRecommendation[],
+  focusedWebsiteSeoReport: boolean,
 ): PresentationDeckData["actionPlan"] {
   const used = new Set<string>();
   const take = (
@@ -472,14 +560,23 @@ function buildPresentationActionPlan(
       item.category === ScoreCategory.SEO,
     3,
   );
-  const week3 = take((item) => item.category === ScoreCategory.SOCIAL, 3);
-  const week4 = take(
+  const week3 = take(
     (item) =>
-      item.category === ScoreCategory.COMPETITORS ||
-      item.category === ScoreCategory.BRANDING ||
-      item.category === ScoreCategory.REVIEWS,
-    2,
+      focusedWebsiteSeoReport
+        ? item.category === ScoreCategory.WEBSITE ||
+          item.category === ScoreCategory.SEO
+        : item.category === ScoreCategory.SOCIAL,
+    3,
   );
+  const week4 = focusedWebsiteSeoReport
+    ? []
+    : take(
+        (item) =>
+          item.category === ScoreCategory.COMPETITORS ||
+          item.category === ScoreCategory.BRANDING ||
+          item.category === ScoreCategory.REVIEWS,
+        2,
+      );
   week4.push("Rerun the audit and review measured evidence changes");
 
   return [
@@ -491,16 +588,28 @@ function buildPresentationActionPlan(
     {
       week: "Week 2",
       outcome: "Strengthen website and SEO fundamentals",
-      bullets: fillPlan(week2, "Review website and search-readiness fundamentals"),
+      bullets: fillPlan(
+        week2,
+        "Review website and search-readiness fundamentals",
+      ),
     },
     {
       week: "Week 3",
-      outcome: "Turn strategy into consistent social execution",
-      bullets: fillPlan(week3, "Build three posts around the current content pillars"),
+      outcome: focusedWebsiteSeoReport
+        ? "Improve content clarity and conversion paths"
+        : "Turn strategy into consistent social execution",
+      bullets: fillPlan(
+        week3,
+        focusedWebsiteSeoReport
+          ? "Improve one important page using the audit evidence"
+          : "Build three posts around the current content pillars",
+      ),
     },
     {
       week: "Week 4",
-      outcome: "Review trust, competitors, and measured progress",
+      outcome: focusedWebsiteSeoReport
+        ? "Verify fixes and measure progress"
+        : "Review trust, competitors, and measured progress",
       bullets: unique(week4).slice(0, 3),
     },
   ];
@@ -510,7 +619,11 @@ function buildTopPriorities(
   report: AuditReportViewModel,
 ): PresentationDeckData["topPriorities"] {
   return report.nextMoves.slice(0, 3).map((move) => {
-    const recommendation = recommendationForMove(move.title, move.category, report);
+    const recommendation = recommendationForMove(
+      move.title,
+      move.category,
+      report,
+    );
     return {
       title: move.title,
       description: conciseText(
@@ -543,7 +656,8 @@ function canonicalMoveKey(title: string) {
   const normalized = title.toLowerCase();
   if (/headline|\bh1\b/.test(normalized)) return "h1";
   if (/primary.*action|cta|conversion path/.test(normalized)) return "cta";
-  if (/customer proof|testimonial|review proof/.test(normalized)) return "proof";
+  if (/customer proof|testimonial|review proof/.test(normalized))
+    return "proof";
   if (/meta description/.test(normalized)) return "meta-description";
   if (/canonical/.test(normalized)) return "canonical";
   return normalized.replace(/[^a-z0-9]+/g, "-");
@@ -560,7 +674,9 @@ function buildImplementationPrompts({
   competitorName: string | null;
   actionTypes: string[];
 }) {
-  const titles = recommendations.map((item) => item.title.toLowerCase()).join(" ");
+  const titles = recommendations
+    .map((item) => item.title.toLowerCase())
+    .join(" ");
   const prompts: string[] = [];
   const has = (pattern: RegExp) => pattern.test(titles);
 
@@ -632,7 +748,11 @@ function seoStatusLabel(status: string) {
 
 function seoStatusTone(status: string): PresentationTone {
   if (status === "good" || status === "found") return "positive";
-  if (status === "unknown" || status === "timeout" || status === "unreachable") {
+  if (
+    status === "unknown" ||
+    status === "timeout" ||
+    status === "unreachable"
+  ) {
     return "neutral";
   }
   return "warning";
@@ -688,7 +808,8 @@ function comparisonEvidenceSummary(
 ) {
   const item = [...evidence].sort(
     (a, b) =>
-      a.businessValue.length + a.competitorValue.length -
+      a.businessValue.length +
+      a.competitorValue.length -
       (b.businessValue.length + b.competitorValue.length),
   )[0];
   if (!item) return "Comparable public evidence is limited.";
@@ -739,7 +860,8 @@ function websiteAttentionSignal(report: AuditReportViewModel) {
 }
 
 function ctaAttentionSignal(report: AuditReportViewModel) {
-  const clarity = report.technicalAppendix.homepagePrimaryCtaAssessment?.clarity;
+  const clarity =
+    report.technicalAppendix.homepagePrimaryCtaAssessment?.clarity;
   return clarity === "NEEDS_IMPROVEMENT" || clarity === "UNCERTAIN"
     ? `Primary CTA ${clarity === "UNCERTAIN" ? "is uncertain" : "needs improvement"}`
     : null;
@@ -760,7 +882,9 @@ function progressNote(report: AuditReportViewModel) {
 }
 
 function scoreFor(report: AuditReportViewModel, category: ScoreCategory) {
-  return report.scores.find((item) => item.category === category)?.score ?? null;
+  return (
+    report.scores.find((item) => item.category === category)?.score ?? null
+  );
 }
 
 function categoryDisplay(category: ScoreCategory) {
@@ -793,8 +917,8 @@ function scoreStatusLabel(
 function hasBusinessContext(report: AuditReportViewModel) {
   return Boolean(
     report.business.context.description ||
-      report.business.context.targetAudience ||
-      report.business.context.mainOffer,
+    report.business.context.targetAudience ||
+    report.business.context.mainOffer,
   );
 }
 
@@ -830,7 +954,8 @@ function actionTypeToCta(value: string) {
   const normalized = value.toLowerCase();
   if (/hours/.test(normalized)) return "Check today's hours";
   if (/menu/.test(normalized)) return "View the menu";
-  if (/order|takeout|storefront|shop|buy/.test(normalized)) return "Order takeout";
+  if (/order|takeout|storefront|shop|buy/.test(normalized))
+    return "Order takeout";
   if (/event/.test(normalized)) return "See upcoming events";
   if (/direction|location|map/.test(normalized)) return "Get directions";
   if (/book|schedule|reservation/.test(normalized)) return "Book now";
@@ -838,7 +963,10 @@ function actionTypeToCta(value: string) {
   if (/gift/.test(normalized)) return "View gift cards";
   if (/follow/.test(normalized)) return "Follow for current updates";
   if (/subscribe/.test(normalized)) return "Subscribe for updates";
-  return conciseText(value || "Use the confirmed profile link", 65).replace(/[.!?]$/, "");
+  return conciseText(value || "Use the confirmed profile link", 65).replace(
+    /[.!?]$/,
+    "",
+  );
 }
 
 function normalizeChannel(value: string) {
@@ -893,5 +1021,9 @@ function completeSentence(value: string) {
 }
 
 function unique<T>(items: Array<T | null | undefined>) {
-  return [...new Set(items.filter((item): item is T => item !== null && item !== undefined))];
+  return [
+    ...new Set(
+      items.filter((item): item is T => item !== null && item !== undefined),
+    ),
+  ];
 }

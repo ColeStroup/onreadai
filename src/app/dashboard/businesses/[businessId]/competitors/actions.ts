@@ -22,6 +22,7 @@ import { submittedCompetitorWebsiteProfile } from "@/lib/discovery/submitted-pro
 import { normalizeWebsiteUrl } from "@/lib/analyzers/website-analyzer";
 import { assertPublicHttpUrl } from "@/lib/network/public-http";
 import { prisma } from "@/lib/prisma";
+import { isCompetitorIntelligenceEnabled } from "@/lib/features/feature-flags";
 import { requireUser } from "@/lib/session";
 import {
   currentRequestRateLimitIdentifier,
@@ -45,6 +46,10 @@ async function requireOwnedBusiness(businessId: string) {
 
   if (!business) {
     notFound();
+  }
+
+  if (!isCompetitorIntelligenceEnabled()) {
+    throw new Error("Competitive Intelligence is not currently available.");
   }
 
   return {
@@ -112,7 +117,9 @@ export async function addCompetitor(formData: FormData) {
   try {
     await validateCompetitorWebsite(websiteUrl);
   } catch {
-    redirect(`/dashboard/businesses/${business.id}/competitors?error=invalid_url`);
+    redirect(
+      `/dashboard/businesses/${business.id}/competitors?error=invalid_url`,
+    );
   }
 
   try {
@@ -130,7 +137,9 @@ export async function addCompetitor(formData: FormData) {
       },
     });
   } catch {
-    redirect(`/dashboard/businesses/${business.id}/competitors?error=duplicate`);
+    redirect(
+      `/dashboard/businesses/${business.id}/competitors?error=duplicate`,
+    );
   }
 
   revalidateCompetitorPaths(business.id);
@@ -150,7 +159,9 @@ export async function updateCompetitor(formData: FormData) {
   try {
     await validateCompetitorWebsite(websiteUrl);
   } catch {
-    redirect(`/dashboard/businesses/${business.id}/competitors?error=invalid_url`);
+    redirect(
+      `/dashboard/businesses/${business.id}/competitors?error=invalid_url`,
+    );
   }
 
   try {
@@ -189,7 +200,9 @@ export async function updateCompetitor(formData: FormData) {
       });
     }
   } catch {
-    redirect(`/dashboard/businesses/${business.id}/competitors?error=duplicate`);
+    redirect(
+      `/dashboard/businesses/${business.id}/competitors?error=duplicate`,
+    );
   }
 
   revalidateCompetitorPaths(business.id);
@@ -271,7 +284,9 @@ export async function refreshAllCompetitors(formData: FormData) {
         : "failed";
 
   revalidateCompetitorPaths(business.id);
-  redirect(`/dashboard/businesses/${business.id}/competitors?analysis=${status}`);
+  redirect(
+    `/dashboard/businesses/${business.id}/competitors?analysis=${status}`,
+  );
 }
 
 export async function setCompetitorGoogleProfileStatus(formData: FormData) {
@@ -369,7 +384,9 @@ export async function addComparisonOpportunity(formData: FormData) {
   }
 
   revalidateCompetitorPaths(business.id);
-  redirect(`/dashboard/businesses/${business.id}/competitors?saved=action_added`);
+  redirect(
+    `/dashboard/businesses/${business.id}/competitors?saved=action_added`,
+  );
 }
 
 function comparisonCategory(category: ComparisonCategory) {
@@ -387,17 +404,26 @@ function comparisonCategory(category: ComparisonCategory) {
   }
 }
 
-async function enforceCompetitorAnalysisLimit(userId: string, businessId: string) {
+async function enforceCompetitorAnalysisLimit(
+  userId: string,
+  businessId: string,
+) {
   try {
     await enforceRateLimit({
       scope: "competitor-analysis",
-      identifiers: [userId, businessId, await currentRequestRateLimitIdentifier()],
+      identifiers: [
+        userId,
+        businessId,
+        await currentRequestRateLimitIdentifier(),
+      ],
       limit: 20,
       windowMs: 60 * 60 * 1_000,
     });
   } catch (error) {
     if (error instanceof RateLimitError) {
-      redirect(`/dashboard/businesses/${businessId}/competitors?error=rate_limited`);
+      redirect(
+        `/dashboard/businesses/${businessId}/competitors?error=rate_limited`,
+      );
     }
     throw error;
   }

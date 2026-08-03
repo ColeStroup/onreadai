@@ -1,18 +1,12 @@
 import "server-only";
 
 import PDFDocument from "pdfkit";
-import {
-  RecommendationStatus,
-  ScoreCategory,
-} from "@prisma/client";
+import { RecommendationStatus, ScoreCategory } from "@prisma/client";
 
 import { formatDelta } from "@/lib/audits/audit-comparison";
 import { completeEvidenceSummary } from "@/lib/audits/finding-copy";
 import { getPrimaryCtaAssessment } from "@/lib/analyzers/action-classifier";
-import {
-  PdfFlow,
-  type PdfLayoutDiagnostics,
-} from "@/lib/pdf/flow-layout";
+import { PdfFlow, type PdfLayoutDiagnostics } from "@/lib/pdf/flow-layout";
 import { sanitizePdfText } from "@/lib/pdf/text-sanitize";
 import {
   trustedBusinessAdvantages,
@@ -54,12 +48,17 @@ export async function generateGrowthAuditPdfWithDiagnostics(
       autoFirstPage: true,
       info: {
         Title: sanitizePdfText(
-          `Growth Audit Report - ${report.business.name}`,
+          `${report.productScope === "website_seo" ? "Website & SEO Growth Report" : "Growth Audit Report"} - ${report.business.name}`,
         ),
         Author: "Onread AI",
-        Subject: "Professional Growth Audit Report",
+        Subject:
+          report.productScope === "website_seo"
+            ? "Website and SEO Growth Report"
+            : "Professional Growth Audit Report",
         Keywords:
-          "growth audit, website, SEO, reviews, social strategy, competitor intelligence",
+          report.productScope === "website_seo"
+            ? "website audit, SEO audit, website improvement plan, verified website progress"
+            : "growth audit, website, SEO, reviews, social strategy, competitor intelligence",
       },
     });
     const chunks: Buffer[] = [];
@@ -107,9 +106,11 @@ function renderReport(flow: PdfFlow, report: AuditReportViewModel) {
   renderAnalysisCoverage(flow, report);
   renderWebsite(flow, report);
   renderSeo(flow, report);
-  renderReviews(flow, report);
-  renderSocialStrategy(flow, report);
-  renderCompetitors(flow, report);
+  if (report.productScope === "legacy_presence") {
+    renderReviews(flow, report);
+    renderSocialStrategy(flow, report);
+    renderCompetitors(flow, report);
+  }
   renderActionPlan(flow, report);
   renderProgress(flow, report);
   renderConfidence(flow, report);
@@ -133,9 +134,16 @@ function renderCover(flow: PdfFlow, report: AuditReportViewModel) {
     .fillColor(colors.white)
     .font("Helvetica-Bold")
     .fontSize(31)
-    .text("Growth Audit Report", bounds.left, 96, {
-      width: bounds.width,
-    });
+    .text(
+      report.productScope === "website_seo"
+        ? "Website & SEO Growth Report"
+        : "Growth Audit Report",
+      bounds.left,
+      96,
+      {
+        width: bounds.width,
+      },
+    );
 
   doc
     .fillColor(colors.ink)
@@ -156,7 +164,11 @@ function renderCover(flow: PdfFlow, report: AuditReportViewModel) {
       { width: 330 },
     )
     .text(
-      sanitizePdfText(`Report status: Completed`),
+      sanitizePdfText(
+        report.legacyScoring
+          ? "Report status: Completed / Legacy scoring model"
+          : "Report status: Completed",
+      ),
       bounds.left,
       298,
       { width: 330 },
@@ -164,11 +176,7 @@ function renderCover(flow: PdfFlow, report: AuditReportViewModel) {
 
   const ringX = 438;
   const ringY = 275;
-  doc
-    .lineWidth(12)
-    .strokeColor("#dfe7ee")
-    .circle(ringX, ringY, 62)
-    .stroke();
+  doc.lineWidth(12).strokeColor("#dfe7ee").circle(ringX, ringY, 62).stroke();
   doc
     .lineWidth(12)
     .strokeColor(scoreColor(score))
@@ -186,10 +194,17 @@ function renderCover(flow: PdfFlow, report: AuditReportViewModel) {
     .fillColor(colors.muted)
     .font("Helvetica")
     .fontSize(9.5)
-    .text("OVERALL SCORE", ringX - 55, ringY + 18, {
-      width: 110,
-      align: "center",
-    });
+    .text(
+      report.productScope === "website_seo"
+        ? "WEBSITE GROWTH SCORE"
+        : "OVERALL SCORE",
+      ringX - 62,
+      ringY + 18,
+      {
+        width: 124,
+        align: "center",
+      },
+    );
 
   doc
     .moveTo(bounds.left, 382)
@@ -210,7 +225,9 @@ function renderCover(flow: PdfFlow, report: AuditReportViewModel) {
     .fontSize(10.5)
     .text(
       sanitizePdfText(
-        "A practical assessment of public website, search, profile, trust, social-strategy, and competitor evidence. Missing data is disclosed rather than scored as a failure.",
+        report.productScope === "website_seo"
+          ? "An evidence-based assessment of website experience, conversion paths, and SEO foundations, followed by prioritized implementation and verification guidance."
+          : "A practical assessment of public website, search, profile, trust, social-strategy, and competitor evidence. Missing data is disclosed rather than scored as a failure.",
       ),
       bounds.left,
       440,
@@ -228,17 +245,17 @@ function renderCover(flow: PdfFlow, report: AuditReportViewModel) {
     );
 }
 
-function renderExecutiveSummary(
-  flow: PdfFlow,
-  report: AuditReportViewModel,
-) {
+function renderExecutiveSummary(flow: PdfFlow, report: AuditReportViewModel) {
   flow.sectionHeading("Executive Summary", { minContentHeight: 120 });
   flow.paragraph(report.audit.executiveSummary, "Executive Summary");
   flow.keyValueRows(
     [
       ["Business", report.business.name],
       ["Audit date", formatDate(report.audit.date)],
-      ["Overall health", `${report.audit.overallScore}/100 - ${report.audit.healthLabel}`],
+      [
+        report.scoreLabel,
+        `${report.audit.overallScore}/100 - ${report.audit.healthLabel}`,
+      ],
       ["User-selected growth goal", report.business.userSelectedGrowthGoal],
       [
         "Observed primary conversion goal",
@@ -279,10 +296,7 @@ function renderBusinessContext(flow: PdfFlow, report: AuditReportViewModel) {
       ["Main offer", report.business.context.mainOffer ?? "Not confirmed"],
       [
         "Industry / type",
-        [
-          report.business.context.industry,
-          report.business.context.businessType,
-        ]
+        [report.business.context.industry, report.business.context.businessType]
           .filter(Boolean)
           .join(" / ") || "Not confirmed",
       ],
@@ -308,7 +322,9 @@ function renderBusinessContext(flow: PdfFlow, report: AuditReportViewModel) {
 function renderNextMoves(flow: PdfFlow, report: AuditReportViewModel) {
   flow.sectionHeading("Your Next 3 Moves", { minContentHeight: 130 });
   flow.paragraph(
-    "These are the highest-confidence actions after considering business impact, effort, goals, current evidence, and publicly observable competitor signals.",
+    report.productScope === "website_seo"
+      ? "These are the highest-confidence Website and SEO actions after considering evidence, affected pages, impact, effort, goals, and verification needs."
+      : "These are the highest-confidence actions after considering business impact, effort, goals, current evidence, and publicly observable competitor signals.",
     "Your Next 3 Moves",
   );
   report.nextMoves.forEach((move, index) => {
@@ -328,11 +344,9 @@ function renderOverallHealth(flow: PdfFlow, report: AuditReportViewModel) {
   flow.sectionHeading("Overall Health", { minContentHeight: 135 });
   flow.keyValueRows(
     [
-      ["Overall score", `${report.audit.overallScore}/100`],
+      [report.scoreLabel, `${report.audit.overallScore}/100`],
       ["Health indicator", report.audit.healthLabel],
-      ...report.scores.map(
-        (item) => [item.label, scoreDisplay(item)] as const,
-      ),
+      ...report.scores.map((item) => [item.label, scoreDisplay(item)] as const),
     ],
     {
       fill: colors.softBlue,
@@ -341,48 +355,51 @@ function renderOverallHealth(flow: PdfFlow, report: AuditReportViewModel) {
     },
   );
   flow.note(
-    `${report.competitors.methodologyNote} Website and SEO are excluded from the weighted score when no website is supplied.`,
+    report.productScope === "website_seo"
+      ? "The Website Growth Score uses measured Website (55%) and SEO (45%) evidence. Disabled future modules do not affect the score."
+      : `${report.competitors.methodologyNote} Website and SEO are excluded from the weighted score when no website is supplied.`,
     "Overall Health",
   );
 }
 
-function renderAnalysisCoverage(
-  flow: PdfFlow,
-  report: AuditReportViewModel,
-) {
+function renderAnalysisCoverage(flow: PdfFlow, report: AuditReportViewModel) {
   const coverage = report.coverage;
   if (!coverage) return;
 
   flow.sectionHeading("Analysis Coverage", { minContentHeight: 115 });
-  flow.keyValueRows(
+  const rows = [
     [
-      [
-        "Crawl coverage",
-        `${coverage.crawl.successfulPages} of ${coverage.crawl.eligiblePages} eligible pages in scope`,
-      ],
-      [
-        "Technical coverage",
-        `${coverage.technical.pagesAnalyzed} pages (${formatStatus(coverage.technical.status)})`,
-      ],
-      [
-        "AI content coverage",
-        `${coverage.aiContent.completedPages} of ${coverage.aiContent.selectedPages} selected pages`,
-      ],
+      "Crawl coverage",
+      `${coverage.crawl.successfulPages} of ${coverage.crawl.eligiblePages} eligible pages in scope`,
+    ],
+    [
+      "Technical coverage",
+      `${coverage.technical.pagesAnalyzed} pages (${formatStatus(coverage.technical.status)})`,
+    ],
+    [
+      "AI content coverage",
+      `${coverage.aiContent.completedPages} of ${coverage.aiContent.selectedPages} selected pages`,
+    ],
+  ] as Array<readonly [string, string]>;
+  if (report.productScope === "legacy_presence") {
+    rows.push(
       [
         "Social profile evidence",
         `${coverage.socialProfiles.userConfirmed} confirmed / ${coverage.socialProfiles.publiclyDetected} publicly detected / ${coverage.socialProfiles.contentAnalyzed} content-analyzed`,
       ],
       ["Review evidence", formatStatus(coverage.reviews.status)],
       ["Competitor evidence", formatStatus(coverage.competitors.status)],
-    ],
-    {
-      fill: colors.softBlue,
-      continuationTitle: "Analysis Coverage",
-      compact: true,
-    },
-  );
+    );
+  }
+  flow.keyValueRows(rows, {
+    fill: colors.softBlue,
+    continuationTitle: "Analysis Coverage",
+    compact: true,
+  });
   flow.note(
-    `${coverage.crawl.explanation} ${coverage.aiContent.explanation} ${coverage.socialProfiles.explanation}`,
+    report.productScope === "website_seo"
+      ? `${coverage.crawl.explanation} ${coverage.technical.explanation} ${coverage.aiContent.explanation}`
+      : `${coverage.crawl.explanation} ${coverage.aiContent.explanation} ${coverage.socialProfiles.explanation}`,
     "Analysis Coverage",
   );
 }
@@ -439,10 +456,7 @@ function renderWebsite(flow: PdfFlow, report: AuditReportViewModel) {
         "Images missing alt text",
         `${website.imagesMissingAltCount} of ${website.imageCount}`,
       ],
-      [
-        "Detected action types",
-        primaryActions.join(", ") || "None detected",
-      ],
+      ["Detected action types", primaryActions.join(", ") || "None detected"],
       [
         "Homepage primary CTA clarity",
         ctaAssessment
@@ -513,7 +527,9 @@ function renderSeo(flow: PdfFlow, report: AuditReportViewModel) {
       ],
       [
         "Homepage H1 status",
-        formatStatus(report.normalizedFacts?.homepage?.h1.status ?? seo.h1Status),
+        formatStatus(
+          report.normalizedFacts?.homepage?.h1.status ?? seo.h1Status,
+        ),
       ],
       ["Canonical status", formatStatus(seo.canonicalStatus)],
       ["Viewport status", formatStatus(seo.viewportStatus)],
@@ -583,10 +599,7 @@ function renderReviews(flow: PdfFlow, report: AuditReportViewModel) {
           : reviews.googleReviewCount.toLocaleString(),
       ],
       ["Review presence", reviews.reviewPresenceLevel],
-      [
-        "Evidence completeness",
-        `${reviews.evidenceCompleteness}%`,
-      ],
+      ["Evidence completeness", `${reviews.evidenceCompleteness}%`],
       [
         "Confirmed review platforms",
         reviews.confirmedReviewPlatforms.join(", ") || "None",
@@ -706,20 +719,14 @@ function renderSocialStrategy(flow: PdfFlow, report: AuditReportViewModel) {
   flow.bulletList(
     strategy.data.contentPillars
       .slice(0, 3)
-      .map(
-        (pillar) =>
-          `${pillar.title}: ${pillar.description}`,
-      ),
+      .map((pillar) => `${pillar.title}: ${pillar.description}`),
     "Social Strategy",
   );
   flow.subsectionHeading("Next three content ideas", "Social Strategy", 92);
   flow.bulletList(
     strategy.data.weeklyPlan
       .slice(0, 3)
-      .map(
-        (item) =>
-          `${item.platform}: ${item.idea} Next step: ${item.goal}`,
-      ),
+      .map((item) => `${item.platform}: ${item.idea} Next step: ${item.goal}`),
     "Social Strategy",
   );
   const conversionTip = strategy.data.conversionTips.at(0);
@@ -742,7 +749,9 @@ function renderCompetitors(flow: PdfFlow, report: AuditReportViewModel) {
       ["Comparison status", competitors.label],
       [
         "Competitive Position score",
-        competitors.score === null ? competitors.label : `${competitors.score}/100`,
+        competitors.score === null
+          ? competitors.label
+          : `${competitors.score}/100`,
       ],
       ["Active competitors", String(competitors.activeCount)],
       [
@@ -795,7 +804,10 @@ function renderCompetitors(flow: PdfFlow, report: AuditReportViewModel) {
   );
   const comparableRows = comparison.categoryComparisons.slice(0, 12);
   if (comparableRows.length > 0) {
-    flow.subsectionHeading("Public side-by-side observations", "Competitor Intelligence");
+    flow.subsectionHeading(
+      "Public side-by-side observations",
+      "Competitor Intelligence",
+    );
     flow.table({
       continuationTitle: "Competitor Intelligence",
       columns: [
@@ -827,7 +839,10 @@ function renderCompetitors(flow: PdfFlow, report: AuditReportViewModel) {
   const businessAdvantages = trustedBusinessAdvantages(comparison);
   const competitorAdvantages = trustedCompetitorAdvantages(comparison);
   if (businessAdvantages.length > 0) {
-    flow.subsectionHeading("Confirmed business advantages", "Competitor Intelligence");
+    flow.subsectionHeading(
+      "Confirmed business advantages",
+      "Competitor Intelligence",
+    );
     flow.bulletList(
       businessAdvantages.slice(0, 2).map((item) => item.description),
       "Competitor Intelligence",
@@ -839,7 +854,10 @@ function renderCompetitors(flow: PdfFlow, report: AuditReportViewModel) {
     );
   }
   if (competitorAdvantages.length > 0) {
-    flow.subsectionHeading("Observed competitor edges", "Competitor Intelligence");
+    flow.subsectionHeading(
+      "Observed competitor edges",
+      "Competitor Intelligence",
+    );
     flow.bulletList(
       competitorAdvantages.slice(0, 2).map((item) => item.description),
       "Competitor Intelligence",
@@ -956,10 +974,7 @@ function renderProgress(flow: PdfFlow, report: AuditReportViewModel) {
     continuationTitle: "Progress Since Previous Audit",
   });
   if (comparison.comparisonNote) {
-    flow.note(
-      comparison.comparisonNote,
-      "Progress Since Previous Audit",
-    );
+    flow.note(comparison.comparisonNote, "Progress Since Previous Audit");
   }
   const meaningfulChanges = comparison.categoryScoreChanges.filter(
     (change) => change.delta !== 0 || change.changeType !== "unknown",
@@ -986,12 +1001,21 @@ function renderConfidence(flow: PdfFlow, report: AuditReportViewModel) {
   flow.sectionHeading("Report Confidence and Data Notes", {
     minContentHeight: 130,
   });
-  flow.keyValueRows(
+  const rows: Array<readonly [string, string]> = [
     [
-      [
-        "Website coverage",
-        `${confidence.pagesScanned} of ${confidence.crawlLimit} page slots used / ${titleCase(confidence.crawlStatus)} / Important pages: ${confidence.importantPagesIncluded.join(", ") || "none identified"}`,
-      ],
+      "Website coverage",
+      `${confidence.pagesScanned} of ${confidence.crawlLimit} page slots used / ${titleCase(confidence.crawlStatus)} / Important pages: ${confidence.importantPagesIncluded.join(", ") || "none identified"}`,
+    ],
+    ["Business Context", confidence.businessContextStatus],
+    [
+      "Versions",
+      `Scoring: ${report.scoringMetadata.scoringEngineVersion} / Report: ${report.scoringMetadata.reportViewModelVersion}`,
+    ],
+  ];
+  if (report.productScope === "legacy_presence") {
+    rows.splice(
+      2,
+      0,
       [
         "Current confirmed data",
         `Google Business: ${formatStatus(confidence.googleBusinessStatus)} / Business Context: ${confidence.businessContextStatus}`,
@@ -1000,17 +1024,13 @@ function renderConfidence(flow: PdfFlow, report: AuditReportViewModel) {
         "Derived sections",
         `Social Strategy: ${confidence.socialStrategyStatus} / Competitive Position: ${confidence.competitorComparisonStatus}`,
       ],
-      [
-        "Versions",
-        `Scoring: ${report.scoringMetadata.scoringEngineVersion} / Report: ${report.scoringMetadata.reportViewModelVersion}`,
-      ],
-    ],
-    {
-      fill: colors.softAccent,
-      continuationTitle: "Report Confidence and Data Notes",
-      compact: true,
-    },
-  );
+    );
+  }
+  flow.keyValueRows(rows, {
+    fill: colors.softAccent,
+    continuationTitle: "Report Confidence and Data Notes",
+    compact: true,
+  });
   flow.subsectionHeading("Limitations", "Report Confidence and Data Notes");
   flow.drawWrappedText(confidence.limitations.join(" "), {
     fontSize: 8.7,
@@ -1018,15 +1038,15 @@ function renderConfidence(flow: PdfFlow, report: AuditReportViewModel) {
     continuationTitle: "Report Confidence and Data Notes",
   });
   if (report.dataNotes.length > 0) {
-    flow.subsectionHeading("Conflicting evidence to review", "Report Confidence and Data Notes");
+    flow.subsectionHeading(
+      "Conflicting evidence to review",
+      "Report Confidence and Data Notes",
+    );
     flow.bulletList(report.dataNotes, "Report Confidence and Data Notes");
   }
 }
 
-function renderTechnicalAppendix(
-  flow: PdfFlow,
-  report: AuditReportViewModel,
-) {
+function renderTechnicalAppendix(flow: PdfFlow, report: AuditReportViewModel) {
   flow.sectionHeading("Technical Appendix", { minContentHeight: 150 });
   flow.paragraph(
     "This appendix preserves technical evidence for consultants and implementation teams. The Executive Summary and Your Next 3 Moves are the client-facing priorities.",
@@ -1045,13 +1065,13 @@ function renderTechnicalAppendix(
     flow.keyValueRows(
       [
         ["Page title", report.website.pageTitle || "Missing"],
-        [
-          "Meta description",
-          report.website.metaDescription || "Missing",
-        ],
+        ["Meta description", report.website.metaDescription || "Missing"],
         ["H1 count", report.website.h1Count],
         ["Canonical tag", report.website.hasCanonical ? "Present" : "Missing"],
-        ["Viewport meta", report.website.hasViewportMeta ? "Present" : "Missing"],
+        [
+          "Viewport meta",
+          report.website.hasViewportMeta ? "Present" : "Missing",
+        ],
         [
           "Detected action and navigation links",
           report.technicalAppendix.detectedActionLinks.length,
@@ -1077,7 +1097,10 @@ function renderTechnicalAppendix(
 
   const crawl = report.websiteCrawl;
   if (crawl) {
-    flow.subsectionHeading("Multi-page crawl diagnostics", "Technical Appendix");
+    flow.subsectionHeading(
+      "Multi-page crawl diagnostics",
+      "Technical Appendix",
+    );
     flow.keyValueRows(
       [
         [
@@ -1088,10 +1111,7 @@ function renderTechnicalAppendix(
           "Coverage",
           `Limit ${crawl.crawlLimitUsed} / Limit reached: ${crawl.crawlLimitReached ? "Yes" : "No"}`,
         ],
-        [
-          "Duplicate URL variants skipped",
-          crawl.duplicateUrlsSkipped,
-        ],
+        ["Duplicate URL variants skipped", crawl.duplicateUrlsSkipped],
         [
           "Metadata gaps",
           `${crawl.pagesMissingTitle} missing titles / ${crawl.pagesMissingMetaDescription} missing meta descriptions`,
@@ -1173,11 +1193,7 @@ function renderTechnicalAppendix(
     );
   }
 
-  flow.subsectionHeading(
-    "Current audit findings",
-    "Technical Appendix",
-    260,
-  );
+  flow.subsectionHeading("Current audit findings", "Technical Appendix", 260);
   const appendixFindings = report.technicalAppendix.findings.slice(0, 6);
   flow.bulletList(
     appendixFindings.map(
@@ -1321,9 +1337,11 @@ function expectedResultFor(
     WEBSITE: "A clearer visitor journey and a more prominent conversion path.",
     SEO: "Cleaner search signals and more consistent page structure.",
     SOCIAL: "A more focused social presence with a practical conversion path.",
-    BRANDING: "More consistent, recognizable messaging across public touchpoints.",
+    BRANDING:
+      "More consistent, recognizable messaging across public touchpoints.",
     REVIEWS: "Stronger visible trust at important customer decision points.",
-    COMPETITORS: "A sharper response to publicly observable competitor positioning.",
+    COMPETITORS:
+      "A sharper response to publicly observable competitor positioning.",
   };
   return outcomes[item.category];
 }

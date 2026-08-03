@@ -66,43 +66,23 @@ export type AuditSourceReadiness = {
 export function deriveAuditSourceReadiness(
   input: AuditSourceReadinessInput,
 ): AuditSourceReadiness {
-  const confirmedProfiles = input.profiles.filter(
+  const websiteProfiles = input.profiles.filter(
+    (profile) => profile.platform === ProfilePlatform.WEBSITE,
+  );
+  const confirmedProfiles = websiteProfiles.filter(
     (profile) =>
       profile.status === BusinessProfileStatus.CONFIRMED &&
       Boolean(
         profile.normalizedUrl?.trim() ||
-          profile.url?.trim() ||
-          profile.handle?.trim(),
+        profile.url?.trim() ||
+        profile.handle?.trim(),
       ),
   );
-  const pendingBusinessProfiles = input.profiles.filter(
+  const pendingBusinessProfiles = websiteProfiles.filter(
     (profile) => profile.status === BusinessProfileStatus.PENDING,
   );
-  const activeGoogleCandidates =
-    input.googleBusinessProfiles?.filter(
-      (profile) => profile.status.toLowerCase() !== "removed",
-    ) ?? [];
-  const confirmedGoogleCandidate = activeGoogleCandidates.some(
-    (profile) => profile.status.toLowerCase() === "confirmed",
-  );
-  const pendingGoogleCandidates = activeGoogleCandidates.filter(
-    (profile) => profile.status.toLowerCase() === "pending",
-  );
-  const googleDecision = input.profileDecisions?.find(
-    (decision) => decision.platform === ProfilePlatform.GOOGLE_BUSINESS,
-  )?.decision;
-  const hasConfirmedGoogleProfile = confirmedProfiles.some(
-    (profile) => profile.platform === ProfilePlatform.GOOGLE_BUSINESS,
-  );
-  const googleReviewState = hasConfirmedGoogleProfile || confirmedGoogleCandidate
-    ? "confirmed"
-    : googleDecision === ProfileReviewDecision.NOT_USED
-      ? "not_used"
-      : googleDecision === ProfileReviewDecision.SKIPPED
-        ? "skipped"
-        : "unresolved";
-  const pendingProfileCount =
-    pendingBusinessProfiles.length + pendingGoogleCandidates.length;
+  const googleReviewState = "not_used" as const;
+  const pendingProfileCount = pendingBusinessProfiles.length;
   const hasWebsite = confirmedProfiles.some(
     (profile) => profile.platform === ProfilePlatform.WEBSITE,
   );
@@ -111,44 +91,18 @@ export function deriveAuditSourceReadiness(
   );
   const contextComplete = Boolean(
     input.description?.trim() &&
-      input.targetAudience?.trim() &&
-      input.mainOffer?.trim() &&
-      input.contextConfirmedAt,
+    input.targetAudience?.trim() &&
+    input.mainOffer?.trim() &&
+    input.contextConfirmedAt,
   );
-  const goalsComplete = Boolean(
-    input.goals?.length && input.primaryGoal,
-  );
+  const goalsComplete = Boolean(input.goals?.length && input.primaryGoal);
   const missingSources: MissingAuditSource[] = [];
 
   if (!hasWebsite) {
     missingSources.push({
       code: "NO_WEBSITE",
       label: "No confirmed website",
-      limitation:
-        "Website and SEO analysis will be marked not provided.",
-      returnStep: "profiles",
-    });
-  }
-  if (!hasSocial) {
-    missingSources.push({
-      code: "NO_SOCIAL",
-      label: "No confirmed social profile",
-      limitation:
-        "Social coverage and platform recommendations will be limited.",
-      returnStep: "profiles",
-    });
-  }
-  if (googleReviewState !== "confirmed") {
-    missingSources.push({
-      code: "GOOGLE_NOT_REVIEWED",
-      label:
-        googleReviewState === "not_used"
-          ? "Google Business marked not used"
-          : googleReviewState === "skipped"
-            ? "Google Business skipped for now"
-            : "Google Business Profile not reviewed",
-      limitation:
-        "Local visibility, listings, and available review signals may be limited.",
+      limitation: "Website and SEO analysis will be marked not provided.",
       returnStep: "profiles",
     });
   }
@@ -158,8 +112,7 @@ export function deriveAuditSourceReadiness(
       label: `${pendingProfileCount} profile${
         pendingProfileCount === 1 ? "" : "s"
       } awaiting review`,
-      limitation:
-        "Unconfirmed profiles will not be included as owned audit sources.",
+      limitation: "The website must be confirmed before it can be analyzed.",
       returnStep: "profiles",
     });
   }
@@ -188,9 +141,7 @@ export function deriveAuditSourceReadiness(
     input.auditSourceAcknowledgementHash === stateHash;
 
   return {
-    confirmedProfileCount:
-      confirmedProfiles.length +
-      (confirmedGoogleCandidate && !hasConfirmedGoogleProfile ? 1 : 0),
+    confirmedProfileCount: confirmedProfiles.length,
     pendingProfileCount,
     hasWebsite,
     hasSocial,
@@ -205,29 +156,14 @@ export function deriveAuditSourceReadiness(
 export function auditSourceStateHash(input: AuditSourceReadinessInput) {
   const state = {
     profiles: input.profiles
+      .filter((profile) => profile.platform === ProfilePlatform.WEBSITE)
       .map((profile) => ({
         id: profile.id,
         platform: profile.platform,
         status: profile.status,
-        value:
-          profile.normalizedUrl ??
-          profile.url ??
-          profile.handle ??
-          null,
+        value: profile.normalizedUrl ?? profile.url ?? profile.handle ?? null,
       }))
       .sort((left, right) => left.id.localeCompare(right.id)),
-    googleBusinessProfiles: (input.googleBusinessProfiles ?? [])
-      .map((profile) => ({
-        id: profile.id,
-        status: profile.status.toLowerCase(),
-      }))
-      .sort((left, right) => left.id.localeCompare(right.id)),
-    profileDecisions: (input.profileDecisions ?? [])
-      .map((decision) => ({
-        platform: decision.platform,
-        decision: decision.decision,
-      }))
-      .sort((left, right) => left.platform.localeCompare(right.platform)),
     context: {
       description: input.description?.trim() || null,
       targetAudience: input.targetAudience?.trim() || null,

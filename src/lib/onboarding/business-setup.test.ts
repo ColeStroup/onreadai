@@ -57,7 +57,7 @@ test("a submitted high-confidence profile still requires user confirmation", () 
   assert.equal(progress.profilesComplete, false);
 });
 
-test("manual setup completes without discovery results", () => {
+test("a manual social profile cannot complete website setup", () => {
   const progress = deriveBusinessSetupProgress(
     source({
       profiles: [
@@ -77,12 +77,12 @@ test("manual setup completes without discovery results", () => {
     }),
   );
 
-  assert.equal(progress.profilesComplete, true);
-  assert.equal(progress.profileCounts.manuallyAdded, 1);
-  assert.equal(progress.profileCounts.notUsed, 1);
+  assert.equal(progress.profilesComplete, false);
+  assert.equal(progress.profileCounts.manuallyAdded, 0);
+  assert.equal(progress.profileCounts.notUsed, 0);
 });
 
-test("removed profiles are resolved and excluded from confirmed counts", () => {
+test("disabled profile records are ignored while a confirmed website completes setup", () => {
   const progress = deriveBusinessSetupProgress(
     source({
       profiles: [
@@ -108,12 +108,12 @@ test("removed profiles are resolved and excluded from confirmed counts", () => {
     }),
   );
 
-  assert.equal(progress.profileCounts.removed, 1);
+  assert.equal(progress.profileCounts.removed, 0);
   assert.equal(progress.profileCounts.pending, 0);
   assert.equal(progress.profilesComplete, true);
 });
 
-test("Google skipped and not-used decisions remain distinct", () => {
+test("Google decisions do not affect launch setup progress", () => {
   const skipped = deriveBusinessSetupProgress(
     source({
       profiles: [
@@ -149,13 +149,13 @@ test("Google skipped and not-used decisions remain distinct", () => {
     }),
   );
 
-  assert.equal(skipped.profileCounts.skipped, 1);
+  assert.equal(skipped.profileCounts.skipped, 0);
   assert.equal(skipped.profileCounts.notUsed, 0);
   assert.equal(notUsed.profileCounts.skipped, 0);
-  assert.equal(notUsed.profileCounts.notUsed, 1);
+  assert.equal(notUsed.profileCounts.notUsed, 0);
 });
 
-test("pending Google candidates block completion until reviewed", () => {
+test("pending Google candidates do not block website-only setup", () => {
   const progress = deriveBusinessSetupProgress(
     source({
       profiles: [
@@ -169,9 +169,9 @@ test("pending Google candidates block completion until reviewed", () => {
     }),
   );
 
-  assert.equal(progress.profileCounts.pending, 1);
-  assert.equal(progress.googleReviewed, false);
-  assert.equal(progress.profilesComplete, false);
+  assert.equal(progress.profileCounts.pending, 0);
+  assert.equal(progress.googleReviewed, true);
+  assert.equal(progress.profilesComplete, true);
 });
 
 test("setup progress counts completed steps rather than profiles", () => {

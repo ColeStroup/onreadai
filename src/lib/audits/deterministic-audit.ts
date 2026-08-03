@@ -20,10 +20,7 @@ import {
   type AuditAssessment,
 } from "@/lib/audits/audit-applicability";
 import type { ScoreBreakdown } from "@/lib/audits/evidence-contracts";
-import {
-  getSuggestedQuestionsForGoals,
-  personalizeRecommendations,
-} from "@/lib/goals";
+import { personalizeRecommendations } from "@/lib/goals";
 import {
   classifyReportBusiness,
   deterministicSocialRecommendation,
@@ -31,6 +28,10 @@ import {
   publicCompetitorMonitoringCopy,
 } from "@/lib/reports/content-compatibility";
 import { SCORING_ENGINE_VERSION } from "@/lib/reports/report-freshness";
+import {
+  isWebsiteSeoCategory,
+  isWebsiteSeoReportCategory,
+} from "@/lib/product/website-seo-scope";
 import {
   buildOverallScoreBreakdown,
   createScoreTrace,
@@ -147,9 +148,7 @@ function getContactCrawlState(websiteCrawl?: WebsiteCrawlResult | null) {
     (page) => page.hasContactInfo,
   );
   const contactDiscoveredButSkipped = Boolean(
-    websiteCrawl?.skippedImportantPages.some(
-      (page) => page.type === "Contact",
-    ),
+    websiteCrawl?.skippedImportantPages.some((page) => page.type === "Contact"),
   );
   const contactInfoOnScannedPages = Boolean(
     websiteCrawl?.pageResults.some((page) => page.hasContactInfo),
@@ -199,7 +198,9 @@ function ctaExamplesForContext(contextText: string) {
     return "Get Quote, Call Now, Book Appointment, Schedule Service, or Request Estimate";
   }
 
-  if (/\b(ecommerce|e-commerce|shop|store|retail|products)\b/.test(contextText)) {
+  if (
+    /\b(ecommerce|e-commerce|shop|store|retail|products)\b/.test(contextText)
+  ) {
     return "Shop Now, View Products, Add to Cart, Subscribe, or Buy Now";
   }
 
@@ -299,7 +300,8 @@ function businessContextRecommendationWeight({
     return 0;
   }
 
-  const text = `${recommendation.title} ${recommendation.description}`.toLowerCase();
+  const text =
+    `${recommendation.title} ${recommendation.description}`.toLowerCase();
   let weight = 0;
 
   if (
@@ -402,7 +404,9 @@ function personalizeRecommendationsByBusinessContext(
     }));
 }
 
-export function generateDeterministicAudit(input: DeterministicAuditInput): DeterministicAuditResult {
+export function generateDeterministicAudit(
+  input: DeterministicAuditInput,
+): DeterministicAuditResult {
   const websiteAnalysis = input.websiteAnalysis;
   const websiteCrawl = input.websiteCrawl;
   const seoAnalysis = input.seoAnalysis;
@@ -450,8 +454,7 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
     ...input.businessContext,
   };
   const businessArchetype = classifyReportBusiness(compatibilityContext);
-  const isCreatorCommunityContext =
-    businessArchetype === "creator_community";
+  const isCreatorCommunityContext = businessArchetype === "creator_community";
   const isLocalBusinessContext =
     businessArchetype === "local_service" ||
     businessArchetype === "restaurant_hospitality";
@@ -481,10 +484,6 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
     input.profiles,
     BusinessProfileStatus.PENDING,
   );
-  const removedCount = countByStatus(
-    input.profiles,
-    BusinessProfileStatus.REMOVED,
-  );
   const websiteConfirmed = input.profiles.some(
     (profile) =>
       profile.platform === ProfilePlatform.WEBSITE &&
@@ -511,16 +510,8 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
   const socialConfirmed = confirmedSocialCount(input.profiles);
   const socialPending = pendingSocialCount(input.profiles);
 
-  let websiteScore = clampScore(
-    (websiteConfirmed ? 78 : 44) +
-      confirmedCount * 2 +
-      offset,
-  );
-  let seoScore = clampScore(
-    (websiteConfirmed ? 68 : 42) +
-      (googleConfirmed ? 8 : 0) -
-      offset,
-  );
+  let websiteScore = websiteAnalysis ? clampScore(websiteAnalysis.score) : 0;
+  let seoScore = seoAnalysis ? clampScore(seoAnalysis.score) : 0;
   let socialScore = clampScore(
     48 + socialConfirmed * 9 + socialPending * 3 + offset,
   );
@@ -530,20 +521,20 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
   const websiteTrace = createScoreTrace({
     category: ScoreCategory.WEBSITE,
     score: websiteScore,
-    key: "website:presence-baseline",
-    label: "Website presence baseline",
-    value: websiteConfirmed,
+    key: "website:homepage-analysis",
+    label: "Homepage website analysis",
+    value: websiteAnalysis?.score ?? null,
     explanation:
-      "The baseline uses confirmed website presence and confirmed profile coverage.",
+      "The website score starts with measured homepage structure, content, accessibility, and conversion-path signals.",
   });
   const seoTrace = createScoreTrace({
     category: ScoreCategory.SEO,
     score: seoScore,
-    key: "seo:presence-baseline",
-    label: "SEO presence baseline",
-    value: websiteConfirmed,
+    key: "seo:homepage-analysis",
+    label: "Homepage SEO analysis",
+    value: seoAnalysis?.score ?? null,
     explanation:
-      "The baseline uses confirmed website and Google Business presence before analyzer checks.",
+      "The SEO score starts with measured title, description, heading, canonical, viewport, robots.txt, and sitemap signals.",
   });
   const socialTrace = createScoreTrace({
     category: ScoreCategory.SOCIAL,
@@ -575,7 +566,9 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
 
     brandingScore = updateScoreTrace(brandingTrace, {
       score: clampScore(
-        52 + socialConfirmed * 8 + Math.min(12, contextSignals * 2) -
+        52 +
+          socialConfirmed * 8 +
+          Math.min(12, contextSignals * 2) -
           Math.min(6, socialPending * 2) +
           offset,
       ),
@@ -589,27 +582,15 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
 
   if (websiteAnalysis) {
     websiteScore = updateScoreTrace(websiteTrace, {
-      score: clampScore((websiteScore + websiteAnalysis.score * 2) / 3),
-      key: "website:homepage-analysis",
-      label: "Homepage analyzer result",
+      score: clampScore(websiteAnalysis.score),
+      key: "website:homepage-evidence",
+      label: "Homepage evidence",
       value: websiteAnalysis.score,
       explanation:
         "The deterministic homepage analyzer contributes title, metadata, H1, accessibility, action-link coverage, contact, and structural checks.",
     });
     seoScore = updateScoreTrace(seoTrace, {
-      score: clampScore(
-        seoScore +
-          (websiteAnalysis.pageTitle ? 4 : -8) +
-          (websiteAnalysis.metaDescription ? 8 : -12) +
-          (websiteAnalysis.h1Count === 1
-            ? 5
-            : websiteAnalysis.h1Count === 0
-              ? -10
-              : -5) +
-          (websiteAnalysis.hasCanonical ? 3 : -2) +
-          (websiteAnalysis.hasViewportMeta ? 2 : -6) -
-          Math.min(10, websiteAnalysis.imagesMissingAltCount),
-      ),
+      score: seoAnalysis ? clampScore(seoAnalysis.score) : seoScore,
       key: "seo:homepage-signals",
       label: "Homepage SEO signals",
       value: `title ${Boolean(websiteAnalysis.pageTitle)}; meta ${Boolean(websiteAnalysis.metaDescription)}; H1 ${websiteAnalysis.h1Count}; canonical ${websiteAnalysis.hasCanonical}`,
@@ -632,13 +613,17 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
   if (websiteCrawl && websiteCrawl.successfulPages > 0) {
     const h1IssuePages =
       websiteCrawl.pagesWithNoH1 + websiteCrawl.pagesWithMultipleH1;
+    const analyzedPages = Math.max(1, websiteCrawl.successfulPages);
+    const multiPageSeoScore = clampScore(
+      100 -
+        (websiteCrawl.pagesMissingTitle / analyzedPages) * 25 -
+        (websiteCrawl.pagesMissingMetaDescription / analyzedPages) * 25 -
+        (h1IssuePages / analyzedPages) * 25,
+    );
 
     websiteScore = updateScoreTrace(websiteTrace, {
       score: clampScore(
-        (websiteScore * 2 + websiteCrawl.averagePageScore) / 3 -
-          Math.min(8, websiteCrawl.pagesWithNoCTA * 2) -
-          (contactCrawlState.shouldRecommendAddingContactPage ? 4 : 0) -
-          (contactCrawlState.contactDiscoveredButSkipped ? 1 : 0),
+        websiteScore * 0.35 + websiteCrawl.averagePageScore * 0.65,
       ),
       key: "website:multi-page-crawl",
       label: "Multi-page website coverage",
@@ -647,12 +632,7 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
         "The crawl contributes average page quality, action-link coverage, and verified contact-path coverage. Action-link coverage is separate from CTA clarity.",
     });
     seoScore = updateScoreTrace(seoTrace, {
-      score: clampScore(
-        (seoScore * 2 + websiteCrawl.averagePageScore) / 3 -
-          Math.min(12, websiteCrawl.pagesMissingTitle * 4) -
-          Math.min(14, websiteCrawl.pagesMissingMetaDescription * 3) -
-          Math.min(10, h1IssuePages * 3),
-      ),
+      score: clampScore(seoScore * 0.45 + multiPageSeoScore * 0.55),
       key: "seo:multi-page-crawl",
       label: "Multi-page SEO coverage",
       value: `${websiteCrawl.pagesMissingTitle} missing titles; ${websiteCrawl.pagesMissingMetaDescription} missing meta descriptions; ${h1IssuePages} H1 issue pages`,
@@ -674,7 +654,9 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
   }
   if (seoAnalysis) {
     seoScore = updateScoreTrace(seoTrace, {
-      score: clampScore((seoScore + seoAnalysis.score * 2) / 3),
+      score: websiteCrawl?.successfulPages
+        ? seoScore
+        : clampScore(seoAnalysis.score),
       key: "seo:technical-analysis",
       label: "Technical SEO analysis",
       value: seoAnalysis.score,
@@ -734,8 +716,7 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
       key: "reviews:analyzer-result",
       label: "Review and trust analysis",
       value: reviewAnalysis.score,
-      explanation:
-        reviewAnalysis.reviewScoreExplanation,
+      explanation: reviewAnalysis.reviewScoreExplanation,
     });
     brandingScore = updateScoreTrace(brandingTrace, {
       score: clampScore(
@@ -769,10 +750,11 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
     key: "competitors:comparable-public-coverage",
     label: "Comparable competitor coverage",
     value: `${competitorCount} saved; ${confirmedCompetitorProfileCount} confirmed public profiles; ${pendingCompetitorProfileCount} pending`,
-    explanation:
-      assessment.applicableCategories.includes(ScoreCategory.COMPETITORS)
-        ? "The score uses saved competitor count and explicit confirmed or pending public-profile coverage. Subjective positioning has bounded influence in the separate comparison engine."
-        : "No usable competitor snapshot was available, so this provisional value is excluded from the overall score.",
+    explanation: assessment.applicableCategories.includes(
+      ScoreCategory.COMPETITORS,
+    )
+      ? "The score uses saved competitor count and explicit confirmed or pending public-profile coverage. Subjective positioning has bounded influence in the separate comparison engine."
+      : "No usable competitor snapshot was available, so this provisional value is excluded from the overall score.",
   });
   const overallScore = clampScore(
     calculateApplicableOverallScore(
@@ -805,7 +787,9 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
     }),
     scoreTraceBreakdown({
       trace: websiteTrace,
-      applicable: assessment.applicableCategories.includes(ScoreCategory.WEBSITE),
+      applicable: assessment.applicableCategories.includes(
+        ScoreCategory.WEBSITE,
+      ),
       engineVersion: SCORING_ENGINE_VERSION,
       calculatedAt,
     }),
@@ -888,7 +872,11 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
     ...(websiteConfirmed
       ? [{ category: ScoreCategory.SEO, label: "SEO", score: seoScore }]
       : []),
-    { category: ScoreCategory.BRANDING, label: "Branding", score: brandingScore },
+    {
+      category: ScoreCategory.BRANDING,
+      label: "Branding",
+      score: brandingScore,
+    },
     { category: ScoreCategory.REVIEWS, label: "Reviews", score: reviewsScore },
     ...(assessment.applicableCategories.includes(ScoreCategory.COMPETITORS)
       ? [
@@ -1103,7 +1091,9 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
                 category: ScoreCategory.SEO,
                 title: "Multiple pages are missing meta descriptions.",
                 description: `Scanned ${websiteCrawl.pagesScanned} pages. ${websiteCrawl.pagesMissingMetaDescription} page${
-                  websiteCrawl.pagesMissingMetaDescription === 1 ? " is" : "s are"
+                  websiteCrawl.pagesMissingMetaDescription === 1
+                    ? " is"
+                    : "s are"
                 } missing meta descriptions.`,
                 severity:
                   websiteCrawl.pagesMissingMetaDescription >=
@@ -1186,7 +1176,8 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
           ? [
               {
                 category: ScoreCategory.WEBSITE,
-                title: "Contact information was verified on a scanned contact page.",
+                title:
+                  "Contact information was verified on a scanned contact page.",
                 description:
                   "A contact page was included in the crawl and contained contact signals such as a phone number, email, or address-like text.",
                 severity: FindingSeverity.INFO,
@@ -1221,7 +1212,8 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
           ? [
               {
                 category: ScoreCategory.WEBSITE,
-                title: "Contact info appears on scanned pages, but no dedicated contact page was detected.",
+                title:
+                  "Contact info appears on scanned pages, but no dedicated contact page was detected.",
                 description:
                   "The crawl found contact signals on scanned pages, but did not discover a clear internal URL that looks like a dedicated contact page.",
                 severity: FindingSeverity.LOW,
@@ -1242,7 +1234,8 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
           ? [
               {
                 category: ScoreCategory.WEBSITE,
-                title: "No clear contact page or contact information was found in scanned pages.",
+                title:
+                  "No clear contact page or contact information was found in scanned pages.",
                 description:
                   "The crawl did not discover a clear contact page and did not detect phone, email, or address-like contact signals on the pages it scanned.",
                 severity: FindingSeverity.MEDIUM,
@@ -1267,7 +1260,9 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
                 severity: FindingSeverity.MEDIUM,
                 evidence: {
                   issueKey: "website:content:thin",
-                  affectedPages: websiteCrawl.thinPages!.map((page) => page.url),
+                  affectedPages: websiteCrawl.thinPages!.map(
+                    (page) => page.url,
+                  ),
                   pages: websiteCrawl.thinPages,
                 },
               },
@@ -1279,7 +1274,9 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
                 category: ScoreCategory.SEO,
                 title: "Near-duplicate page content was detected.",
                 description: `${websiteCrawl.duplicateContentGroups!.length} group${
-                  websiteCrawl.duplicateContentGroups!.length === 1 ? " was" : "s were"
+                  websiteCrawl.duplicateContentGroups!.length === 1
+                    ? " was"
+                    : "s were"
                 } identified from extracted main-content similarity.`,
                 severity: FindingSeverity.MEDIUM,
                 evidence: {
@@ -1298,7 +1295,9 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
                 category: ScoreCategory.BRANDING,
                 title: "Visible copy errors may reduce professionalism.",
                 description: `${websiteCrawl.copyQualityFindings!.length} high-confidence copy issue${
-                  websiteCrawl.copyQualityFindings!.length === 1 ? " was" : "s were"
+                  websiteCrawl.copyQualityFindings!.length === 1
+                    ? " was"
+                    : "s were"
                 } found across customer-facing pages. Intentional brand and product language is excluded from this check.`,
                 severity: FindingSeverity.MEDIUM,
                 evidence: {
@@ -1409,11 +1408,9 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
                     ? FindingSeverity.HIGH
                     : FindingSeverity.MEDIUM,
                 evidence: {
-                  confirmedProfilesCount:
-                    socialAnalysis.confirmedProfilesCount,
+                  confirmedProfilesCount: socialAnalysis.confirmedProfilesCount,
                   pendingProfilesCount: socialAnalysis.pendingProfilesCount,
-                  platformCoverageLevel:
-                    socialAnalysis.platformCoverageLevel,
+                  platformCoverageLevel: socialAnalysis.platformCoverageLevel,
                 },
               },
             ]
@@ -1429,8 +1426,7 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
                 severity: FindingSeverity.INFO,
                 evidence: {
                   confirmedPlatforms: socialAnalysis.confirmedPlatforms,
-                  platformCoverageLevel:
-                    socialAnalysis.platformCoverageLevel,
+                  platformCoverageLevel: socialAnalysis.platformCoverageLevel,
                 },
               },
             ]),
@@ -1453,7 +1449,9 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
             ]
           : []),
         ...socialAnalysis.warnings
-          .filter((warning) => warning.includes("broader confirmed social coverage"))
+          .filter((warning) =>
+            warning.includes("broader confirmed social coverage"),
+          )
           .slice(0, 1)
           .map((warning) => ({
             category: ScoreCategory.SOCIAL,
@@ -1523,7 +1521,9 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
                 },
               ]),
         ...reviewAnalysis.trustWarnings
-          .filter((warning) => warning.includes("has confirmed review platform coverage"))
+          .filter((warning) =>
+            warning.includes("has confirmed review platform coverage"),
+          )
           .slice(0, 1)
           .map((warning) => ({
             category: ScoreCategory.REVIEWS,
@@ -1570,9 +1570,7 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
                 : `No customer action links were detected in the static homepage HTML. Prioritize an action that fits this business, such as ${ctaExamples}.`
               : "The confirmed website could not be analyzed fully, so its primary visitor path should be reviewed manually.",
             severity:
-              websiteScore >= 75
-                ? FindingSeverity.LOW
-                : FindingSeverity.MEDIUM,
+              websiteScore >= 75 ? FindingSeverity.LOW : FindingSeverity.MEDIUM,
           },
           {
             category: ScoreCategory.SEO,
@@ -1619,7 +1617,9 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
             }.`,
             description: `Saved competitors: ${competitorNames
               .slice(0, 5)
-              .join(", ")}. Public comparisons use completed, timestamped snapshots; unavailable data is not treated as a weakness.`,
+              .join(
+                ", ",
+              )}. Public comparisons use completed, timestamped snapshots; unavailable data is not treated as a weakness.`,
             severity:
               competitorCount >= 3 ? FindingSeverity.INFO : FindingSeverity.LOW,
           },
@@ -1746,230 +1746,241 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
             : []),
         ]
       : [];
-  const websiteCrawlRecommendations: DeterministicAuditRecommendation[] = websiteCrawl
-    ? [
-        ...(websiteCrawl.pagesMissingMetaDescription > 0
-          ? [
-              {
-                title: "Write meta descriptions for key pages",
-                description: `${websiteCrawl.pagesMissingMetaDescription} scanned page${
-                  websiteCrawl.pagesMissingMetaDescription === 1 ? " is" : "s are"
-                } missing meta descriptions. Start with the highest-value service, contact, pricing, and product pages.`,
-                category: ScoreCategory.SEO,
-                priority: RecommendationPriority.HIGH,
-                estimatedEffort: "Medium" as const,
-                expectedImpact: "High" as const,
-                issueKey: "sitewide:meta-description:missing",
-                evidence: {
+  const websiteCrawlRecommendations: DeterministicAuditRecommendation[] =
+    websiteCrawl
+      ? [
+          ...(websiteCrawl.pagesMissingMetaDescription > 0
+            ? [
+                {
+                  title: "Write meta descriptions for key pages",
+                  description: `${websiteCrawl.pagesMissingMetaDescription} scanned page${
+                    websiteCrawl.pagesMissingMetaDescription === 1
+                      ? " is"
+                      : "s are"
+                  } missing meta descriptions. Start with the highest-value service, contact, pricing, and product pages.`,
+                  category: ScoreCategory.SEO,
+                  priority: RecommendationPriority.HIGH,
+                  estimatedEffort: "Medium" as const,
+                  expectedImpact: "High" as const,
                   issueKey: "sitewide:meta-description:missing",
-                  affectedUrls: websiteCrawl.pageResults
-                    .filter((page) => !page.metaDescription)
-                    .map((page) => page.url),
+                  evidence: {
+                    issueKey: "sitewide:meta-description:missing",
+                    affectedUrls: websiteCrawl.pageResults
+                      .filter((page) => !page.metaDescription)
+                      .map((page) => page.url),
+                  },
                 },
-              },
-            ]
-          : []),
-        ...websiteCrawl.pageResults
-          .filter((page) => page.analysisStatus !== "FAILED" && page.h1Count === 0)
-          .map((page) => ({
-            title: `Add a clear H1 to ${pageLabelFromUrl(page.url)}`,
-            description:
-              "Use one descriptive main heading that states this page's topic and customer value.",
-            category: ScoreCategory.SEO,
-            priority: RecommendationPriority.MEDIUM,
-            estimatedEffort: "Low" as const,
-            expectedImpact: "Medium" as const,
-            sourceUrl: page.url,
-            issueKey: "sitewide:h1:missing",
-            evidence: {
+              ]
+            : []),
+          ...websiteCrawl.pageResults
+            .filter(
+              (page) => page.analysisStatus !== "FAILED" && page.h1Count === 0,
+            )
+            .map((page) => ({
+              title: `Add a clear H1 to ${pageLabelFromUrl(page.url)}`,
+              description:
+                "Use one descriptive main heading that states this page's topic and customer value.",
+              category: ScoreCategory.SEO,
+              priority: RecommendationPriority.MEDIUM,
+              estimatedEffort: "Low" as const,
+              expectedImpact: "Medium" as const,
+              sourceUrl: page.url,
               issueKey: "sitewide:h1:missing",
+              evidence: {
+                issueKey: "sitewide:h1:missing",
+                sourceUrl: page.url,
+                h1Count: 0,
+              },
+            })),
+          ...websiteCrawl.pageResults
+            .filter(
+              (page) => page.analysisStatus !== "FAILED" && page.h1Count > 1,
+            )
+            .map((page) => ({
+              title: `Clarify the H1 structure on ${pageLabelFromUrl(page.url)}`,
+              description: `The page has ${page.h1Count} H1 headings. Keep the strongest main heading and use subordinate heading levels for supporting sections.`,
+              category: ScoreCategory.SEO,
+              priority: RecommendationPriority.LOW,
+              estimatedEffort: "Low" as const,
+              expectedImpact: "Medium" as const,
               sourceUrl: page.url,
-              h1Count: 0,
-            },
-          })),
-        ...websiteCrawl.pageResults
-          .filter((page) => page.analysisStatus !== "FAILED" && page.h1Count > 1)
-          .map((page) => ({
-            title: `Clarify the H1 structure on ${pageLabelFromUrl(page.url)}`,
-            description: `The page has ${page.h1Count} H1 headings. Keep the strongest main heading and use subordinate heading levels for supporting sections.`,
-            category: ScoreCategory.SEO,
-            priority: RecommendationPriority.LOW,
-            estimatedEffort: "Low" as const,
-            expectedImpact: "Medium" as const,
-            sourceUrl: page.url,
-            issueKey: "sitewide:h1:multiple",
-            evidence: {
               issueKey: "sitewide:h1:multiple",
-              sourceUrl: page.url,
-              h1Count: page.h1Count,
-            },
-          })),
-        ...(websiteCrawl.pagesWithNoCTA > 0
-          ? [
-              {
-                title: "Add customer action links to important pages",
-                description: `${websiteCrawl.pagesWithNoCTA} scanned page${
-                  websiteCrawl.pagesWithNoCTA === 1 ? " has" : "s have"
-                } no detected customer action link. Add relevant next-step links, such as ${ctaExamples}; assess primary CTA clarity separately.`,
-                category: ScoreCategory.WEBSITE,
-                priority: RecommendationPriority.HIGH,
-                estimatedEffort: "Medium" as const,
-                expectedImpact: "High" as const,
+              evidence: {
+                issueKey: "sitewide:h1:multiple",
+                sourceUrl: page.url,
+                h1Count: page.h1Count,
               },
-            ]
-          : []),
-        ...(contactCrawlState.contactDiscoveredButSkipped
-          ? [
-              {
-                title: "Review the discovered contact page",
-                description:
-                  "A likely contact page was discovered but not scanned because of the current crawl limit. Review it manually or increase crawl depth before treating contact details as missing.",
-                category: ScoreCategory.WEBSITE,
-                priority: RecommendationPriority.LOW,
-                estimatedEffort: "Low" as const,
-                expectedImpact: "Medium" as const,
-              },
-            ]
-          : []),
-        ...(contactCrawlState.contactPageNotDiscovered &&
-        contactCrawlState.contactInfoOnScannedPages
-          ? [
-              {
-                title: "Make contact options easier to find",
-                description:
-                  "Contact information appears somewhere in the scanned pages, but no dedicated contact page was detected. Consider adding a clear Contact link in the header or footer.",
-                category: ScoreCategory.WEBSITE,
-                priority: RecommendationPriority.MEDIUM,
-                estimatedEffort: "Low" as const,
-                expectedImpact: "Medium" as const,
-              },
-            ]
-          : []),
-        ...(contactCrawlState.shouldRecommendAddingContactPage
-          ? [
-              {
-                title: "Add or expose a contact page",
-                description:
-                  "No clear contact page or contact information was found in the scanned pages. Add one or link it more visibly from the header, footer, and key conversion pages.",
-                category: ScoreCategory.WEBSITE,
-                priority: RecommendationPriority.HIGH,
-                estimatedEffort: "Low" as const,
-                expectedImpact: "High" as const,
-              },
-            ]
-          : []),
-        ...(websiteCrawl.totalImagesMissingAlt > 0
-          ? [
-              {
-                title: "Improve image alt text across the site",
-                description: `The crawl found ${websiteCrawl.totalImagesMissingAlt} images missing alt text across ${websiteCrawl.successfulPages} scanned page${
-                  websiteCrawl.successfulPages === 1 ? "" : "s"
-                }. Prioritize images that explain services, products, results, or team trust signals.`,
-                category: ScoreCategory.SEO,
-                priority: RecommendationPriority.MEDIUM,
-                estimatedEffort: "Medium" as const,
-                expectedImpact: "Medium" as const,
-              },
-            ]
-          : []),
-        ...((websiteCrawl.orderingFrictionPages?.length ?? 0) > 0
-          ? [
-              {
-                title: "Simplify the order inquiry process",
-                description:
-                  "Preserve the business's manual ordering model while collecting required details in one guided step and explaining confirmation, payment, pickup, and delivery expectations.",
-                category: ScoreCategory.WEBSITE,
-                priority: RecommendationPriority.HIGH,
-                estimatedEffort: "Medium" as const,
-                expectedImpact: "High" as const,
-                sourceUrl: websiteCrawl.orderingFrictionPages!.at(0)?.url,
-                issueKey: "website:ordering-process:friction",
-                evidence: {
+            })),
+          ...(websiteCrawl.pagesWithNoCTA > 0
+            ? [
+                {
+                  title: "Add customer action links to important pages",
+                  description: `${websiteCrawl.pagesWithNoCTA} scanned page${
+                    websiteCrawl.pagesWithNoCTA === 1 ? " has" : "s have"
+                  } no detected customer action link. Add relevant next-step links, such as ${ctaExamples}; assess primary CTA clarity separately.`,
+                  category: ScoreCategory.WEBSITE,
+                  priority: RecommendationPriority.HIGH,
+                  estimatedEffort: "Medium" as const,
+                  expectedImpact: "High" as const,
+                },
+              ]
+            : []),
+          ...(contactCrawlState.contactDiscoveredButSkipped
+            ? [
+                {
+                  title: "Review the discovered contact page",
+                  description:
+                    "A likely contact page was discovered but not scanned because of the current crawl limit. Review it manually or increase crawl depth before treating contact details as missing.",
+                  category: ScoreCategory.WEBSITE,
+                  priority: RecommendationPriority.LOW,
+                  estimatedEffort: "Low" as const,
+                  expectedImpact: "Medium" as const,
+                },
+              ]
+            : []),
+          ...(contactCrawlState.contactPageNotDiscovered &&
+          contactCrawlState.contactInfoOnScannedPages
+            ? [
+                {
+                  title: "Make contact options easier to find",
+                  description:
+                    "Contact information appears somewhere in the scanned pages, but no dedicated contact page was detected. Consider adding a clear Contact link in the header or footer.",
+                  category: ScoreCategory.WEBSITE,
+                  priority: RecommendationPriority.MEDIUM,
+                  estimatedEffort: "Low" as const,
+                  expectedImpact: "Medium" as const,
+                },
+              ]
+            : []),
+          ...(contactCrawlState.shouldRecommendAddingContactPage
+            ? [
+                {
+                  title: "Add or expose a contact page",
+                  description:
+                    "No clear contact page or contact information was found in the scanned pages. Add one or link it more visibly from the header, footer, and key conversion pages.",
+                  category: ScoreCategory.WEBSITE,
+                  priority: RecommendationPriority.HIGH,
+                  estimatedEffort: "Low" as const,
+                  expectedImpact: "High" as const,
+                },
+              ]
+            : []),
+          ...(websiteCrawl.totalImagesMissingAlt > 0
+            ? [
+                {
+                  title: "Improve image alt text across the site",
+                  description: `The crawl found ${websiteCrawl.totalImagesMissingAlt} images missing alt text across ${websiteCrawl.successfulPages} scanned page${
+                    websiteCrawl.successfulPages === 1 ? "" : "s"
+                  }. Prioritize images that explain services, products, results, or team trust signals.`,
+                  category: ScoreCategory.SEO,
+                  priority: RecommendationPriority.MEDIUM,
+                  estimatedEffort: "Medium" as const,
+                  expectedImpact: "Medium" as const,
+                },
+              ]
+            : []),
+          ...((websiteCrawl.orderingFrictionPages?.length ?? 0) > 0
+            ? [
+                {
+                  title: "Simplify the order inquiry process",
+                  description:
+                    "Preserve the business's manual ordering model while collecting required details in one guided step and explaining confirmation, payment, pickup, and delivery expectations.",
+                  category: ScoreCategory.WEBSITE,
+                  priority: RecommendationPriority.HIGH,
+                  estimatedEffort: "Medium" as const,
+                  expectedImpact: "High" as const,
+                  sourceUrl: websiteCrawl.orderingFrictionPages!.at(0)?.url,
                   issueKey: "website:ordering-process:friction",
-                  pages: websiteCrawl.orderingFrictionPages,
-                  affectedUrls: websiteCrawl.orderingFrictionPages!.map(
-                    (page) => page.url,
-                  ),
+                  evidence: {
+                    issueKey: "website:ordering-process:friction",
+                    pages: websiteCrawl.orderingFrictionPages,
+                    affectedUrls: websiteCrawl.orderingFrictionPages!.map(
+                      (page) => page.url,
+                    ),
+                  },
                 },
-              },
-            ]
-          : []),
-        ...((websiteCrawl.copyQualityFindings?.length ?? 0) > 0
-          ? [
-              {
-                title: "Correct visible copy errors across key customer pages",
-                description:
-                  "Correct the cited high-confidence spelling, duplication, placeholder, or currency-format issues while preserving intentional brand and product wording.",
-                category: ScoreCategory.BRANDING,
-                priority: RecommendationPriority.MEDIUM,
-                estimatedEffort: "Low" as const,
-                expectedImpact: "Medium" as const,
-                issueKey: "website:copy:professionalism",
-                evidence: {
+              ]
+            : []),
+          ...((websiteCrawl.copyQualityFindings?.length ?? 0) > 0
+            ? [
+                {
+                  title:
+                    "Correct visible copy errors across key customer pages",
+                  description:
+                    "Correct the cited high-confidence spelling, duplication, placeholder, or currency-format issues while preserving intentional brand and product wording.",
+                  category: ScoreCategory.BRANDING,
+                  priority: RecommendationPriority.MEDIUM,
+                  estimatedEffort: "Low" as const,
+                  expectedImpact: "Medium" as const,
                   issueKey: "website:copy:professionalism",
-                  issues: websiteCrawl.copyQualityFindings,
-                  affectedUrls: websiteCrawl.copyQualityFindings!.map(
-                    (issue) => issue.url,
-                  ),
+                  evidence: {
+                    issueKey: "website:copy:professionalism",
+                    issues: websiteCrawl.copyQualityFindings,
+                    affectedUrls: websiteCrawl.copyQualityFindings!.map(
+                      (issue) => issue.url,
+                    ),
+                  },
                 },
-              },
-            ]
-          : []),
-        ...((websiteCrawl.thinPages?.length ?? 0) > 0
-          ? [
-              {
-                title: "Resolve thin public pages",
-                description:
-                  "Review each cited page and choose the safest fit: add useful page-specific content, redirect it, remove it from navigation, or noindex it.",
-                category: ScoreCategory.WEBSITE,
-                priority: RecommendationPriority.MEDIUM,
-                estimatedEffort: "Medium" as const,
-                expectedImpact: "Medium" as const,
-                issueKey: "website:content:thin",
-                evidence: {
+              ]
+            : []),
+          ...((websiteCrawl.thinPages?.length ?? 0) > 0
+            ? [
+                {
+                  title: "Resolve thin public pages",
+                  description:
+                    "Review each cited page and choose the safest fit: add useful page-specific content, redirect it, remove it from navigation, or noindex it.",
+                  category: ScoreCategory.WEBSITE,
+                  priority: RecommendationPriority.MEDIUM,
+                  estimatedEffort: "Medium" as const,
+                  expectedImpact: "Medium" as const,
                   issueKey: "website:content:thin",
-                  pages: websiteCrawl.thinPages,
-                  affectedUrls: websiteCrawl.thinPages!.map((page) => page.url),
+                  evidence: {
+                    issueKey: "website:content:thin",
+                    pages: websiteCrawl.thinPages,
+                    affectedUrls: websiteCrawl.thinPages!.map(
+                      (page) => page.url,
+                    ),
+                  },
                 },
-              },
-            ]
-          : []),
-        ...((websiteCrawl.duplicateContentGroups?.length ?? 0) > 0
-          ? [
-              {
-                title: "Differentiate near-duplicate customer pages",
-                description:
-                  "Give each affected page distinct customer value, main copy, and a relevant next step; consolidate only when the pages do not serve separate needs.",
-                category: ScoreCategory.SEO,
-                priority: RecommendationPriority.MEDIUM,
-                estimatedEffort: "Medium" as const,
-                expectedImpact: "Medium" as const,
-                issueKey: "website:content:duplicate",
-                evidence: {
+              ]
+            : []),
+          ...((websiteCrawl.duplicateContentGroups?.length ?? 0) > 0
+            ? [
+                {
+                  title: "Differentiate near-duplicate customer pages",
+                  description:
+                    "Give each affected page distinct customer value, main copy, and a relevant next step; consolidate only when the pages do not serve separate needs.",
+                  category: ScoreCategory.SEO,
+                  priority: RecommendationPriority.MEDIUM,
+                  estimatedEffort: "Medium" as const,
+                  expectedImpact: "Medium" as const,
                   issueKey: "website:content:duplicate",
-                  groups: websiteCrawl.duplicateContentGroups,
-                  affectedUrls: websiteCrawl.duplicateContentGroups!.flatMap(
-                    (group) => group.urls,
-                  ),
+                  evidence: {
+                    issueKey: "website:content:duplicate",
+                    groups: websiteCrawl.duplicateContentGroups,
+                    affectedUrls: websiteCrawl.duplicateContentGroups!.flatMap(
+                      (group) => group.urls,
+                    ),
+                  },
                 },
-              },
-            ]
-          : []),
-      ]
-    : [];
-  const seoAnalysisRecommendations: DeterministicAuditRecommendation[] = seoAnalysis
-    ? seoAnalysis.recommendedFixes.slice(0, 4).map((fix, index) => ({
-        title: fix,
-        description: seoFixEvidenceDescription(fix, seoAnalysis),
-        category: ScoreCategory.SEO,
-        priority:
-          index <= 1
-            ? RecommendationPriority.HIGH
-            : RecommendationPriority.MEDIUM,
-        estimatedEffort: index <= 1 ? ("Low" as const) : ("Medium" as const),
-        expectedImpact: index <= 1 ? ("High" as const) : ("Medium" as const),
-      }))
-    : [];
+              ]
+            : []),
+        ]
+      : [];
+  const seoAnalysisRecommendations: DeterministicAuditRecommendation[] =
+    seoAnalysis
+      ? seoAnalysis.recommendedFixes.slice(0, 4).map((fix, index) => ({
+          title: fix,
+          description: seoFixEvidenceDescription(fix, seoAnalysis),
+          category: ScoreCategory.SEO,
+          priority:
+            index <= 1
+              ? RecommendationPriority.HIGH
+              : RecommendationPriority.MEDIUM,
+          estimatedEffort: index <= 1 ? ("Low" as const) : ("Medium" as const),
+          expectedImpact: index <= 1 ? ("High" as const) : ("Medium" as const),
+        }))
+      : [];
   const socialAnalysisRecommendations: DeterministicAuditRecommendation[] =
     socialAnalysis
       ? socialAnalysis.recommendedFixes.slice(0, 4).map((fix, index) => ({
@@ -2068,37 +2079,38 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
       : []),
   ];
 
-  const socialFirstRecommendations: DeterministicAuditRecommendation[] = socialFirst
-    ? [
-        {
-          title: "Draft a clear social profile bio",
-          description:
-            "State who the business helps, the main offer, and one concrete next step. Use Business Context as the source and adapt the draft to each confirmed platform.",
-          category: ScoreCategory.SOCIAL,
-          priority: RecommendationPriority.HIGH,
-          estimatedEffort: "Low",
-          expectedImpact: "High",
-        },
-        {
-          title: "Build one link-in-bio conversion path",
-          description:
-            "Give profile visitors a short, prioritized set of destinations for the main offer, booking or storefront, customer proof, contact options, and community or email signup where relevant.",
-          category: ScoreCategory.SOCIAL,
-          priority: RecommendationPriority.HIGH,
-          estimatedEffort: "Low",
-          expectedImpact: "High",
-        },
-        {
-          title: "Create three pinned posts for new profile visitors",
-          description:
-            "Pin one offer explainer, one proof or trust post, and one clear next-step post so a new visitor can understand the business without browsing the full feed.",
-          category: ScoreCategory.SOCIAL,
-          priority: RecommendationPriority.MEDIUM,
-          estimatedEffort: "Medium",
-          expectedImpact: "High",
-        },
-      ]
-    : [];
+  const socialFirstRecommendations: DeterministicAuditRecommendation[] =
+    socialFirst
+      ? [
+          {
+            title: "Draft a clear social profile bio",
+            description:
+              "State who the business helps, the main offer, and one concrete next step. Use Business Context as the source and adapt the draft to each confirmed platform.",
+            category: ScoreCategory.SOCIAL,
+            priority: RecommendationPriority.HIGH,
+            estimatedEffort: "Low",
+            expectedImpact: "High",
+          },
+          {
+            title: "Build one link-in-bio conversion path",
+            description:
+              "Give profile visitors a short, prioritized set of destinations for the main offer, booking or storefront, customer proof, contact options, and community or email signup where relevant.",
+            category: ScoreCategory.SOCIAL,
+            priority: RecommendationPriority.HIGH,
+            estimatedEffort: "Low",
+            expectedImpact: "High",
+          },
+          {
+            title: "Create three pinned posts for new profile visitors",
+            description:
+              "Pin one offer explainer, one proof or trust post, and one clear next-step post so a new visitor can understand the business without browsing the full feed.",
+            category: ScoreCategory.SOCIAL,
+            priority: RecommendationPriority.MEDIUM,
+            estimatedEffort: "Medium",
+            expectedImpact: "High",
+          },
+        ]
+      : [];
 
   const baseRecommendations: DeterministicAuditRecommendation[] = [
     ...seoAnalysisRecommendations,
@@ -2123,7 +2135,8 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
       : []),
     {
       title: "Create a weekly content schedule",
-      description: deterministicSocialRecommendation(compatibilityContext).description,
+      description:
+        deterministicSocialRecommendation(compatibilityContext).description,
       category: ScoreCategory.SOCIAL,
       priority: RecommendationPriority.MEDIUM,
       estimatedEffort: "Medium",
@@ -2175,7 +2188,7 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
               estimatedEffort: "Medium" as const,
               expectedImpact: "Medium" as const,
             },
-      ]),
+          ]),
   ];
   const applicableRecommendations = socialFirst
     ? baseRecommendations.filter(
@@ -2199,34 +2212,47 @@ export function generateDeterministicAudit(input: DeterministicAuditInput): Dete
     contextText,
   );
 
+  const focusedScores = scores.filter(
+    (score) => !score.platform && isWebsiteSeoReportCategory(score.category),
+  );
+  const focusedFindings = findings.filter((finding) =>
+    isWebsiteSeoCategory(finding.category),
+  );
+  const focusedRecommendations = recommendations.filter((recommendation) =>
+    isWebsiteSeoCategory(recommendation.category),
+  );
+  const focusedScoreBreakdowns = scoreBreakdowns.filter((breakdown) =>
+    isWebsiteSeoReportCategory(breakdown.category),
+  );
+
   return {
     overallScore,
-    summary: socialFirst
-      ? `${input.businessName} has a ${overallScore}/100 social-first growth score based on applicable social, branding, reviews, and competitor signals. Website and SEO were not scored because no confirmed website was provided.`
-      : `${input.businessName} has a ${overallScore}/100 growth score based on website analysis and ${confirmedCount} confirmed, ${pendingCount} pending, and ${removedCount} removed profile signals.`,
+    summary: `${input.businessName} has a ${overallScore}/100 Website Growth Score based only on measured website and SEO evidence. Start with the highest-priority open action, make the change, then run another audit to verify the result.`,
     assessment,
-    scoreBreakdowns,
-    scores,
-    findings,
-    recommendations,
-    suggestedQuestions: getSuggestedQuestionsForGoals(
-      input.goals,
-      input.primaryGoal,
-      competitorNames,
-      socialAnalysis?.score ?? socialScore,
-    ),
+    scoreBreakdowns: focusedScoreBreakdowns,
+    scores: focusedScores,
+    findings: focusedFindings,
+    recommendations: focusedRecommendations,
+    suggestedQuestions: [
+      "What should I fix first?",
+      "Explain why this issue matters.",
+      "Help me rewrite this page title.",
+      "Draft a stronger call to action.",
+      "Which pages need the most attention?",
+      "How can I verify this recommendation?",
+    ],
     recentActivity: [
       {
-        title: "Growth audit generated",
-        detail: `${scores.length} scores and ${findings.length} findings saved.`,
+        title: "Website and SEO audit generated",
+        detail: `${focusedFindings.length} evidence-backed findings saved.`,
       },
       {
-        title: "Profiles analyzed",
-        detail: `${confirmedCount} confirmed, ${pendingCount} pending, ${removedCount} removed.`,
+        title: "Website evidence analyzed",
+        detail: `${websiteCrawl?.successfulPages ?? (websiteAnalysis ? 1 : 0)} public page${(websiteCrawl?.successfulPages ?? (websiteAnalysis ? 1 : 0)) === 1 ? "" : "s"} checked.`,
       },
       {
         title: "Recommendations created",
-        detail: `${recommendations.length} growth actions saved.`,
+        detail: `${focusedRecommendations.length} prioritized website and SEO actions saved.`,
       },
     ],
   };

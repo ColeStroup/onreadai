@@ -2,15 +2,13 @@ import {
   ArrowUpRight,
   Check,
   FilePenLine,
-  Scale,
+  SearchCheck,
   Target,
 } from "lucide-react";
 
 const scores = [
   ["Website", 75, "Needs focus"],
   ["SEO", 68, "Needs focus"],
-  ["Reviews", 86, "Strong"],
-  ["Social", 72, "Developing"],
 ] as const;
 
 export function AuditPreview({ compact = false }: { compact?: boolean }) {
@@ -23,12 +21,16 @@ export function AuditPreview({ compact = false }: { compact?: boolean }) {
         <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-teal-300">
-              Example audit
+              Example Website Growth Score
             </p>
-            <p className="mt-1 text-sm font-semibold text-white">Harbor &amp; Pine</p>
+            <p className="mt-1 text-sm font-semibold text-white">
+              Harbor &amp; Pine
+            </p>
           </div>
           <div className="flex size-14 shrink-0 flex-col items-center justify-center rounded-full border-[5px] border-teal-300 border-r-slate-700 text-center">
-            <span className="text-lg font-semibold leading-none text-white">75</span>
+            <span className="text-lg font-semibold leading-none text-white">
+              75
+            </span>
             <span className="mt-0.5 text-[8px] text-slate-400">/100</span>
           </div>
         </div>
@@ -41,7 +43,9 @@ export function AuditPreview({ compact = false }: { compact?: boolean }) {
             >
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs text-slate-400">{label}</span>
-                <span className="text-xs font-semibold text-white">{score}</span>
+                <span className="text-xs font-semibold text-white">
+                  {score}
+                </span>
               </div>
               <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-800">
                 <div
@@ -49,7 +53,9 @@ export function AuditPreview({ compact = false }: { compact?: boolean }) {
                   style={{ width: `${score}%` }}
                 />
               </div>
-              {!compact ? <p className="mt-1.5 text-[10px] text-slate-400">{status}</p> : null}
+              {!compact ? (
+                <p className="mt-1.5 text-[10px] text-slate-400">{status}</p>
+              ) : null}
             </div>
           ))}
         </div>
@@ -65,12 +71,12 @@ export function AuditPreview({ compact = false }: { compact?: boolean }) {
             </p>
           </div>
           <div className="bg-[#0d1718] p-3.5">
-            <Scale className="size-4 text-sky-300" aria-hidden="true" />
+            <SearchCheck className="size-4 text-sky-300" aria-hidden="true" />
             <p className="mt-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">
-              Competitor insight
+              SEO evidence
             </p>
             <p className="mt-1.5 text-xs leading-5 text-slate-200">
-              A competitor communicates its offer more clearly.
+              Three scanned pages are missing meta descriptions.
             </p>
           </div>
           <div className="bg-[#0d1718] p-3.5">

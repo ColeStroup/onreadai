@@ -4,6 +4,7 @@ import { RecommendationStatus } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 
 import { prisma } from "@/lib/prisma";
+import { logInfo } from "@/lib/observability/log";
 import { requireUser } from "@/lib/session";
 
 type RecommendationStatusInput = {
@@ -58,6 +59,14 @@ export async function updateRecommendationStatus({
         status === RecommendationStatus.COMPLETED ? new Date() : null,
     },
   });
+
+  if (status === RecommendationStatus.IN_PROGRESS) {
+    logInfo("recommendation_marked_in_progress", {
+      businessId,
+      recommendationId: recommendation.id,
+      auditId: recommendation.auditId,
+    });
+  }
 
   revalidateRecommendationPaths({
     businessId,

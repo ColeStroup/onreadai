@@ -9,11 +9,9 @@ import { analyzeReviews } from "@/lib/analyzers/review-analyzer";
 import type { WebsiteCrawlResult } from "@/lib/analyzers/website-crawler";
 import type { WebsiteAnalysis } from "@/lib/analyzers/website-analyzer";
 import { discoverGoogleBusinessProfiles } from "@/lib/google/google-business-discovery";
-import {
-  getGooglePlaceDetails,
-  normalizePlaceId,
-} from "@/lib/google/places";
+import { getGooglePlaceDetails, normalizePlaceId } from "@/lib/google/places";
 import { prisma } from "@/lib/prisma";
+import { isLocalGrowthEnabled } from "@/lib/features/feature-flags";
 import {
   currentRequestRateLimitIdentifier,
   enforceRateLimit,
@@ -32,6 +30,10 @@ async function requireOwnedBusiness(businessId: string) {
 
   if (!business) {
     notFound();
+  }
+
+  if (!isLocalGrowthEnabled()) {
+    throw new Error("Local Growth is not currently available.");
   }
 
   return business;
@@ -183,7 +185,9 @@ async function enforceGoogleProviderRateLimit(businessId: string) {
     });
   } catch (error) {
     if (error instanceof RateLimitError) {
-      redirect(`/dashboard/businesses/${businessId}/reviews?error=provider-rate`);
+      redirect(
+        `/dashboard/businesses/${businessId}/reviews?error=provider-rate`,
+      );
     }
     throw error;
   }
@@ -410,7 +414,9 @@ async function saveManualPlace({
     matchConfidence: 100,
     matchReasons,
     source: "manual",
-    rawSnapshot: JSON.parse(JSON.stringify(rawSnapshot ?? null)) as Prisma.InputJsonValue,
+    rawSnapshot: JSON.parse(
+      JSON.stringify(rawSnapshot ?? null),
+    ) as Prisma.InputJsonValue,
     discoveredAt: new Date(),
   };
 

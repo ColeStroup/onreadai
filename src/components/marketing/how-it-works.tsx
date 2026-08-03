@@ -11,12 +11,12 @@ export function HowItWorks() {
       <div className="mx-auto w-full max-w-7xl px-6 lg:px-8">
         <SectionHeading
           id="how-it-works-heading"
-          eyebrow="A guided workflow"
-          title="From public signals to practical next moves."
-          description="The workflow keeps you involved where context matters and automates the repetitive work of organizing evidence, priorities, and deliverables."
+          eyebrow="How Onread works"
+          title="From website URL to verified improvement."
+          description="The workflow keeps the evidence, priority, implementation guidance, and follow-up check connected."
         />
 
-        <ol className="mt-12 grid gap-px overflow-hidden rounded-lg border border-white/10 bg-white/10 sm:grid-cols-2 lg:grid-cols-4">
+        <ol className="mt-12 grid gap-px overflow-hidden rounded-lg border border-white/10 bg-white/10 sm:grid-cols-2 lg:grid-cols-5">
           {howItWorks.map((step, index) => {
             const Icon = step.icon;
             return (
@@ -25,10 +25,16 @@ export function HowItWorks() {
                   <span className="flex size-10 items-center justify-center rounded-lg border border-teal-300/20 bg-teal-300/[0.08] text-teal-300">
                     <Icon className="size-5" aria-hidden="true" />
                   </span>
-                  <span className="font-mono text-xs text-slate-400">0{index + 1}</span>
+                  <span className="font-mono text-xs text-slate-400">
+                    0{index + 1}
+                  </span>
                 </div>
-                <h3 className="mt-8 text-lg font-semibold text-white">{step.title}</h3>
-                <p className="mt-3 text-sm leading-6 text-slate-400">{step.description}</p>
+                <h3 className="mt-8 text-lg font-semibold text-white">
+                  {step.title}
+                </h3>
+                <p className="mt-3 text-sm leading-6 text-slate-400">
+                  {step.description}
+                </p>
               </li>
             );
           })}

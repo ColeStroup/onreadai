@@ -72,151 +72,76 @@ test.beforeEach(async ({ context, baseURL }) => {
   ]);
 });
 
-test("partial discovery can be completed entirely inside guided setup", async ({
-  page,
-}) => {
-  const businessId = await createBusiness(page, "https://example.com");
+test("guided setup confirms only the launch website source", async ({ page }) => {
+  const businessId = await createBusiness(page, "https://example.com/");
+
+  await expect(
+    page.getByRole("heading", { name: "Confirm your website" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Only this source is used for the launch Website Growth Score."),
+  ).toBeVisible();
+  await expect(page.getByText(/Instagram|Google Business|Competitor/i)).toHaveCount(
+    0,
+  );
 
   await page.getByRole("button", { name: "Confirm", exact: true }).click();
-  await addManualProfile(
-    page,
-    ProfilePlatform.INSTAGRAM,
-    `https://instagram.com/onread-${randomUUID().slice(0, 8)}`,
-  );
-  await page
-    .getByLabel("Google Maps or Business Profile URL")
-    .fill("https://www.google.com/maps/place/Example");
-  await page.getByRole("button", { name: "Add Google profile" }).click();
-
-  await expect(page.getByText("Your audit sources are ready")).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: "Advanced profile management" }),
-  ).toBeVisible();
+  await expect(page.getByText("Website confirmed", { exact: true })).toBeVisible();
 
   const profiles = await prisma.businessProfile.findMany({
     where: { businessId },
   });
-  expect(profiles).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({
-        platform: ProfilePlatform.INSTAGRAM,
-        status: BusinessProfileStatus.CONFIRMED,
-        source: BusinessProfileSource.MANUAL,
-      }),
-      expect.objectContaining({
-        platform: ProfilePlatform.GOOGLE_BUSINESS,
-        status: BusinessProfileStatus.CONFIRMED,
-        source: BusinessProfileSource.MANUAL,
-      }),
-    ]),
+  expect(profiles).toEqual([
+    expect.objectContaining({
+      platform: ProfilePlatform.WEBSITE,
+      status: BusinessProfileStatus.CONFIRMED,
+      source: BusinessProfileSource.SUBMITTED,
+    }),
+  ]);
+
+  await page.getByRole("button", { name: "Save and continue" }).click();
+  await expect(page).toHaveURL(
+    `/dashboard/businesses/${businessId}/setup?step=context`,
   );
 });
 
-test("incorrect discovery can be removed and replaced without leaving setup", async ({
+test("a removed website can be replaced without leaving guided setup", async ({
   page,
 }) => {
-  const businessId = await createBusiness(
-    page,
-    `https://instagram.com/onread-${randomUUID().slice(0, 8)}`,
-  );
-  await prisma.businessProfile.create({
-    data: {
-      businessId,
-      platform: ProfilePlatform.FACEBOOK,
-      url: "https://www.facebook.com/unrelated-guided-result",
-      normalizedUrl: "https://facebook.com/unrelated-guided-result",
-      status: BusinessProfileStatus.PENDING,
-      source: BusinessProfileSource.DISCOVERED,
-      confidenceScore: 72,
-    },
-  });
-  await page.reload();
+  const businessId = await createBusiness(page, "https://example.com/");
 
-  const wrongCard = page
-    .getByText("https://www.facebook.com/unrelated-guided-result")
-    .locator("xpath=ancestor::article[1]");
-  await wrongCard.getByRole("button", { name: "Remove" }).click();
-  await addManualProfile(
-    page,
-    ProfilePlatform.FACEBOOK,
-    `https://facebook.com/correct-${randomUUID().slice(0, 8)}`,
-  );
+  await page.getByRole("button", { name: "Remove" }).click();
+  await expect(page.getByText("Website confirmation required")).toBeVisible();
 
-  const records = await prisma.businessProfile.findMany({
-    where: { businessId, platform: ProfilePlatform.FACEBOOK },
+  const form = page.getByRole("form", { name: "Add missing profile" });
+  await expect(form.getByText("Website", { exact: true })).toBeVisible();
+  await expect(form.getByLabel("Platform")).toHaveCount(0);
+  await form.getByLabel("Public profile URL").fill("https://www.example.org/");
+  await form.getByRole("button", { name: "Add profile" }).click();
+  await expect(page.getByText("Website confirmed", { exact: true })).toBeVisible();
+  await expect(page.getByText("https://www.example.org/")).toBeVisible();
+
+  const profiles = await prisma.businessProfile.findMany({
+    where: { businessId, platform: ProfilePlatform.WEBSITE },
     orderBy: { createdAt: "asc" },
   });
-  expect(records[0]?.status).toBe(BusinessProfileStatus.REMOVED);
-  expect(records[1]?.status).toBe(BusinessProfileStatus.CONFIRMED);
-  expect(records[1]?.source).toBe(BusinessProfileSource.MANUAL);
-});
-
-test("Google skip remains distinct and paid audit shows acknowledgement", async ({
-  page,
-}) => {
-  const businessId = await createBusiness(
-    page,
-    `https://instagram.com/onread-${randomUUID().slice(0, 8)}`,
-  );
-  await page.getByRole("button", { name: "Confirm", exact: true }).click();
-  await page.getByRole("button", { name: "Skip for now", exact: true }).click();
-  await expect(page.getByText("Your audit sources are ready")).toBeVisible();
-  await prisma.business.update({
-    where: { id: businessId },
-    data: {
-      description: "A creator education business.",
-      targetAudience: "Independent creators.",
-      mainOffer: "Practical weekly education.",
-      contextConfirmedAt: new Date(),
-      goals: ["GROW_SOCIAL_MEDIA"],
-      primaryGoal: "GROW_SOCIAL_MEDIA",
-    },
-  });
-
-  await page.goto(`/dashboard/businesses/${businessId}/setup?step=audit`);
-  await expect(
-    page.getByRole("heading", { name: "Some sources have not been added" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", {
-      name: "Continue with available information",
+  expect(profiles).toHaveLength(2);
+  expect(profiles[0]?.status).toBe(BusinessProfileStatus.REMOVED);
+  expect(profiles[1]).toEqual(
+    expect.objectContaining({
+      status: BusinessProfileStatus.CONFIRMED,
+      source: BusinessProfileSource.MANUAL,
+      normalizedUrl: "https://example.org/",
+      url: "https://www.example.org/",
     }),
-  ).toBeVisible();
-  await page
-    .getByRole("button", { name: "Continue with available information" })
-    .click();
-  await expect(page).toHaveURL(/\/audit\/run\?auditId=/);
-
-  await expect
-    .poll(async () => {
-      const business = await prisma.business.findUnique({
-        where: { id: businessId },
-        select: { auditSourceAcknowledgementHash: true },
-      });
-      return Boolean(business?.auditSourceAcknowledgementHash);
-    })
-    .toBe(true);
-
-  await expect
-    .poll(
-      async () =>
-        (
-          await prisma.audit.findFirst({
-            where: { businessId },
-            orderBy: { createdAt: "desc" },
-            select: { status: true },
-          })
-        )?.status,
-      { timeout: 120_000 },
-    )
-    .toMatch(/COMPLETED|FAILED/);
+  );
 });
 
-test("profile actions expose pending feedback and the mobile flow has no overflow", async ({
+test("website confirmation exposes pending feedback and remains accessible on mobile", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await createBusiness(page, "https://example.com");
+  await createBusiness(page, "https://example.com/");
 
   await page.route("**/dashboard/businesses/*/setup**", async (route) => {
     if (route.request().method() === "POST") {
@@ -228,68 +153,29 @@ test("profile actions expose pending feedback and the mobile flow has no overflo
   const confirmation = confirm.click();
   await expect(page.getByRole("button", { name: "Confirming..." })).toBeDisabled();
   await confirmation;
-  await expect(page.getByText("Website confirmed.")).toBeVisible();
+  await expect(page.getByText("Website confirmed", { exact: true })).toBeVisible();
 
-  const overflow = await page.evaluate(
-    () => document.documentElement.scrollWidth > window.innerWidth,
-  );
-  expect(overflow).toBe(false);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth - window.innerWidth,
+    ),
+  ).toBeLessThanOrEqual(1);
 
   const accessibility = await new AxeBuilder({ page })
-    .withTags(["wcag2a", "wcag2aa"])
+    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
     .analyze();
-  expect(
-    accessibility.violations.filter((violation) =>
-      ["serious", "critical"].includes(violation.impact ?? ""),
-    ),
-  ).toEqual([]);
+  expect(accessibility.violations).toEqual([]);
 });
 
-test("advanced management has a route back and preserves setup progress", async ({
-  page,
-}) => {
-  const businessId = await createBusiness(page, "https://example.com");
-  await page.getByRole("button", { name: "Confirm", exact: true }).click();
-  await page.getByRole("button", { name: "I don't have one" }).click();
-  await expect(page.getByText("Your audit sources are ready")).toBeVisible();
-  await page.getByRole("link", { name: "Advanced profile management" }).click();
-
-  await expect(
-    page.getByRole("link", { name: "Return to guided setup" }),
-  ).toBeVisible();
-  await page.getByRole("link", { name: "Return to guided setup" }).click();
-  await expect(page).toHaveURL(
-    `/dashboard/businesses/${businessId}/setup?step=profiles`,
-  );
-  await expect(page.getByText("Your audit sources are ready")).toBeVisible();
-});
-
-async function createBusiness(page: Page, startingSource: string) {
+async function createBusiness(page: Page, websiteUrl: string) {
   await page.goto("/dashboard/businesses/new");
   await page
-    .getByLabel("Start with your primary business link")
-    .fill(startingSource);
-  await page.getByRole("button", { name: "Continue" }).click();
+    .getByLabel("Business name")
+    .fill(`Guided Website ${randomUUID().slice(0, 8)}`);
+  await page.getByLabel("Website URL").fill(websiteUrl);
+  await page.getByRole("button", { name: "Continue setup" }).click();
   await expect(page).toHaveURL(
     /\/dashboard\/businesses\/[^/]+\/setup\?step=profiles$/,
   );
   return new URL(page.url()).pathname.split("/")[3]!;
-}
-
-async function addManualProfile(
-  page: Page,
-  platform: ProfilePlatform,
-  url: string,
-) {
-  const form = page.getByRole("form", { name: "Add missing profile" });
-  await form.getByLabel("Platform").selectOption(platform);
-  await form.getByLabel("Public profile URL").fill(url);
-  await form.getByRole("button", { name: "Add profile" }).click();
-  await expect(
-    page.getByText(`${platformLabel(platform)} added and confirmed.`),
-  ).toBeVisible();
-}
-
-function platformLabel(platform: ProfilePlatform) {
-  return platform.charAt(0) + platform.slice(1).toLowerCase();
 }

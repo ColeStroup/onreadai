@@ -29,11 +29,22 @@ export async function startAuditRun({
   businessId,
   auditId,
 }: StartAuditRunInput): Promise<AuditRunResult> {
-  const { user } = await requireOwnedBusiness(businessId);
+  const { business, user } = await requireOwnedBusiness(businessId);
+  if (business.profiles.length === 0) {
+    return {
+      auditId: auditId ?? "",
+      status: "failed",
+      error: "Confirm a public website before running a Website & SEO audit.",
+    };
+  }
   try {
     await enforceRateLimit({
       scope: "audit-run",
-      identifiers: [user.id, businessId, await currentRequestRateLimitIdentifier()],
+      identifiers: [
+        user.id,
+        businessId,
+        await currentRequestRateLimitIdentifier(),
+      ],
       limit: 10,
       windowMs: 60 * 60 * 1_000,
     });
@@ -138,15 +149,13 @@ export async function getAuditRunStatus({
     audit.status === AuditStatus.QUEUED ||
     audit.status === AuditStatus.RUNNING;
 
-  if (
-    isActive &&
-    audit.updatedAt.getTime() < Date.now() - activeRunWindowMs
-  ) {
+  if (isActive && audit.updatedAt.getTime() < Date.now() - activeRunWindowMs) {
     await prisma.audit.update({
       where: { id: audit.id },
       data: {
         status: AuditStatus.FAILED,
-        summary: "The audit run was interrupted before it completed. You can run it again.",
+        summary:
+          "The audit run was interrupted before it completed. You can run it again.",
         completedAt: new Date(),
       },
     });
@@ -163,12 +172,17 @@ export async function getAuditRunStatus({
     progressStage: isAuditProgressStage(audit.progressStage)
       ? audit.progressStage
       : "PREPARING_BUSINESS_INFORMATION",
-    error: audit.status === AuditStatus.FAILED ? audit.summary ?? undefined : undefined,
+    error:
+      audit.status === AuditStatus.FAILED
+        ? (audit.summary ?? undefined)
+        : undefined,
   };
 }
 
 async function requireOwnedBusiness(businessId: string) {
-  const user = await requireUser(`/dashboard/businesses/${businessId}/audit/run`);
+  const user = await requireUser(
+    `/dashboard/businesses/${businessId}/audit/run`,
+  );
   const business = await prisma.business.findFirst({
     where: {
       id: businessId,
@@ -176,6 +190,15 @@ async function requireOwnedBusiness(businessId: string) {
     },
     select: {
       id: true,
+      profiles: {
+        where: {
+          platform: "WEBSITE",
+          status: "CONFIRMED",
+          url: { not: null },
+        },
+        take: 1,
+        select: { id: true },
+      },
     },
   });
 

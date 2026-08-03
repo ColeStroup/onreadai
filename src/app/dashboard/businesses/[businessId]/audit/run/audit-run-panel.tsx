@@ -20,7 +20,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   auditProgressStageLabels,
-  auditProgressStages,
+  websiteSeoAuditProgressStages,
   type AuditProgressStage,
 } from "@/lib/audits/audit-progress";
 import { cn } from "@/lib/utils";
@@ -34,7 +34,6 @@ type AuditRunPanelProps = {
   initialStatus?: RunStatus;
   initialProgressStage?: AuditProgressStage;
   completionHref?: string;
-  hasWebsite: boolean;
 };
 
 export function AuditRunPanel({
@@ -44,16 +43,14 @@ export function AuditRunPanel({
   initialStatus = "pending",
   initialProgressStage = "PREPARING_BUSINESS_INFORMATION",
   completionHref,
-  hasWebsite,
 }: AuditRunPanelProps) {
-  const steps = auditProgressStages;
+  const steps = websiteSeoAuditProgressStages;
   const [auditId, setAuditId] = useState(initialAuditId ?? "");
   const [status, setStatus] = useState<RunStatus>(
     initialStatus === "completed" ? "completed" : "running",
   );
-  const [progressStage, setProgressStage] = useState<AuditProgressStage>(
-    initialProgressStage,
-  );
+  const [progressStage, setProgressStage] =
+    useState<AuditProgressStage>(initialProgressStage);
   const [error, setError] = useState("");
   const [isPending, startTransition] = useTransition();
   const startedRef = useRef(false);
@@ -62,7 +59,10 @@ export function AuditRunPanel({
   const activeStep =
     status === "completed"
       ? steps.length
-      : Math.max(0, steps.indexOf(progressStage));
+      : Math.max(
+          0,
+          steps.findIndex((step) => step === progressStage),
+        );
 
   const statusCopy = useMemo(() => {
     if (status === "completed") {
@@ -81,12 +81,11 @@ export function AuditRunPanel({
     }
 
     return {
-      title: "Running your growth audit",
-      description: hasWebsite
-        ? "We're analyzing your confirmed profiles, website, SEO, goals, and competitors."
-        : "We're building a social-first assessment from confirmed profiles, Business Context, goals, reviews, and competitors.",
+      title: "Running your website audit",
+      description:
+        "We're analyzing your website structure, content, SEO foundations, and conversion paths.",
     };
-  }, [hasWebsite, status]);
+  }, [status]);
 
   useEffect(() => {
     if (startedRef.current || initialStatus === "completed") {
@@ -200,7 +199,7 @@ export function AuditRunPanel({
                 )}
               </div>
               <p className="text-sm font-semibold uppercase tracking-[0.18em] text-muted">
-                Growth Audit
+                Website &amp; SEO Audit
               </p>
               <h2 className="mt-2 text-4xl font-semibold tracking-normal">
                 {statusCopy.title}
@@ -213,9 +212,8 @@ export function AuditRunPanel({
             <div className="rounded-lg border border-border bg-background p-4">
               <p className="text-sm font-medium">{businessName}</p>
               <p className="mt-1 text-sm text-muted">
-                {hasWebsite
-                  ? "Website, SEO, social presence, goals, and competitors are being assembled into one saved report."
-                  : "Social presence, brand context, trust signals, goals, and competitors are being assembled into one saved report. Website and SEO will be marked not provided."}
+                Website evidence, SEO checks, prioritized actions, and
+                verification guidance are being assembled into one saved report.
               </p>
             </div>
 
@@ -227,7 +225,10 @@ export function AuditRunPanel({
 
             <div className="flex flex-wrap gap-3">
               {status === "completed" ? (
-                <Link href={resultHref} className={buttonVariants({ variant: "primary" })}>
+                <Link
+                  href={resultHref}
+                  className={buttonVariants({ variant: "primary" })}
+                >
                   View Results
                   <ArrowRight className="size-4" />
                 </Link>
@@ -242,7 +243,10 @@ export function AuditRunPanel({
                   aria-busy={isPending}
                 >
                   {isPending ? (
-                    <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                    <Loader2
+                      className="size-4 animate-spin"
+                      aria-hidden="true"
+                    />
                   ) : (
                     <RefreshCw className="size-4" aria-hidden="true" />
                   )}
@@ -254,7 +258,7 @@ export function AuditRunPanel({
                 href={`/dashboard/businesses/${businessId}/setup?step=profiles`}
                 className={buttonVariants({ variant: "secondary" })}
               >
-                Review profiles
+                Review website
               </Link>
             </div>
           </div>
@@ -269,11 +273,11 @@ export function AuditRunPanel({
 
             <div className="space-y-4">
               {steps.map((step, index) => {
-                const isComplete =
-                  status === "completed" || index < activeStep;
+                const isComplete = status === "completed" || index < activeStep;
                 const isActive = status === "running" && index === activeStep;
                 const isFailed =
-                  status === "failed" && index === Math.min(activeStep, steps.length - 1);
+                  status === "failed" &&
+                  index === Math.min(activeStep, steps.length - 1);
 
                 return (
                   <div key={step} className="flex gap-3">
@@ -282,8 +286,7 @@ export function AuditRunPanel({
                         "mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full border",
                         isComplete &&
                           "border-accent bg-accent text-accent-foreground",
-                        isActive &&
-                          "border-accent bg-accent/10 text-accent",
+                        isActive && "border-accent bg-accent/10 text-accent",
                         isFailed &&
                           "border-rose-300 bg-rose-50 text-rose-700 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-100",
                         !isComplete &&
@@ -323,7 +326,11 @@ export function AuditRunPanel({
               })}
             </div>
             {status === "running" ? (
-              <p className="mt-5 text-xs leading-5 text-muted" role="status" aria-live="polite">
+              <p
+                className="mt-5 text-xs leading-5 text-muted"
+                role="status"
+                aria-live="polite"
+              >
                 The audit is running in the background. You can leave this page
                 and return; refreshing will resume from the latest saved stage.
               </p>

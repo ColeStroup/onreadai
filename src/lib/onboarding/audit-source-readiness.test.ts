@@ -42,21 +42,23 @@ function input(
   };
 }
 
-test("reports missing sources and their audit limitations", () => {
+test("a confirmed website is the only required audit source", () => {
   const readiness = deriveAuditSourceReadiness(input());
 
   assert.equal(readiness.hasWebsite, true);
   assert.equal(readiness.hasSocial, false);
-  assert.equal(readiness.googleReviewState, "skipped");
-  assert.deepEqual(
-    readiness.missingSources.map((source) => source.code),
-    ["NO_SOCIAL", "GOOGLE_NOT_REVIEWED"],
-  );
-  assert.equal(readiness.requiresAcknowledgement, true);
+  assert.equal(readiness.googleReviewState, "not_used");
+  assert.deepEqual(readiness.missingSources, []);
+  assert.equal(readiness.requiresAcknowledgement, false);
 });
 
 test("acknowledgement applies only to the same source state", () => {
-  const current = input();
+  const current = input({
+    description: null,
+    targetAudience: null,
+    mainOffer: null,
+    contextConfirmedAt: null,
+  });
   const stateHash = auditSourceStateHash(current);
   const acknowledged = deriveAuditSourceReadiness({
     ...current,
@@ -100,7 +102,7 @@ test("idempotent timestamp changes do not invalidate acknowledgement", () => {
   assert.equal(auditSourceStateHash(before), auditSourceStateHash(after));
 });
 
-test("pending and removed profiles are never counted as confirmed sources", () => {
+test("disabled-module profiles do not enter launch source readiness", () => {
   const readiness = deriveAuditSourceReadiness(
     input({
       profiles: [
@@ -121,12 +123,12 @@ test("pending and removed profiles are never counted as confirmed sources", () =
   );
 
   assert.equal(readiness.confirmedProfileCount, 0);
-  assert.equal(readiness.pendingProfileCount, 1);
+  assert.equal(readiness.pendingProfileCount, 0);
   assert.equal(readiness.hasWebsite, false);
   assert.equal(readiness.hasSocial, false);
 });
 
-test("a confirmed Google candidate satisfies Google review", () => {
+test("Google candidate state is ignored by website-only launch readiness", () => {
   const readiness = deriveAuditSourceReadiness(
     input({
       googleBusinessProfiles: [
@@ -139,7 +141,7 @@ test("a confirmed Google candidate satisfies Google review", () => {
     }),
   );
 
-  assert.equal(readiness.googleReviewState, "confirmed");
+  assert.equal(readiness.googleReviewState, "not_used");
   assert.equal(
     readiness.missingSources.some(
       (source) => source.code === "GOOGLE_NOT_REVIEWED",

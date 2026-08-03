@@ -1,6 +1,11 @@
 "use server";
 
-import { AuditStatus, ChatRole, CompetitorStatus } from "@prisma/client";
+import {
+  AuditStatus,
+  ChatRole,
+  CompetitorStatus,
+  ProfilePlatform,
+} from "@prisma/client";
 import { notFound } from "next/navigation";
 
 import {
@@ -15,6 +20,15 @@ import { buildCompetitorConsultantContext } from "@/lib/ai/competitor-consultant
 import { compareAudits } from "@/lib/audits/audit-comparison";
 import { canSendAiMessage } from "@/lib/billing/entitlements";
 import { prisma } from "@/lib/prisma";
+import {
+  isCompetitorIntelligenceEnabled,
+  isLocalGrowthEnabled,
+  isSocialGrowthEnabled,
+} from "@/lib/features/feature-flags";
+import {
+  isWebsiteSeoCategory,
+  isWebsiteSeoReportCategory,
+} from "@/lib/product/website-seo-scope";
 import { buildCurrentReviewAnalysis } from "@/lib/reviews/current-review-analysis";
 import { persistConsultantExchange } from "@/lib/chat/consultant-message-persistence";
 import {
@@ -22,7 +36,7 @@ import {
   type ConsultantClientErrorCode,
 } from "@/lib/chat/consultant-error-mapping";
 import { createConsultantDiagnostics } from "@/lib/observability/consultant-diagnostics";
-import { logError } from "@/lib/observability/log";
+import { logError, logInfo } from "@/lib/observability/log";
 import { requireUser } from "@/lib/session";
 import { parseSocialStrategy } from "@/lib/social-strategy";
 import {
@@ -45,10 +59,7 @@ type SendChatMessageResult = {
   mode?: ChatMode;
   error?: string;
   errorCode?:
-    | "VALIDATION"
-    | "LIMIT_REACHED"
-    | "NO_AUDIT"
-    | ConsultantClientErrorCode;
+    "VALIDATION" | "LIMIT_REACHED" | "NO_AUDIT" | ConsultantClientErrorCode;
 };
 
 type ClearChatHistoryResult = {
@@ -83,6 +94,9 @@ export async function sendChatMessage({
   const user = await requireUser(`/dashboard/businesses/${businessId}/chat`);
   const question = content.trim();
   const diagnostics = createConsultantDiagnostics();
+  const socialGrowthEnabled = isSocialGrowthEnabled();
+  const competitorIntelligenceEnabled = isCompetitorIntelligenceEnabled();
+  const localGrowthEnabled = isLocalGrowthEnabled();
 
   if (!question) {
     return {
@@ -113,7 +127,11 @@ export async function sendChatMessage({
   try {
     await enforceRateLimit({
       scope: "ai-chat",
-      identifiers: [user.id, businessId, await currentRequestRateLimitIdentifier()],
+      identifiers: [
+        user.id,
+        businessId,
+        await currentRequestRateLimitIdentifier(),
+      ],
       limit: 30,
       windowMs: 5 * 60 * 1_000,
     });
@@ -163,9 +181,15 @@ export async function sendChatMessage({
         },
       },
       profiles: {
+        where: socialGrowthEnabled
+          ? undefined
+          : { platform: ProfilePlatform.WEBSITE },
         orderBy: [{ status: "asc" }, { confidenceScore: "desc" }],
       },
       googleBusinessProfiles: {
+        where: localGrowthEnabled
+          ? undefined
+          : { id: "disabled-launch-module" },
         orderBy: [
           {
             status: "asc",
@@ -176,9 +200,9 @@ export async function sendChatMessage({
         ],
       },
       competitors: {
-        where: {
-          status: CompetitorStatus.ACTIVE,
-        },
+        where: competitorIntelligenceEnabled
+          ? { status: CompetitorStatus.ACTIVE }
+          : { id: "disabled-launch-module" },
         orderBy: {
           name: "asc",
         },
@@ -196,6 +220,9 @@ export async function sendChatMessage({
         },
       },
       socialStrategies: {
+        where: socialGrowthEnabled
+          ? undefined
+          : { id: "disabled-launch-module" },
         orderBy: {
           updatedAt: "desc",
         },
@@ -210,7 +237,9 @@ export async function sendChatMessage({
 
   const latestAudit = business.audits.at(0);
   const previousAudit = business.audits.at(1);
-  const socialStrategy = parseSocialStrategy(business.socialStrategies.at(0));
+  const socialStrategy = socialGrowthEnabled
+    ? parseSocialStrategy(business.socialStrategies.at(0))
+    : null;
 
   if (!latestAudit) {
     return {
@@ -219,6 +248,11 @@ export async function sendChatMessage({
       errorCode: "NO_AUDIT",
     };
   }
+
+  logInfo("consultant_started", {
+    businessId: business.id,
+    auditId: latestAudit.id,
+  });
 
   const thread =
     (await prisma.chatThread.findFirst({
@@ -253,66 +287,73 @@ export async function sendChatMessage({
       },
     })
   ).reverse();
-  const currentGoogleBusinessProfiles = business.googleBusinessProfiles.map(
-    (profile) => ({
-      id: profile.id,
-      googlePlaceId: profile.googlePlaceId,
-      displayName: profile.displayName,
-      formattedAddress: profile.formattedAddress,
-      phoneNumber: profile.phoneNumber,
-      websiteUri: profile.websiteUri,
-      googleMapsUri: profile.googleMapsUri,
-      rating: profile.rating,
-      reviewCount: profile.reviewCount,
-      matchConfidence: profile.matchConfidence,
-      matchReasons: profile.matchReasons,
-      status: profile.status,
-      source: profile.source,
-      confirmedAt: profile.confirmedAt,
-      updatedAt: profile.updatedAt,
-      businessStatus: profile.businessStatus,
-      primaryType: profile.primaryType,
-      types: profile.types,
-    }),
-  );
-  const currentReviewAnalysis = buildCurrentReviewAnalysis({
-    businessProfiles: business.profiles,
-    googleBusinessProfiles: currentGoogleBusinessProfiles,
-    competitors: business.competitors.map((competitor) => ({
-      name: competitor.name,
-      discoveredProfiles: competitor.discoveredProfiles,
-    })),
-    goals: business.goals,
-    primaryGoal: business.primaryGoal,
-    businessContext: {
-      description: business.description,
-      targetAudience: business.targetAudience,
-      mainOffer: business.mainOffer,
-      industry: business.industry,
-      businessType: business.businessType,
-      primaryConversionGoal: business.primaryConversionGoal,
-    },
-    latestAuditSnapshot: latestAudit.analysisSnapshot,
-  });
-  let competitorContext;
+  const currentGoogleBusinessProfiles = (
+    localGrowthEnabled ? business.googleBusinessProfiles : []
+  ).map((profile) => ({
+    id: profile.id,
+    googlePlaceId: profile.googlePlaceId,
+    displayName: profile.displayName,
+    formattedAddress: profile.formattedAddress,
+    phoneNumber: profile.phoneNumber,
+    websiteUri: profile.websiteUri,
+    googleMapsUri: profile.googleMapsUri,
+    rating: profile.rating,
+    reviewCount: profile.reviewCount,
+    matchConfidence: profile.matchConfidence,
+    matchReasons: profile.matchReasons,
+    status: profile.status,
+    source: profile.source,
+    confirmedAt: profile.confirmedAt,
+    updatedAt: profile.updatedAt,
+    businessStatus: profile.businessStatus,
+    primaryType: profile.primaryType,
+    types: profile.types,
+  }));
+  const currentReviewAnalysis = localGrowthEnabled
+    ? buildCurrentReviewAnalysis({
+        businessProfiles: business.profiles,
+        googleBusinessProfiles: currentGoogleBusinessProfiles,
+        competitors: (competitorIntelligenceEnabled
+          ? business.competitors
+          : []
+        ).map((competitor) => ({
+          name: competitor.name,
+          discoveredProfiles: competitor.discoveredProfiles,
+        })),
+        goals: business.goals,
+        primaryGoal: business.primaryGoal,
+        businessContext: {
+          description: business.description,
+          targetAudience: business.targetAudience,
+          mainOffer: business.mainOffer,
+          industry: business.industry,
+          businessType: business.businessType,
+          primaryConversionGoal: business.primaryConversionGoal,
+        },
+        latestAuditSnapshot: latestAudit.analysisSnapshot,
+      })
+    : null;
+  let competitorContext = null;
 
-  try {
-    competitorContext = await buildCompetitorConsultantContext({
-      userId: user.id,
-      businessId: business.id,
-      auditId: latestAudit.id,
-      diagnostics,
-    });
-  } catch (error) {
-    return consultantFailureResult(
-      new ConsultantPipelineError({
-        code: "CONTEXT_FAILURE",
-        stage: "COMPETITOR_CONTEXT_BUILD",
-        message: "The saved competitor context could not be prepared.",
-        cause: error,
-      }),
-      diagnostics.requestId,
-    );
+  if (competitorIntelligenceEnabled) {
+    try {
+      competitorContext = await buildCompetitorConsultantContext({
+        userId: user.id,
+        businessId: business.id,
+        auditId: latestAudit.id,
+        diagnostics,
+      });
+    } catch (error) {
+      return consultantFailureResult(
+        new ConsultantPipelineError({
+          code: "CONTEXT_FAILURE",
+          stage: "COMPETITOR_CONTEXT_BUILD",
+          message: "The saved competitor context could not be prepared.",
+          cause: error,
+        }),
+        diagnostics.requestId,
+      );
+    }
   }
 
   const baseConsultantInput = {
@@ -340,13 +381,21 @@ export async function sendChatMessage({
       createdAt: latestAudit.createdAt,
       analysisSnapshot: latestAudit.analysisSnapshot,
     },
-    scores: latestAudit.scores,
-    findings: latestAudit.findings,
-    recommendations: latestAudit.recommendations,
-    profiles: business.profiles,
+    scores: latestAudit.scores.filter(
+      (score) => !score.platform && isWebsiteSeoReportCategory(score.category),
+    ),
+    findings: latestAudit.findings.filter((finding) =>
+      isWebsiteSeoCategory(finding.category),
+    ),
+    recommendations: latestAudit.recommendations.filter((recommendation) =>
+      isWebsiteSeoCategory(recommendation.category),
+    ),
+    profiles: business.profiles.filter(
+      (profile) => profile.platform === "WEBSITE" || socialGrowthEnabled,
+    ),
     googleBusinessProfiles: currentGoogleBusinessProfiles,
     reviewAnalysis: currentReviewAnalysis,
-    competitors: business.competitors,
+    competitors: competitorIntelligenceEnabled ? business.competitors : [],
     auditComparison: compareAudits({
       currentAudit: latestAudit,
       previousAudit,

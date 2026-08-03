@@ -56,6 +56,9 @@ export default defineConfig({
       APP_ENVIRONMENT: "preview",
       VERCEL_ENV: "preview",
       OPENAI_API_KEY: "",
+      SOCIAL_GROWTH_ENABLED: "false",
+      COMPETITOR_INTELLIGENCE_ENABLED: "false",
+      LOCAL_GROWTH_ENABLED: "false",
     },
   },
 });

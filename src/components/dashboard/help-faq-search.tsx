@@ -11,17 +11,17 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { helpSections } from "@/lib/education/help-content";
+import { websiteSeoHelpSections } from "@/lib/education/help-content";
 
 export function HelpFaqSearch() {
   const [query, setQuery] = useState("");
   const normalizedQuery = query.trim().toLowerCase();
   const visibleSections = useMemo(() => {
     if (!normalizedQuery) {
-      return helpSections;
+      return websiteSeoHelpSections;
     }
 
-    return helpSections
+    return websiteSeoHelpSections
       .map((section) => {
         const sectionMatches =
           section.title.toLowerCase().includes(normalizedQuery) ||
@@ -56,7 +56,7 @@ export function HelpFaqSearch() {
               id="help-search"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search context, scores, SEO, profiles, PDFs, re-audits..."
+              placeholder="Search scores, crawling, SEO, actions, reports..."
               className="pl-10"
             />
           </div>

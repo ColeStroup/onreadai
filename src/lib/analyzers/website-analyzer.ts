@@ -19,6 +19,8 @@ import { extractOperatingHoursSignals } from "@/lib/analyzers/observable-signals
 
 export type WebsiteAnalysis = {
   normalizedUrl: string;
+  fetchStatus?: "success" | "failed";
+  statusCode?: number | null;
   pageTitle: string | null;
   metaDescription: string | null;
   contentExcerpt?: string | null;
@@ -72,11 +74,16 @@ const socialHosts = [
   "twitter.com",
   "pinterest.com",
 ];
-function emptyAnalysis(normalizedUrl: string, warnings: string[]): WebsiteAnalysis {
+function emptyAnalysis(
+  normalizedUrl: string,
+  warnings: string[],
+): WebsiteAnalysis {
   const localBusinessClues = emptyLocalBusinessClues();
 
   return {
     normalizedUrl,
+    fetchStatus: "failed",
+    statusCode: null,
     pageTitle: null,
     metaDescription: null,
     contentExcerpt: null,
@@ -143,8 +150,8 @@ export function extractBusinessContentExcerpt($: CheerioAPI) {
 
     const node = $(element);
     if (
-      node.closest("script, style, noscript, template, svg, nav, footer").length >
-        0 ||
+      node.closest("script, style, noscript, template, svg, nav, footer")
+        .length > 0 ||
       node.attr("aria-hidden") === "true"
     ) {
       return;
@@ -170,9 +177,7 @@ export function extractBusinessContentExcerpt($: CheerioAPI) {
 
   const body = $("body").clone();
   body.find("script, style, noscript, template, svg, nav, footer").remove();
-  return (
-    textOf(body.text()).slice(0, maxBusinessContentExcerptChars) || null
-  );
+  return textOf(body.text()).slice(0, maxBusinessContentExcerptChars) || null;
 }
 
 function scoreAnalysis(analysis: Omit<WebsiteAnalysis, "score">) {
@@ -185,7 +190,8 @@ function scoreAnalysis(analysis: Omit<WebsiteAnalysis, "score">) {
   if (!analysis.hasViewportMeta) score -= 8;
   if (!analysis.hasCanonical) score -= 4;
   if (analysis.imageCount > 0) {
-    const missingAltRatio = analysis.imagesMissingAltCount / analysis.imageCount;
+    const missingAltRatio =
+      analysis.imagesMissingAltCount / analysis.imageCount;
     score -= Math.round(missingAltRatio * 14);
   }
   if (analysis.ctaCandidates.length === 0) score -= 12;
@@ -225,17 +231,19 @@ export async function analyzeWebsite(
       timeoutMs: fetchTimeoutMs,
       maxBytes: maxHtmlBytes,
       accept: "text/html,application/xhtml+xml",
-      userAgent:
-        "Onread AI Website Analyzer/1.0 (+https://onread.ai)",
+      userAgent: "Onread AI Website Analyzer/1.0 (+https://onread.ai)",
     });
 
     const finalUrl = response.url;
     const contentType = response.headers.get("content-type") ?? "";
 
     if (!response.ok) {
-      return emptyAnalysis(finalUrl, [
-        `Homepage request returned HTTP ${response.status}.`,
-      ]);
+      return {
+        ...emptyAnalysis(finalUrl, [
+          `Homepage request returned HTTP ${response.status}.`,
+        ]),
+        statusCode: response.status,
+      };
     }
 
     if (!contentType.toLowerCase().includes("html")) {
@@ -274,27 +282,22 @@ export async function analyzeWebsite(
           return null;
         }
       })
-    .get()
+      .get()
       .filter(
-        (link): link is {
+        (
+          link,
+        ): link is {
           href: string;
           label: string;
           elementType: string;
           domLocation:
-            | "hero"
-            | "main"
-            | "header"
-            | "navigation"
-            | "footer"
-            | "unknown";
+            "hero" | "main" | "header" | "navigation" | "footer" | "unknown";
           buttonLike: boolean;
           nearPrimaryHeading: boolean;
           navigationLike: boolean;
         } => Boolean(link?.href),
       );
-    const navigableLinks = links.filter(
-      (link) => /^https?:/i.test(link.href),
-    );
+    const navigableLinks = links.filter((link) => /^https?:/i.test(link.href));
     const internalLinks = navigableLinks.filter(
       (link) => new URL(link.href).origin === finalOrigin,
     );
@@ -321,9 +324,9 @@ export async function analyzeWebsite(
     const ctaCandidates = actionSummary.detectedActionTypes;
     const images = $("img");
     const imageCount = images.length;
-    const imagesMissingAltCount = images
-      .filter((_, element) => !textOf($(element).attr("alt") ?? ""))
-      .length;
+    const imagesMissingAltCount = images.filter(
+      (_, element) => !textOf($(element).attr("alt") ?? ""),
+    ).length;
     const allLinkText = links
       .map((link) => `${link.label} ${link.href}`)
       .join(" ")
@@ -344,6 +347,8 @@ export async function analyzeWebsite(
 
     const analysisWithoutScore = {
       normalizedUrl: finalUrl,
+      fetchStatus: "success" as const,
+      statusCode: response.status,
       pageTitle,
       metaDescription,
       contentExcerpt,
@@ -406,12 +411,7 @@ function elementActionSignals($: CheerioAPI, element: Element) {
   return {
     elementType: element.tagName ?? "unknown",
     domLocation: domLocation as
-      | "hero"
-      | "main"
-      | "header"
-      | "navigation"
-      | "footer"
-      | "unknown",
+      "hero" | "main" | "header" | "navigation" | "footer" | "unknown",
     buttonLike:
       element.tagName === "button" ||
       role.toLowerCase() === "button" ||

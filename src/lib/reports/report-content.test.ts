@@ -28,7 +28,8 @@ test("hospitality report stays specific and free of creator/software leakage", (
 
   assert.equal(report.business.archetype, "restaurant_hospitality");
   assert.match(text, /beachfront|atmosphere|food|menu|guest experience/i);
-  assert.match(text, /current comparison/i);
+  assert.equal(report.competitors.comparison, null);
+  assert.equal(report.competitors.label, "Not part of this report");
   for (const term of incompatibleHospitalityTerms) {
     assert.doesNotMatch(text, new RegExp(escapeRegex(term), "i"));
   }
@@ -50,7 +51,7 @@ test("SaaS report uses software conversion language without hospitality leakage"
   const text = normalizedReportText(createReportFixture("saas"));
 
   assert.match(text, /free trial|product demo/i);
-  assert.match(text, /linkedin|youtube shorts/i);
+  assert.doesNotMatch(text, /linkedin|youtube shorts/i);
   assert.doesNotMatch(
     text,
     /menu specials|table reservations|happy hour|beach atmosphere/i,
@@ -83,7 +84,9 @@ test("social-only report excludes unavailable website categories from scoring", 
   assert.equal(websiteScore?.status, "not_provided");
   assert.equal(seoScore?.score, null);
   assert.equal(seoScore?.status, "not_applicable");
-  assert(!report.assessment.applicableCategories.includes(ScoreCategory.WEBSITE));
+  assert(
+    !report.assessment.applicableCategories.includes(ScoreCategory.WEBSITE),
+  );
   assert(!report.assessment.applicableCategories.includes(ScoreCategory.SEO));
   assert(
     report.recommendations.all.every(
@@ -112,12 +115,13 @@ test("cottage regression report keeps facts, strategy, review scope, and actions
     },
   ]);
   assert.equal(facts.homepage?.metaDescription.length, 0);
-  assert.equal(facts.profiles.userConfirmedSocialProfiles, 1);
+  assert.equal(facts.profiles.userConfirmedSocialProfiles, 0);
   assert.equal(facts.profiles.publiclyDetectedSocialProfiles, 3);
   assert.equal(facts.profiles.profileContentAnalyzed, 0);
   assert.equal(report.reviews.dataRequirementsMet, false);
   assert.equal(report.reviews.scoreConfidence, "LOW");
-  assert(report.reviews.score <= 58);
+  assert.equal(report.reviews.score, 0);
+  assert.deepEqual(report.reviews.recommendedFixes, []);
   assert.equal(
     report.recommendations.all.filter((item) =>
       /meta(?: description|data)/i.test(item.title),
@@ -158,15 +162,14 @@ test("cottage regression report keeps facts, strategy, review scope, and actions
   assert.equal(homepageStrength?.sourceLabel, "Verified strength");
 });
 
-test("missing competitor data is unscored and creates no required competitor task", () => {
+test("focused reports omit competitor scores and tasks", () => {
   const report = createReportFixture("no_competitor");
   const competitorScore = report.scores.find(
     (item) => item.category === ScoreCategory.COMPETITORS,
   );
 
   assert.equal(report.competitors.status, "not_configured");
-  assert.equal(competitorScore?.score, null);
-  assert.equal(competitorScore?.status, "not_configured");
+  assert.equal(competitorScore, undefined);
   assert(
     report.recommendations.all.every(
       (item) => item.category !== ScoreCategory.COMPETITORS,
@@ -174,19 +177,36 @@ test("missing competitor data is unscored and creates no required competitor tas
   );
 });
 
-test("stale strategy fixture exposes a current deterministic fallback only", () => {
+test("new reports expose only Website and SEO categories", () => {
+  const report = createReportFixture("hospitality");
+  const supported = new Set<ScoreCategory>([
+    ScoreCategory.WEBSITE,
+    ScoreCategory.SEO,
+  ]);
+
+  assert.equal(report.productScope, "website_seo");
+  assert.equal(report.scoreLabel, "Website Growth Score");
+  assert.deepEqual(
+    report.scores.map((item) => item.category),
+    [ScoreCategory.WEBSITE, ScoreCategory.SEO],
+  );
+  assert(report.findings.all.every((item) => supported.has(item.category)));
+  assert(
+    report.recommendations.all.every((item) => supported.has(item.category)),
+  );
+});
+
+test("focused reports never resurrect a saved social strategy", () => {
   const report = createReportFixture("stale_strategy");
   const text = normalizedReportText(report);
 
-  assert.equal(report.socialStrategy.freshness.status, "CURRENT");
-  assert.equal(report.socialStrategy.source, "deterministic_fallback");
-  assert.match(
-    report.socialStrategy.freshness.reason,
-    /regenerated from current evidence/i,
-  );
+  assert.equal(report.socialStrategy.freshness.status, "UNAVAILABLE");
+  assert.equal(report.socialStrategy.source, "disabled");
+  assert.deepEqual(report.socialStrategy.data.recommendedPlatforms, []);
+  assert.deepEqual(report.socialStrategy.data.suggestedPosts, []);
   assert.doesNotMatch(
     text,
-    /add competitor data|google business.*still needs confirmation/i,
+    /add competitor data|google business.*still needs confirmation|linkedin|youtube shorts/i,
   );
   assertNoContradictoryStates(text);
 });
@@ -246,7 +266,8 @@ test("compatibility validator rejects leakage and unsupported claims but allows 
     context,
     item: {
       title: "Grow a Discord server",
-      description: "Target gaming audiences with creator-community programming.",
+      description:
+        "Target gaming audiences with creator-community programming.",
     },
   });
 
@@ -267,7 +288,10 @@ test("compatibility validator rejects leakage and unsupported claims but allows 
 
 test("public competitor-monitoring copy stays within observed evidence", () => {
   const copy = publicCompetitorMonitoringCopy(["Example Co"]);
-  assert.match(copy, /homepage messaging|offers|calls to action|important pages/i);
+  assert.match(
+    copy,
+    /homepage messaging|offers|calls to action|important pages/i,
+  );
   assert.doesNotMatch(
     copy,
     /content cadence|posting frequency|engagement|reach|impressions/i,
@@ -321,7 +345,10 @@ function normalizedReportText(value: unknown) {
 
 function assertNoContradictoryStates(text: string) {
   const pairs = [
-    [/competitor analysis unavailable/i, /current comparison|comparison available/i],
+    [
+      /competitor analysis unavailable/i,
+      /current comparison|comparison available/i,
+    ],
     [/google business missing/i, /google business confirmed/i],
     [
       /social strategy current/i,
@@ -329,7 +356,10 @@ function assertNoContradictoryStates(text: string) {
     ],
   ] as const;
   for (const [left, right] of pairs) {
-    assert(!(left.test(text) && right.test(text)), `${left} conflicts with ${right}`);
+    assert(
+      !(left.test(text) && right.test(text)),
+      `${left} conflicts with ${right}`,
+    );
   }
 }
 

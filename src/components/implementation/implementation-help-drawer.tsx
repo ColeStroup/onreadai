@@ -51,7 +51,7 @@ type ImplementationHelpDrawerProps = {
   triggerClassName?: string;
   triggerVariant?: "primary" | "secondary" | "ghost" | "outline";
   preserveTriggerLabel?: boolean;
-  analyticsEvent?: "task_continued";
+  analyticsEvent?: "task_continued" | "implementation_help_opened";
   analyticsSurface?: "business_overview" | "action_plan";
 };
 
@@ -68,8 +68,8 @@ export function ImplementationHelpDrawer({
   triggerClassName,
   triggerVariant = "secondary",
   preserveTriggerLabel = false,
-  analyticsEvent,
-  analyticsSurface,
+  analyticsEvent = "implementation_help_opened",
+  analyticsSurface = "action_plan",
 }: ImplementationHelpDrawerProps) {
   const router = useRouter();
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -82,7 +82,9 @@ export function ImplementationHelpDrawer({
   const [limitReached, setLimitReached] = useState(false);
   const [drafts, setDrafts] = useState<ImplementationDraftView[]>([]);
   const [activeDraftId, setActiveDraftId] = useState("");
-  const [usage, setUsage] = useState<{ used: number; limit: number } | null>(null);
+  const [usage, setUsage] = useState<{ used: number; limit: number } | null>(
+    null,
+  );
   const [copied, setCopied] = useState("");
   const [taskCompleted, setTaskCompleted] = useState(false);
   const sourceKey = useMemo(() => JSON.stringify(source), [source]);
@@ -305,14 +307,21 @@ export function ImplementationHelpDrawer({
                   </span>
                   {activeDraft ? (
                     <span className="rounded-full border border-border px-2.5 py-1 text-xs font-semibold text-muted">
-                      {activeDraft.source === "ai_generated" ? "AI generated" : "Template fallback"}
+                      {activeDraft.source === "ai_generated"
+                        ? "AI generated"
+                        : "Template fallback"}
                     </span>
                   ) : null}
                 </div>
-                <h2 id="implementation-help-title" className="mt-2 text-xl font-semibold">
+                <h2
+                  id="implementation-help-title"
+                  className="mt-2 text-xl font-semibold"
+                >
                   {activeDraft?.title ?? recommendationTitle}
                 </h2>
-                <p className="mt-1 text-sm leading-6 text-muted">{recommendationTitle}</p>
+                <p className="mt-1 text-sm leading-6 text-muted">
+                  {recommendationTitle}
+                </p>
               </div>
               <button
                 ref={closeRef}
@@ -328,27 +337,49 @@ export function ImplementationHelpDrawer({
 
             <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">
               {loading && !activeDraft ? (
-                <div className="flex min-h-72 flex-col items-center justify-center text-center" role="status" aria-live="polite">
+                <div
+                  className="flex min-h-72 flex-col items-center justify-center text-center"
+                  role="status"
+                  aria-live="polite"
+                >
                   <Loader2 className="size-7 animate-spin text-accent" />
-                  <p className="mt-4 font-semibold">Creating a business-specific implementation draft...</p>
+                  <p className="mt-4 font-semibold">
+                    Creating a business-specific implementation draft...
+                  </p>
                   <p className="mt-2 max-w-md text-sm leading-6 text-muted">
-                    We are combining the recommendation with current Business Context and relevant audit evidence.
+                    We are combining the recommendation with current Business
+                    Context and relevant audit evidence.
                   </p>
                 </div>
               ) : null}
 
               {error ? (
-                <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-100" role="alert">
+                <div
+                  className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-100"
+                  role="alert"
+                >
                   <p className="font-semibold">Draft not available</p>
                   <p className="mt-1 leading-6">{error}</p>
                   <div className="mt-3 flex flex-wrap gap-2">
                     {!limitReached ? (
-                      <Button type="button" variant="secondary" size="sm" onClick={createDraft} disabled={loading}>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        onClick={createDraft}
+                        disabled={loading}
+                      >
                         <RefreshCw className="size-4" />
                         Retry
                       </Button>
                     ) : (
-                      <Link href="/pricing" className={buttonVariants({ variant: "primary", size: "sm" })}>
+                      <Link
+                        href="/pricing"
+                        className={buttonVariants({
+                          variant: "primary",
+                          size: "sm",
+                        })}
+                      >
                         View plans
                         <ExternalLink className="size-4" />
                       </Link>
@@ -361,18 +392,25 @@ export function ImplementationHelpDrawer({
                 <div className="space-y-6">
                   {drafts.length > 1 ? (
                     <div>
-                      <label htmlFor="implementation-version" className="text-xs font-semibold uppercase text-muted">
+                      <label
+                        htmlFor="implementation-version"
+                        className="text-xs font-semibold uppercase text-muted"
+                      >
                         Saved versions
                       </label>
                       <select
                         id="implementation-version"
                         value={activeDraft.id}
-                        onChange={(event) => setActiveDraftId(event.target.value)}
+                        onChange={(event) =>
+                          setActiveDraftId(event.target.value)
+                        }
                         className="mt-2 h-10 w-full rounded-lg border border-border bg-card px-3 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
                       >
                         {drafts.map((draft, index) => (
                           <option key={draft.id} value={draft.id}>
-                            Version {drafts.length - index} · {new Date(draft.createdAt).toLocaleString()} · {draft.status.toLowerCase()}
+                            Version {drafts.length - index} ·{" "}
+                            {new Date(draft.createdAt).toLocaleString()} ·{" "}
+                            {draft.status.toLowerCase()}
                           </option>
                         ))}
                       </select>
@@ -380,7 +418,9 @@ export function ImplementationHelpDrawer({
                   ) : null}
 
                   <Section title="Why this matters">
-                    <p className="text-sm leading-6 text-muted">{activeDraft.content.whyItMatters}</p>
+                    <p className="text-sm leading-6 text-muted">
+                      {activeDraft.content.whyItMatters}
+                    </p>
                     {evidence ? (
                       <p className="mt-3 rounded-lg bg-foreground/[0.035] p-3 text-xs leading-5 text-muted">
                         Evidence: {evidence}
@@ -389,57 +429,102 @@ export function ImplementationHelpDrawer({
                   </Section>
 
                   <Section title="Generated fix">
-                    <p className="mb-4 text-sm leading-6 text-muted">{activeDraft.content.summary}</p>
+                    <p className="mb-4 text-sm leading-6 text-muted">
+                      {activeDraft.content.summary}
+                    </p>
                     <div className="space-y-3">
-                      {activeDraft.content.options.map((option, optionIndex) => (
-                        <article
-                          key={`${option.label}-${optionIndex}`}
-                          className={cn(
-                            "rounded-lg border bg-background p-4",
-                            optionIndex === activeDraft.content.recommendedOption
-                              ? "border-accent"
-                              : "border-border",
-                          )}
-                        >
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="flex items-center gap-2">
-                              <h4 className="font-semibold">{option.label}</h4>
-                              {optionIndex === activeDraft.content.recommendedOption ? (
-                                <span className="rounded-full bg-accent/10 px-2 py-0.5 text-xs font-semibold text-accent">Recommended</span>
-                              ) : null}
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => copyText(optionText(option), `option-${optionIndex}`)}
-                              aria-label={`Copy ${option.label}`}
-                              className="flex size-9 items-center justify-center rounded-full border border-border text-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                            >
-                              {copied === `option-${optionIndex}` ? <Check className="size-4" /> : <Copy className="size-4" />}
-                            </button>
-                          </div>
-                          <dl className="mt-4 space-y-3">
-                            {option.fields.map((field) => (
-                              <div key={`${field.label}-${field.value}`}>
-                                <dt className="text-xs font-semibold uppercase text-muted">{field.label}</dt>
-                                <dd className="mt-1 whitespace-pre-wrap text-sm leading-6 select-text">{field.value}</dd>
-                                {field.meta ? <p className="mt-1 text-xs text-muted">{field.meta}</p> : null}
+                      {activeDraft.content.options.map(
+                        (option, optionIndex) => (
+                          <article
+                            key={`${option.label}-${optionIndex}`}
+                            className={cn(
+                              "rounded-lg border bg-background p-4",
+                              optionIndex ===
+                                activeDraft.content.recommendedOption
+                                ? "border-accent"
+                                : "border-border",
+                            )}
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="flex items-center gap-2">
+                                <h4 className="font-semibold">
+                                  {option.label}
+                                </h4>
+                                {optionIndex ===
+                                activeDraft.content.recommendedOption ? (
+                                  <span className="rounded-full bg-accent/10 px-2 py-0.5 text-xs font-semibold text-accent">
+                                    Recommended
+                                  </span>
+                                ) : null}
                               </div>
-                            ))}
-                          </dl>
-                          {option.rationale ? <p className="mt-4 border-t border-border pt-3 text-xs leading-5 text-muted">Why it fits: {option.rationale}</p> : null}
-                        </article>
-                      ))}
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  copyText(
+                                    optionText(option),
+                                    `option-${optionIndex}`,
+                                  )
+                                }
+                                aria-label={`Copy ${option.label}`}
+                                className="flex size-9 items-center justify-center rounded-full border border-border text-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                              >
+                                {copied === `option-${optionIndex}` ? (
+                                  <Check className="size-4" />
+                                ) : (
+                                  <Copy className="size-4" />
+                                )}
+                              </button>
+                            </div>
+                            <dl className="mt-4 space-y-3">
+                              {option.fields.map((field) => (
+                                <div key={`${field.label}-${field.value}`}>
+                                  <dt className="text-xs font-semibold uppercase text-muted">
+                                    {field.label}
+                                  </dt>
+                                  <dd className="mt-1 whitespace-pre-wrap text-sm leading-6 select-text">
+                                    {field.value}
+                                  </dd>
+                                  {field.meta ? (
+                                    <p className="mt-1 text-xs text-muted">
+                                      {field.meta}
+                                    </p>
+                                  ) : null}
+                                </div>
+                              ))}
+                            </dl>
+                            {option.rationale ? (
+                              <p className="mt-4 border-t border-border pt-3 text-xs leading-5 text-muted">
+                                Why it fits: {option.rationale}
+                              </p>
+                            ) : null}
+                          </article>
+                        ),
+                      )}
                     </div>
                   </Section>
 
-                  <ListSection title="Where to use it" items={activeDraft.content.placementGuidance} />
-                  <ListSection title="Implementation steps" items={activeDraft.content.implementationSteps} ordered />
-                  <ListSection title="How to verify completion" items={activeDraft.content.validationChecklist} />
+                  <ListSection
+                    title="Where to use it"
+                    items={activeDraft.content.placementGuidance}
+                  />
+                  <ListSection
+                    title="Implementation steps"
+                    items={activeDraft.content.implementationSteps}
+                    ordered
+                  />
+                  <ListSection
+                    title="How to verify completion"
+                    items={activeDraft.content.validationChecklist}
+                  />
 
-                  {activeDraft.content.assumptions.length || activeDraft.content.limitations.length ? (
+                  {activeDraft.content.assumptions.length ||
+                  activeDraft.content.limitations.length ? (
                     <Section title="Review notes">
                       <ul className="space-y-2 text-sm leading-6 text-muted">
-                        {[...activeDraft.content.assumptions, ...activeDraft.content.limitations].map((item) => (
+                        {[
+                          ...activeDraft.content.assumptions,
+                          ...activeDraft.content.limitations,
+                        ].map((item) => (
                           <li key={item} className="flex gap-2">
                             <span aria-hidden="true">-</span>
                             <span>{item}</span>
@@ -465,34 +550,74 @@ export function ImplementationHelpDrawer({
                       type="button"
                       variant="primary"
                       size="sm"
-                      disabled={loading || activeDraft.status === ImplementationDraftStatus.SAVED}
+                      disabled={
+                        loading ||
+                        activeDraft.status === ImplementationDraftStatus.SAVED
+                      }
                       onClick={() => updateStatus("SAVED")}
                     >
                       <Bookmark className="size-4" />
-                      {activeDraft.status === ImplementationDraftStatus.SAVED ? "Saved" : "Save Draft"}
+                      {activeDraft.status === ImplementationDraftStatus.SAVED
+                        ? "Saved"
+                        : "Save Draft"}
                     </Button>
-                    <Button type="button" variant="secondary" size="sm" disabled={loading} onClick={() => copyText(draftText(activeDraft), "all")}>
-                      {copied === "all" ? <Check className="size-4" /> : <Copy className="size-4" />}
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      disabled={loading}
+                      onClick={() => copyText(draftText(activeDraft), "all")}
+                    >
+                      {copied === "all" ? (
+                        <Check className="size-4" />
+                      ) : (
+                        <Copy className="size-4" />
+                      )}
                       {copied === "all" ? "Copied" : "Copy All"}
                     </Button>
-                    <Button type="button" variant="secondary" size="sm" disabled={loading} onClick={createDraft}>
-                      {loading ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      disabled={loading}
+                      onClick={createDraft}
+                    >
+                      {loading ? (
+                        <Loader2 className="size-4 animate-spin" />
+                      ) : (
+                        <RefreshCw className="size-4" />
+                      )}
                       Regenerate
                     </Button>
                     <Link
                       href={`/dashboard/businesses/${businessId}/chat?prompt=${encodeURIComponent(refinePrompt)}`}
-                      className={buttonVariants({ variant: "secondary", size: "sm" })}
+                      className={buttonVariants({
+                        variant: "secondary",
+                        size: "sm",
+                      })}
                     >
                       <Sparkles className="size-4" />
                       Refine in Consultant
                     </Link>
                     {recommendationId ? (
-                      <Button type="button" variant="secondary" size="sm" disabled={loading || taskCompleted} onClick={markTaskComplete}>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        disabled={loading || taskCompleted}
+                        onClick={markTaskComplete}
+                      >
                         <CheckCircle2 className="size-4" />
                         {taskCompleted ? "Task complete" : "Mark Task Complete"}
                       </Button>
                     ) : null}
-                    <Button type="button" variant="ghost" size="sm" disabled={loading} onClick={() => updateStatus("ARCHIVED")}>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={loading}
+                      onClick={() => updateStatus("ARCHIVED")}
+                    >
                       <Archive className="size-4" />
                       Archive
                     </Button>
@@ -507,13 +632,7 @@ export function ImplementationHelpDrawer({
   );
 }
 
-function Section({
-  title,
-  children,
-}: {
-  title: string;
-  children: ReactNode;
-}) {
+function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section>
       <h3 className="text-sm font-semibold">{title}</h3>
@@ -550,8 +669,12 @@ function ListSection({
   );
 }
 
-function optionText(option: ImplementationDraftView["content"]["options"][number]) {
-  return option.fields.map((field) => `${field.label}: ${field.value}`).join("\n\n");
+function optionText(
+  option: ImplementationDraftView["content"]["options"][number],
+) {
+  return option.fields
+    .map((field) => `${field.label}: ${field.value}`)
+    .join("\n\n");
 }
 
 function draftText(draft: ImplementationDraftView) {
@@ -560,7 +683,9 @@ function draftText(draft: ImplementationDraftView) {
     draft.content.summary,
     ...draft.content.options.map(optionText),
     "Implementation steps:",
-    ...draft.content.implementationSteps.map((item, index) => `${index + 1}. ${item}`),
+    ...draft.content.implementationSteps.map(
+      (item, index) => `${index + 1}. ${item}`,
+    ),
   ]
     .filter(Boolean)
     .join("\n\n");

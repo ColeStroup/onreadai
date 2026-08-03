@@ -23,13 +23,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import Link from "next/link";
-import {
-  useActionState,
-  useEffect,
-  useId,
-  useRef,
-  useState,
-} from "react";
+import { useActionState, useEffect, useId, useRef, useState } from "react";
 
 import {
   mutateGuidedProfile,
@@ -84,6 +78,7 @@ type GuidedProfileManagerProps = {
   decisions: GuidedProfileDecisionView[];
   profilesComplete: boolean;
   hasConfirmedWebsite: boolean;
+  websiteOnly?: boolean;
 };
 
 const selectClassName =
@@ -100,6 +95,7 @@ export function GuidedProfileManager({
   decisions,
   profilesComplete,
   hasConfirmedWebsite,
+  websiteOnly = false,
 }: GuidedProfileManagerProps) {
   const activeProfiles = profiles.filter(
     (profile) => profile.status !== BusinessProfileStatus.REMOVED,
@@ -138,6 +134,75 @@ export function GuidedProfileManager({
   const discoveredAnything =
     foundProfiles.length > 0 || activeGoogleCandidates.length > 0;
 
+  if (websiteOnly) {
+    return (
+      <div className="space-y-6">
+        <DataSourceNotice>
+          Confirm the public website Onread should crawl. Only this source is
+          used for the launch Website Growth Score.
+        </DataSourceNotice>
+        <ReportSection
+          title="Website source"
+          description="Check the address, open it if needed, and confirm that it belongs to this business."
+        >
+          {activeProfiles.length > 0 ? (
+            <div className="grid gap-4 lg:grid-cols-2">
+              {activeProfiles.map((profile) => (
+                <GuidedProfileCard
+                  key={profile.id}
+                  businessId={businessId}
+                  profile={profile}
+                  websiteOnly
+                />
+              ))}
+            </div>
+          ) : (
+            <ManualProfileForm businessId={businessId} websiteOnly />
+          )}
+          {removedProfiles.length > 0 ? (
+            <details className="mt-4 rounded-lg border border-border bg-background">
+              <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-semibold">
+                Removed website source
+                <ChevronDown className="size-4 text-muted" aria-hidden="true" />
+              </summary>
+              <div className="border-t border-border p-4">
+                {removedProfiles.map((profile) => (
+                  <GuidedProfileCard
+                    key={profile.id}
+                    businessId={businessId}
+                    profile={profile}
+                    websiteOnly
+                  />
+                ))}
+              </div>
+            </details>
+          ) : null}
+        </ReportSection>
+        <div className="rounded-lg border border-border bg-background p-4">
+          <div className="flex gap-3">
+            {profilesComplete ? (
+              <BadgeCheck className="mt-0.5 size-5 text-emerald-600" />
+            ) : (
+              <TriangleAlert className="mt-0.5 size-5 text-amber-600" />
+            )}
+            <div>
+              <p className="font-semibold">
+                {profilesComplete
+                  ? "Website confirmed"
+                  : "Website confirmation required"}
+              </p>
+              <p className="mt-1 text-sm leading-6 text-muted">
+                {profilesComplete
+                  ? "This website is ready for context setup and analysis."
+                  : "Confirm a public website before running the first audit."}
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       {!hasConfirmedWebsite ? (
@@ -166,10 +231,7 @@ export function GuidedProfileManager({
           label="Added manually"
           value={manualProfiles.length}
         />
-        <CompactMetricCard
-          label="Removed"
-          value={removedProfiles.length}
-        />
+        <CompactMetricCard label="Removed" value={removedProfiles.length} />
       </section>
 
       <ReportSection
@@ -287,9 +349,11 @@ export function GuidedProfileManager({
 function GuidedProfileCard({
   businessId,
   profile,
+  websiteOnly = false,
 }: {
   businessId: string;
   profile: GuidedProfileView;
+  websiteOnly?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const pending = profile.status === BusinessProfileStatus.PENDING;
@@ -385,6 +449,7 @@ function GuidedProfileCard({
         <ProfileEditForm
           businessId={businessId}
           profile={profile}
+          websiteOnly={websiteOnly}
           onCancel={() => setEditing(false)}
           onSaved={() => setEditing(false)}
         />
@@ -425,11 +490,7 @@ function ProfileActionButton({
       <input type="hidden" name="profileId" value={profileId} />
       <input type="hidden" name="operation" value={operation} />
       {showButton ? (
-        <SubmitButton
-          pendingLabel={pendingLabel}
-          variant={variant}
-          size="sm"
-        >
+        <SubmitButton pendingLabel={pendingLabel} variant={variant} size="sm">
           {icon}
           {label}
         </SubmitButton>
@@ -448,11 +509,13 @@ function ProfileEditForm({
   profile,
   onCancel,
   onSaved,
+  websiteOnly = false,
 }: {
   businessId: string;
   profile: GuidedProfileView;
   onCancel: () => void;
   onSaved: () => void;
+  websiteOnly?: boolean;
 }) {
   const id = useId();
   const [state, action] = useActionState(
@@ -476,21 +539,37 @@ function ProfileEditForm({
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-2">
           <Label htmlFor={`${id}-platform`}>Platform</Label>
-          <select
-            id={`${id}-platform`}
-            name="platform"
-            className={selectClassName}
-            defaultValue={state.values?.platform || profile.platform}
-            aria-describedby={
-              state.fieldErrors?.platform ? `${id}-platform-error` : undefined
-            }
-          >
-            {guidedProfilePlatforms.map((platform) => (
-              <option key={platform} value={platform}>
-                {platformLabels[platform]}
-              </option>
-            ))}
-          </select>
+          {websiteOnly ? (
+            <>
+              <input
+                type="hidden"
+                name="platform"
+                value={ProfilePlatform.WEBSITE}
+              />
+              <div
+                id={`${id}-platform`}
+                className={cn(selectClassName, "items-center")}
+              >
+                Website
+              </div>
+            </>
+          ) : (
+            <select
+              id={`${id}-platform`}
+              name="platform"
+              className={selectClassName}
+              defaultValue={state.values?.platform || profile.platform}
+              aria-describedby={
+                state.fieldErrors?.platform ? `${id}-platform-error` : undefined
+              }
+            >
+              {guidedProfilePlatforms.map((platform) => (
+                <option key={platform} value={platform}>
+                  {platformLabels[platform]}
+                </option>
+              ))}
+            </select>
+          )}
           <FieldError
             id={`${id}-platform-error`}
             message={state.fieldErrors?.platform}
@@ -544,7 +623,13 @@ function ProfileEditForm({
   );
 }
 
-function ManualProfileForm({ businessId }: { businessId: string }) {
+function ManualProfileForm({
+  businessId,
+  websiteOnly = false,
+}: {
+  businessId: string;
+  websiteOnly?: boolean;
+}) {
   const id = useId();
   const formRef = useRef<HTMLFormElement>(null);
   const [state, action] = useActionState(
@@ -567,23 +652,37 @@ function ManualProfileForm({ businessId }: { businessId: string }) {
       <input type="hidden" name="operation" value="add" />
       <div className="space-y-2">
         <Label htmlFor={`${id}-platform`}>Platform</Label>
-        <select
-          id={`${id}-platform`}
-          name="platform"
-          className={selectClassName}
-          defaultValue={
-            state.values?.platform || ProfilePlatform.INSTAGRAM
-          }
-          aria-describedby={
-            state.fieldErrors?.platform ? `${id}-platform-error` : undefined
-          }
-        >
-          {guidedProfilePlatforms.map((platform) => (
-            <option key={platform} value={platform}>
-              {platformLabels[platform]}
-            </option>
-          ))}
-        </select>
+        {websiteOnly ? (
+          <>
+            <input
+              type="hidden"
+              name="platform"
+              value={ProfilePlatform.WEBSITE}
+            />
+            <div
+              id={`${id}-platform`}
+              className={cn(selectClassName, "items-center")}
+            >
+              Website
+            </div>
+          </>
+        ) : (
+          <select
+            id={`${id}-platform`}
+            name="platform"
+            className={selectClassName}
+            defaultValue={state.values?.platform || ProfilePlatform.INSTAGRAM}
+            aria-describedby={
+              state.fieldErrors?.platform ? `${id}-platform-error` : undefined
+            }
+          >
+            {guidedProfilePlatforms.map((platform) => (
+              <option key={platform} value={platform}>
+                {platformLabels[platform]}
+              </option>
+            ))}
+          </select>
+        )}
         <FieldError
           id={`${id}-platform-error`}
           message={state.fieldErrors?.platform}
@@ -599,7 +698,11 @@ function ManualProfileForm({ businessId }: { businessId: string }) {
           autoCapitalize="none"
           spellCheck={false}
           defaultValue={state.values?.url}
-          placeholder="https://instagram.com/example"
+          placeholder={
+            websiteOnly
+              ? "https://example.com"
+              : "https://instagram.com/example"
+          }
           required
           aria-invalid={Boolean(state.fieldErrors?.url)}
           aria-describedby={
@@ -1064,8 +1167,8 @@ function OptionalPlatformDecisionForm({
         ) : null}
         {decisions.length > 0 ? (
           <p className="text-xs leading-5 text-muted md:col-span-3">
-            Saved statuses remain visible in the audit source summary and can
-            be replaced at any time by adding a profile.
+            Saved statuses remain visible in the audit source summary and can be
+            replaced at any time by adding a profile.
           </p>
         ) : null}
       </form>
@@ -1099,11 +1202,7 @@ function PlatformDecisionButton({
       <input type="hidden" name="operation" value="set_decision" />
       <input type="hidden" name="platform" value={platform} />
       <input type="hidden" name="decision" value={decision} />
-      <SubmitButton
-        pendingLabel={pendingLabel}
-        variant="secondary"
-        size="sm"
-      >
+      <SubmitButton pendingLabel={pendingLabel} variant="secondary" size="sm">
         {icon}
         {label}
       </SubmitButton>
@@ -1240,11 +1339,7 @@ function sourceStateForPlatform({
   };
 }
 
-function ProfileStatusBadge({
-  status,
-}: {
-  status: BusinessProfileStatus;
-}) {
+function ProfileStatusBadge({ status }: { status: BusinessProfileStatus }) {
   if (status === BusinessProfileStatus.CONFIRMED) {
     return (
       <span className="rounded-full bg-teal-500/10 px-2.5 py-1 text-xs font-semibold text-teal-700 dark:text-teal-200">
@@ -1289,13 +1384,7 @@ function ActionFeedback({ state }: { state: GuidedProfileActionState }) {
   );
 }
 
-function FieldError({
-  id,
-  message,
-}: {
-  id: string;
-  message?: string;
-}) {
+function FieldError({ id, message }: { id: string; message?: string }) {
   if (!message) return null;
   return (
     <p id={id} className="text-sm font-medium text-rose-700 dark:text-rose-200">

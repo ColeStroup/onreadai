@@ -3,30 +3,33 @@ import { ArrowRight, Check, X } from "lucide-react";
 import { SectionHeading } from "@/components/marketing/section-heading";
 
 const before = [
-  "Scattered marketing advice",
-  "Unclear priorities",
-  "Guessing about competitors",
-  "Recommendations with no execution",
-  "No clear way to measure progress",
+  "You know the website needs work",
+  "You do not know which issue matters most",
+  "Affected pages are hard to identify",
+  "Advice stops before implementation",
+  "There is no clear way to verify a fix",
 ] as const;
 
 const after = [
-  "Prioritized findings",
-  "Evidence behind each issue",
-  "Public competitor comparison",
-  "Ready-to-use implementation drafts",
-  "Repeat audits and progress history",
+  "Website and SEO findings in priority order",
+  "Evidence and affected URLs for each issue",
+  "A clear best next action",
+  "Implementation drafts and practical guidance",
+  "Repeat audits that verify progress",
 ] as const;
 
 export function TransformationSection() {
   return (
-    <section aria-labelledby="transformation-heading" className="bg-[#0a1415] py-20 sm:py-24">
+    <section
+      aria-labelledby="transformation-heading"
+      className="bg-[#0a1415] py-20 sm:py-24"
+    >
       <div className="mx-auto w-full max-w-7xl px-6 lg:px-8">
         <SectionHeading
           id="transformation-heading"
           eyebrow="From uncertainty to action"
           title="Stop guessing what deserves your attention."
-          description="Scores alone rarely explain what to do. The platform connects observed evidence to priorities, practical implementation, and a way to review progress over time."
+          description="Onread connects observed website evidence to clear priorities, practical implementation, and a way to verify what changed."
         />
 
         <div className="relative mt-10 grid overflow-hidden rounded-lg border border-white/10 md:grid-cols-[1fr_auto_1fr]">
@@ -34,7 +37,10 @@ export function TransformationSection() {
             <p className="text-sm font-semibold text-slate-400">Before</p>
             <ul className="mt-5 space-y-4">
               {before.map((item) => (
-                <li key={item} className="flex items-start gap-3 text-slate-300">
+                <li
+                  key={item}
+                  className="flex items-start gap-3 text-slate-300"
+                >
                   <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-rose-400/10 text-rose-300">
                     <X className="size-3" aria-hidden="true" />
                   </span>

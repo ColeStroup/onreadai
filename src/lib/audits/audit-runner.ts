@@ -25,7 +25,10 @@ import {
 } from "@/lib/analyzers/website-crawler";
 import { analyzeWebsite } from "@/lib/analyzers/website-analyzer";
 import { generateBusinessContextDraft } from "@/lib/ai/business-context-generator";
-import { generateCompetitorIntelligenceSummary } from "@/lib/ai/competitor-intelligence-generator";
+import {
+  buildDeterministicSummary,
+  generateCompetitorIntelligenceSummary,
+} from "@/lib/ai/competitor-intelligence-generator";
 import { generateDeterministicSocialStrategy } from "@/lib/ai/social-strategy-generator";
 import { validateAuditConsistency } from "@/lib/audits/audit-consistency";
 import { generateDeterministicAudit } from "@/lib/audits/deterministic-audit";
@@ -43,7 +46,13 @@ import { shouldRefreshGeneratedBusinessContext } from "@/lib/business-context";
 import { analyzeBusinessCompetitors } from "@/lib/competitors/competitor-analysis-runner";
 import { compareBusinessToCompetitors } from "@/lib/competitors/competitor-comparison";
 import type { AuditCompetitorIntelligence } from "@/lib/competitors/competitor-types";
+import {
+  isCompetitorIntelligenceEnabled,
+  isLocalGrowthEnabled,
+  isSocialGrowthEnabled,
+} from "@/lib/features/feature-flags";
 import { discoverGoogleBusinessProfiles } from "@/lib/google/google-business-discovery";
+import { websiteSeoBusinessGoals } from "@/lib/goals";
 import { prisma } from "@/lib/prisma";
 import { logError, logInfo, logWarn } from "@/lib/observability/log";
 import {
@@ -56,6 +65,10 @@ import {
   SOCIAL_STRATEGY_GENERATOR_VERSION,
   WEBSITE_ANALYZER_VERSION,
 } from "@/lib/reports/report-freshness";
+import {
+  isWebsiteSeoCategory,
+  isWebsiteSeoReportCategory,
+} from "@/lib/product/website-seo-scope";
 
 export const activeRunWindowMs = 14 * 60 * 1000;
 
@@ -78,12 +91,15 @@ export async function createPendingAuditRun(businessId: string) {
     await transaction.audit.updateMany({
       where: {
         businessId,
-        status: { in: [AuditStatus.PENDING, AuditStatus.QUEUED, AuditStatus.RUNNING] },
+        status: {
+          in: [AuditStatus.PENDING, AuditStatus.QUEUED, AuditStatus.RUNNING],
+        },
         updatedAt: { lt: activeSince },
       },
       data: {
         status: AuditStatus.FAILED,
-        summary: "The audit run was interrupted before it completed. You can run it again.",
+        summary:
+          "The audit run was interrupted before it completed. You can run it again.",
         completedAt: new Date(),
       },
     });
@@ -91,7 +107,9 @@ export async function createPendingAuditRun(businessId: string) {
     const existingRun = await transaction.audit.findFirst({
       where: {
         businessId,
-        status: { in: [AuditStatus.PENDING, AuditStatus.QUEUED, AuditStatus.RUNNING] },
+        status: {
+          in: [AuditStatus.PENDING, AuditStatus.QUEUED, AuditStatus.RUNNING],
+        },
         updatedAt: { gte: activeSince },
       },
       orderBy: { createdAt: "desc" },
@@ -252,26 +270,28 @@ export async function runAuditGeneration({
             })),
           },
           recommendations: {
-            create: auditData.auditResult.recommendations.map((recommendation, index) => ({
-              business: {
-                connect: {
-                  id: businessId,
+            create: auditData.auditResult.recommendations.map(
+              (recommendation, index) => ({
+                business: {
+                  connect: {
+                    id: businessId,
+                  },
                 },
-              },
-              title: recommendation.title,
-              description: recommendation.description,
-              category: recommendation.category,
-              priority: recommendation.priority,
-              effort: recommendation.estimatedEffort,
-              impact: recommendation.expectedImpact,
-              estimatedEffort: recommendation.estimatedEffort,
-              expectedImpact: recommendation.expectedImpact,
-              sourceType: recommendation.sourceType,
-              sourceReferenceId: recommendation.sourceReferenceId,
-              sourceUrl: recommendation.sourceUrl,
-              evidence: recommendation.evidence,
-              sortOrder: index + 1,
-            })),
+                title: recommendation.title,
+                description: recommendation.description,
+                category: recommendation.category,
+                priority: recommendation.priority,
+                effort: recommendation.estimatedEffort,
+                impact: recommendation.expectedImpact,
+                estimatedEffort: recommendation.estimatedEffort,
+                expectedImpact: recommendation.expectedImpact,
+                sourceType: recommendation.sourceType,
+                sourceReferenceId: recommendation.sourceReferenceId,
+                sourceUrl: recommendation.sourceUrl,
+                evidence: recommendation.evidence,
+                sortOrder: index + 1,
+              }),
+            ),
           },
         },
       });
@@ -313,6 +333,14 @@ export async function runAuditGeneration({
         });
       }
     }
+
+    logInfo("audit_completed", {
+      businessId,
+      auditId,
+      overallScore: auditData.auditResult.overallScore,
+      findingCount: auditData.auditResult.findings.length,
+      recommendationCount: auditData.auditResult.recommendations.length,
+    });
 
     return {
       auditId,
@@ -384,6 +412,9 @@ async function buildAuditData({
   businessId: string;
   auditId: string;
 }) {
+  const socialGrowthEnabled = isSocialGrowthEnabled();
+  const competitorIntelligenceEnabled = isCompetitorIntelligenceEnabled();
+  const localGrowthEnabled = isLocalGrowthEnabled();
   const business = await prisma.business.findUnique({
     where: {
       id: businessId,
@@ -444,6 +475,17 @@ async function buildAuditData({
     "REVIEWING_CONFIRMED_PROFILES",
   );
   const approvedProfiles = approvedBusinessProfilesForAudit(business.profiles);
+  const websiteSeoProfiles = approvedProfiles.filter(
+    (profile) => profile.platform === ProfilePlatform.WEBSITE,
+  );
+  const focusedGoals = business.goals.filter((goal) =>
+    websiteSeoBusinessGoals.includes(goal),
+  );
+  const focusedPrimaryGoal =
+    business.primaryGoal &&
+    websiteSeoBusinessGoals.includes(business.primaryGoal)
+      ? business.primaryGoal
+      : null;
   const googleBusinessDecision = business.profileDecisions.find(
     (decision) => decision.platform === ProfilePlatform.GOOGLE_BUSINESS,
   )?.decision;
@@ -461,24 +503,30 @@ async function buildAuditData({
     businessType: business.businessType,
     primaryConversionGoal: business.primaryConversionGoal,
   };
-  const websiteProfile = approvedProfiles.find(
+  const websiteProfile = websiteSeoProfiles.find(
     (profile) =>
-      profile.platform === ProfilePlatform.WEBSITE &&
-      Boolean(profile.url),
+      profile.platform === ProfilePlatform.WEBSITE && Boolean(profile.url),
   );
+  if (!websiteProfile?.url) {
+    throw new Error(
+      "Confirm a public website before running a Website & SEO audit.",
+    );
+  }
   await setAuditProgressStage(businessId, auditId, "ANALYZING_WEBSITE");
-  const websiteAnalysis = websiteProfile?.url
-    ? await analyzeWebsite(websiteProfile.url, {
-        businessContext,
-      })
-    : null;
-  const websiteCrawl = websiteAnalysis
-      ? await crawlWebsite(websiteAnalysis.normalizedUrl, {
-          maxPages: entitlements.maxCrawlPages,
-          timeBudgetMs: 3 * 60 * 1_000,
-          businessContext,
-      })
-    : null;
+  const websiteAnalysis = await analyzeWebsite(websiteProfile.url, {
+    businessContext,
+  });
+  if (websiteAnalysis.fetchStatus === "failed") {
+    throw new Error(
+      websiteAnalysis.warnings.at(0) ??
+        "The website homepage could not be analyzed. Check that it is public and try again.",
+    );
+  }
+  const websiteCrawl = await crawlWebsite(websiteAnalysis.normalizedUrl, {
+    maxPages: entitlements.maxCrawlPages,
+    timeBudgetMs: 3 * 60 * 1_000,
+    businessContext,
+  });
   if (websiteCrawl) {
     logInfo("audit_content_quality_analysis", {
       businessId,
@@ -486,27 +534,23 @@ async function buildAuditData({
       thinPages: websiteCrawl.thinPages?.length ?? 0,
       duplicateGroups: websiteCrawl.duplicateContentGroups?.length ?? 0,
       acceptedCopyFindings: websiteCrawl.copyQualityFindings?.length ?? 0,
-      orderingFrictionPages:
-        websiteCrawl.orderingFrictionPages?.length ?? 0,
+      orderingFrictionPages: websiteCrawl.orderingFrictionPages?.length ?? 0,
     });
   }
-  await setAuditProgressStage(
-    businessId,
-    auditId,
-    "CHECKING_TECHNICAL_ISSUES",
+  await setAuditProgressStage(businessId, auditId, "CHECKING_TECHNICAL_ISSUES");
+  const seoAnalysis = await analyzeSeo(
+    websiteAnalysis.normalizedUrl,
+    websiteAnalysis,
   );
-  const seoAnalysis = websiteAnalysis
-    ? await analyzeSeo(websiteAnalysis.normalizedUrl, websiteAnalysis)
-    : null;
   const businessContextDraft = shouldRefreshGeneratedBusinessContext(business)
     ? await generateBusinessContextDraft({
         businessName: business.name,
         initialInput: business.initialInput,
         websiteAnalysis,
         websiteCrawl,
-        profiles: approvedProfiles,
-        goals: business.goals,
-        primaryGoal: business.primaryGoal,
+        profiles: websiteSeoProfiles,
+        goals: focusedGoals,
+        primaryGoal: focusedPrimaryGoal,
       })
     : null;
   const effectiveBusinessContext = businessContextDraft
@@ -534,46 +578,23 @@ async function buildAuditData({
         contextSource: business.contextSource ?? "generated",
         contextConfirmedAt: business.contextConfirmedAt,
       };
-  await setAuditProgressStage(
-    businessId,
-    auditId,
-    "REVIEWING_LOCAL_VISIBILITY",
-  );
-  const googleBusinessDiscovery = googleDiscoveryIntentionallyDisabled
-    ? {
-        apiConfigured: Boolean(process.env.GOOGLE_PLACES_API_KEY),
-        searched: false,
-        error: undefined,
-        candidatesSaved: 0,
-        bestConfidence: null,
-        source: "none" as const,
-        profileIds: [] as string[],
-        detectedAddress: websiteAnalysis?.detectedAddress ?? null,
-        detectedPhone: websiteAnalysis?.detectedPhone ?? null,
-        detectedGoogleMapsLinks:
-          websiteAnalysis?.detectedGoogleMapsLinks ?? [],
-        detectedMapEmbeds: websiteAnalysis?.detectedMapEmbeds ?? [],
-        detectedLocalBusinessSchemaCount:
-          websiteAnalysis?.detectedLocalBusinessSchema.length ?? 0,
-      }
-    : await discoverGoogleBusinessProfiles({
-        business,
-        websiteAnalysis,
-        websiteCrawl,
-      }).catch((error) => {
-        logError("audit_google_business_discovery_failed", error, {
-          businessId,
-          auditId,
-        });
-
-        return {
-          apiConfigured: false,
+  if (localGrowthEnabled) {
+    await setAuditProgressStage(
+      businessId,
+      auditId,
+      "REVIEWING_LOCAL_VISIBILITY",
+    );
+  }
+  const googleBusinessDiscovery =
+    !localGrowthEnabled || googleDiscoveryIntentionallyDisabled
+      ? {
+          apiConfigured: Boolean(process.env.GOOGLE_PLACES_API_KEY),
           searched: false,
-          error: "Google Business discovery failed.",
+          error: undefined,
           candidatesSaved: 0,
           bestConfidence: null,
           source: "none" as const,
-          profileIds: [],
+          profileIds: [] as string[],
           detectedAddress: websiteAnalysis?.detectedAddress ?? null,
           detectedPhone: websiteAnalysis?.detectedPhone ?? null,
           detectedGoogleMapsLinks:
@@ -581,35 +602,63 @@ async function buildAuditData({
           detectedMapEmbeds: websiteAnalysis?.detectedMapEmbeds ?? [],
           detectedLocalBusinessSchemaCount:
             websiteAnalysis?.detectedLocalBusinessSchema.length ?? 0,
-        };
-      });
-  const googleBusinessProfiles = await prisma.googleBusinessProfile.findMany({
-    where: {
+        }
+      : await discoverGoogleBusinessProfiles({
+          business,
+          websiteAnalysis,
+          websiteCrawl,
+        }).catch((error) => {
+          logError("audit_google_business_discovery_failed", error, {
+            businessId,
+            auditId,
+          });
+
+          return {
+            apiConfigured: false,
+            searched: false,
+            error: "Google Business discovery failed.",
+            candidatesSaved: 0,
+            bestConfidence: null,
+            source: "none" as const,
+            profileIds: [],
+            detectedAddress: websiteAnalysis?.detectedAddress ?? null,
+            detectedPhone: websiteAnalysis?.detectedPhone ?? null,
+            detectedGoogleMapsLinks:
+              websiteAnalysis?.detectedGoogleMapsLinks ?? [],
+            detectedMapEmbeds: websiteAnalysis?.detectedMapEmbeds ?? [],
+            detectedLocalBusinessSchemaCount:
+              websiteAnalysis?.detectedLocalBusinessSchema.length ?? 0,
+          };
+        });
+  const googleBusinessProfiles = localGrowthEnabled
+    ? await prisma.googleBusinessProfile.findMany({
+        where: {
+          businessId,
+          status: "confirmed",
+        },
+        orderBy: [{ status: "asc" }, { matchConfidence: "desc" }],
+      })
+    : [];
+  if (socialGrowthEnabled) {
+    await setAuditProgressStage(
       businessId,
-      status: "confirmed",
-    },
-    orderBy: [
-      {
-        status: "asc",
-      },
-      {
-        matchConfidence: "desc",
-      },
-    ],
-  });
-  await setAuditProgressStage(
-    businessId,
-    auditId,
-    "EVALUATING_SOCIAL_PRESENCE",
-  );
+      auditId,
+      "EVALUATING_SOCIAL_PRESENCE",
+    );
+  }
   const socialAnalysis = analyzeSocialProfiles({
-    businessProfiles: business.profiles.map((profile) => ({
-      platform: profile.platform,
-      status: profile.status,
-      label: profile.displayName,
-      urlOrHandle: profile.url ?? profile.handle,
-    })),
-    competitors: business.competitors.map((competitor) => ({
+    businessProfiles: (socialGrowthEnabled ? business.profiles : []).map(
+      (profile) => ({
+        platform: profile.platform,
+        status: profile.status,
+        label: profile.displayName,
+        urlOrHandle: profile.url ?? profile.handle,
+      }),
+    ),
+    competitors: (competitorIntelligenceEnabled
+      ? business.competitors
+      : []
+    ).map((competitor) => ({
       competitorName: competitor.name,
       profiles: competitor.discoveredProfiles.map((profile) => ({
         platform: profile.platform,
@@ -617,15 +666,17 @@ async function buildAuditData({
         label: profile.label,
       })),
     })),
-    goals: business.goals,
-    primaryGoal: business.primaryGoal,
+    goals: socialGrowthEnabled ? business.goals : [],
+    primaryGoal: socialGrowthEnabled ? business.primaryGoal : null,
   });
   const reviewAnalysis = analyzeReviews({
-    businessProfiles: business.profiles.map((profile) => ({
-      platform: profile.platform,
-      status: profile.status,
-      label: profile.displayName,
-    })),
+    businessProfiles: (localGrowthEnabled ? business.profiles : []).map(
+      (profile) => ({
+        platform: profile.platform,
+        status: profile.status,
+        label: profile.displayName,
+      }),
+    ),
     googleBusinessProfiles: googleBusinessProfiles.map((profile) => ({
       id: profile.id,
       displayName: profile.displayName,
@@ -645,7 +696,10 @@ async function buildAuditData({
       searched: googleBusinessDiscovery.searched,
       error: googleBusinessDiscovery.error,
     },
-    competitors: business.competitors.map((competitor) => ({
+    competitors: (competitorIntelligenceEnabled
+      ? business.competitors
+      : []
+    ).map((competitor) => ({
       competitorName: competitor.name,
       profiles: competitor.discoveredProfiles.map((profile) => ({
         platform: profile.platform,
@@ -653,11 +707,11 @@ async function buildAuditData({
         label: profile.label,
       })),
     })),
-    goals: business.goals,
-    primaryGoal: business.primaryGoal,
-    businessContext: effectiveBusinessContext,
+    goals: localGrowthEnabled ? business.goals : [],
+    primaryGoal: localGrowthEnabled ? business.primaryGoal : null,
+    businessContext: localGrowthEnabled ? effectiveBusinessContext : null,
   });
-  if (!reviewAnalysis.dataRequirementsMet) {
+  if (localGrowthEnabled && !reviewAnalysis.dataRequirementsMet) {
     logInfo("audit_review_score_limited_insufficient_data", {
       businessId,
       auditId,
@@ -666,7 +720,9 @@ async function buildAuditData({
       missingMetricCount: reviewAnalysis.missingInputs.length,
     });
   }
-  const competitorProfileSummary = business.competitors.map((competitor) => {
+  const competitorProfileSummary = (
+    competitorIntelligenceEnabled ? business.competitors : []
+  ).map((competitor) => {
     const confirmedProfiles = competitor.discoveredProfiles.filter(
       (profile) => profile.status === BusinessProfileStatus.CONFIRMED,
     );
@@ -684,90 +740,96 @@ async function buildAuditData({
       ),
     };
   });
-  await setAuditProgressStage(
-    businessId,
-    auditId,
-    "COMPARING_COMPETITORS",
-  );
-  const competitorScanResults = await analyzeBusinessCompetitors({
-    userId: business.ownerId,
-    businessId,
-    auditId,
-    maximumFreshScans: 4,
-    crawlTimeBudgetMs: 60_000,
-  }).catch((error) => {
-    logError("audit_competitor_analysis_failed", error, {
-      businessId,
-      auditId,
-    });
+  if (competitorIntelligenceEnabled) {
+    await setAuditProgressStage(businessId, auditId, "COMPARING_COMPETITORS");
+  }
+  const competitorScanResults = competitorIntelligenceEnabled
+    ? await analyzeBusinessCompetitors({
+        userId: business.ownerId,
+        businessId,
+        auditId,
+        maximumFreshScans: 4,
+        crawlTimeBudgetMs: 60_000,
+      }).catch((error) => {
+        logError("audit_competitor_analysis_failed", error, {
+          businessId,
+          auditId,
+        });
 
-    return [];
-  });
-  const comparisonCompetitors = await prisma.competitor.findMany({
-    where: {
-      businessId,
-      status: CompetitorStatus.ACTIVE,
-    },
-    orderBy: {
-      createdAt: "asc",
-    },
-    select: {
-      id: true,
-      name: true,
-      websiteUrl: true,
-      discoveredProfiles: {
-        select: {
-          id: true,
-          platform: true,
-          status: true,
-          urlOrHandle: true,
+        return [];
+      })
+    : [];
+  const comparisonCompetitors = competitorIntelligenceEnabled
+    ? await prisma.competitor.findMany({
+        where: {
+          businessId,
+          status: CompetitorStatus.ACTIVE,
         },
-      },
-      snapshots: {
         orderBy: {
-          createdAt: "desc",
+          createdAt: "asc",
         },
-        take: 8,
         select: {
           id: true,
-          status: true,
+          name: true,
           websiteUrl: true,
-          websiteScore: true,
-          seoScore: true,
-          socialCoverageScore: true,
-          reviewsScore: true,
-          positioningScore: true,
-          websiteSnapshot: true,
-          seoSnapshot: true,
-          socialSnapshot: true,
-          reviewsSnapshot: true,
-          positioningSnapshot: true,
-          scannedAt: true,
-          createdAt: true,
+          discoveredProfiles: {
+            select: {
+              id: true,
+              platform: true,
+              status: true,
+              urlOrHandle: true,
+            },
+          },
+          snapshots: {
+            orderBy: {
+              createdAt: "desc",
+            },
+            take: 8,
+            select: {
+              id: true,
+              status: true,
+              websiteUrl: true,
+              websiteScore: true,
+              seoScore: true,
+              socialCoverageScore: true,
+              reviewsScore: true,
+              positioningScore: true,
+              websiteSnapshot: true,
+              seoSnapshot: true,
+              socialSnapshot: true,
+              reviewsSnapshot: true,
+              positioningSnapshot: true,
+              scannedAt: true,
+              createdAt: true,
+            },
+          },
         },
-      },
-    },
-  });
-  const competitorAnalysisAvailable = comparisonCompetitors.some(
-    (competitor) =>
-      competitor.snapshots.some(
-        (snapshot) =>
-          snapshot.status === CompetitorSnapshotStatus.COMPLETED ||
-          snapshot.status === CompetitorSnapshotStatus.PARTIAL,
-      ),
+      })
+    : [];
+  const competitorAnalysisAvailable = comparisonCompetitors.some((competitor) =>
+    competitor.snapshots.some(
+      (snapshot) =>
+        snapshot.status === CompetitorSnapshotStatus.COMPLETED ||
+        snapshot.status === CompetitorSnapshotStatus.PARTIAL,
+    ),
   );
   await setAuditProgressStage(businessId, auditId, "BUILDING_FINDINGS");
   const auditResult = generateDeterministicAudit({
     businessName: business.name,
     initialInput: business.initialInput,
-    profiles: business.profiles.map((profile) => ({
-      platform: profile.platform,
-      status: profile.status,
-      confidenceScore: profile.confidenceScore,
-      url: profile.url,
-      handle: profile.handle,
-    })),
-    competitors: business.competitors.map((competitor) => ({
+    profiles: business.profiles
+      .filter((profile) => profile.platform === ProfilePlatform.WEBSITE)
+      .map((profile) => ({
+        platform: profile.platform,
+        status: profile.status,
+        confidenceScore: profile.confidenceScore,
+        url: profile.url,
+        handle: profile.handle,
+      })),
+    competitors: (competitorIntelligenceEnabled
+      ? business.competitors
+      : []
+    ).map((competitor) => ({
       name: competitor.name,
       websiteUrl: competitor.websiteUrl,
       notes: competitor.notes,
@@ -780,21 +842,21 @@ async function buildAuditData({
     websiteAnalysis,
     websiteCrawl,
     seoAnalysis,
-    socialAnalysis,
-    reviewAnalysis,
+    socialAnalysis: socialGrowthEnabled ? socialAnalysis : null,
+    reviewAnalysis: localGrowthEnabled ? reviewAnalysis : null,
     businessContext: {
       description: effectiveBusinessContext.description,
       targetAudience: effectiveBusinessContext.targetAudience,
       mainOffer: effectiveBusinessContext.mainOffer,
       industry: effectiveBusinessContext.industry,
       businessType: effectiveBusinessContext.businessType,
-      primaryConversionGoal:
-        effectiveBusinessContext.primaryConversionGoal,
+      primaryConversionGoal: effectiveBusinessContext.primaryConversionGoal,
       brandTone: effectiveBusinessContext.brandTone,
     },
-    goals: business.goals,
-    primaryGoal: business.primaryGoal,
-    competitorAnalysisAvailable,
+    goals: focusedGoals,
+    primaryGoal: focusedPrimaryGoal,
+    competitorAnalysisAvailable:
+      competitorIntelligenceEnabled && competitorAnalysisAvailable,
   });
   const comparison = compareBusinessToCompetitors({
     business: {
@@ -802,8 +864,7 @@ async function buildAuditData({
       description: effectiveBusinessContext.description,
       targetAudience: effectiveBusinessContext.targetAudience,
       mainOffer: effectiveBusinessContext.mainOffer,
-      primaryConversionGoal:
-        effectiveBusinessContext.primaryConversionGoal,
+      primaryConversionGoal: effectiveBusinessContext.primaryConversionGoal,
     },
     primaryAudit: {
       createdAt: new Date(),
@@ -844,10 +905,12 @@ async function buildAuditData({
   comparison.limitations = [
     ...new Set([...comparison.limitations, ...scanLimitations]),
   ];
-  const competitorSummary = await generateCompetitorIntelligenceSummary({
-    businessName: business.name,
-    comparison,
-  });
+  const competitorSummary = competitorIntelligenceEnabled
+    ? await generateCompetitorIntelligenceSummary({
+        businessName: business.name,
+        comparison,
+      })
+    : buildDeterministicSummary(business.name, comparison);
   const competitorIntelligence: AuditCompetitorIntelligence = {
     snapshotIds: comparison.freshness
       .map((item) => item.snapshotId)
@@ -859,7 +922,7 @@ async function buildAuditData({
     limitations: comparison.limitations,
   };
 
-  if (comparison.analyzedCompetitorCount > 0) {
+  if (competitorIntelligenceEnabled && comparison.analyzedCompetitorCount > 0) {
     auditResult.findings = auditResult.findings.filter((finding) => {
       const text = `${finding.title} ${finding.description}`;
       return !/future analysis can compare|competitor analysis (?:is|has) not|saved competitor only|comparison unavailable/i.test(
@@ -899,32 +962,33 @@ async function buildAuditData({
       });
     }
   }
-  const socialStrategyDependencyFingerprint = buildSocialStrategyDependencyFingerprint({
-    auditId,
-    businessContext: effectiveBusinessContext,
-    goals: business.goals,
-    primaryGoal: business.primaryGoal,
-    profiles: approvedProfiles.map((profile) => ({
-      id: profile.id,
-      platform: profile.platform,
-      status: profile.status,
-      url: profile.url,
-      handle: profile.handle,
-      updatedAt: profile.updatedAt,
-    })),
-    googleBusinessProfiles: googleBusinessProfiles.map((profile) => ({
-      id: profile.id,
-      status: profile.status,
-      rating: profile.rating,
-      reviewCount: profile.reviewCount,
-      updatedAt: profile.updatedAt,
-    })),
-    competitors: comparisonCompetitors.map((competitor) => ({
-      id: competitor.id,
-      profiles: competitor.discoveredProfiles,
-      snapshotIds: competitor.snapshots.map((snapshot) => snapshot.id),
-    })),
-  });
+  const socialStrategyDependencyFingerprint =
+    buildSocialStrategyDependencyFingerprint({
+      auditId,
+      businessContext: effectiveBusinessContext,
+      goals: business.goals,
+      primaryGoal: business.primaryGoal,
+      profiles: approvedProfiles.map((profile) => ({
+        id: profile.id,
+        platform: profile.platform,
+        status: profile.status,
+        url: profile.url,
+        handle: profile.handle,
+        updatedAt: profile.updatedAt,
+      })),
+      googleBusinessProfiles: googleBusinessProfiles.map((profile) => ({
+        id: profile.id,
+        status: profile.status,
+        rating: profile.rating,
+        reviewCount: profile.reviewCount,
+        updatedAt: profile.updatedAt,
+      })),
+      competitors: comparisonCompetitors.map((competitor) => ({
+        id: competitor.id,
+        profiles: competitor.discoveredProfiles,
+        snapshotIds: competitor.snapshots.map((snapshot) => snapshot.id),
+      })),
+    });
   const competitorComparisonDependencyFingerprint =
     buildCompetitorComparisonDependencyFingerprint({
       businessAuditId: auditId,
@@ -941,12 +1005,20 @@ async function buildAuditData({
     social: socialAnalysis,
     reviews: reviewAnalysis,
     businessContext: effectiveBusinessContext,
-    businessProfiles: business.profiles.map((profile) => ({
+    businessProfiles: (socialGrowthEnabled || localGrowthEnabled
+      ? business.profiles
+      : business.profiles.filter(
+          (profile) => profile.platform === ProfilePlatform.WEBSITE,
+        )
+    ).map((profile) => ({
       id: profile.id,
       platform: profile.platform,
       status: profile.status,
     })),
-    competitors: business.competitors.map((competitor) => ({
+    competitors: (competitorIntelligenceEnabled
+      ? business.competitors
+      : []
+    ).map((competitor) => ({
       id: competitor.id,
       name: competitor.name,
       profiles: competitor.discoveredProfiles.map((profile) => ({
@@ -966,9 +1038,13 @@ async function buildAuditData({
     sourceVersions: {
       website: WEBSITE_ANALYZER_VERSION,
       seo: SEO_ANALYZER_VERSION,
-      social: "social-analyzer-v3-coverage",
-      reviews: "review-analyzer-v3-data-sufficiency",
-      competitors: COMPETITOR_COMPARISON_VERSION,
+      ...(socialGrowthEnabled ? { social: "social-analyzer-v3-coverage" } : {}),
+      ...(localGrowthEnabled
+        ? { reviews: "review-analyzer-v3-data-sufficiency" }
+        : {}),
+      ...(competitorIntelligenceEnabled
+        ? { competitors: COMPETITOR_COMPARISON_VERSION }
+        : {}),
       scoring: SCORING_ENGINE_VERSION,
     },
   });
@@ -976,7 +1052,8 @@ async function buildAuditData({
   auditResult.recommendations =
     preliminaryEvidenceIntegrityResult.recommendations;
 
-  for (const warning of preliminaryEvidenceIntegrityResult.snapshot.validationWarnings) {
+  for (const warning of preliminaryEvidenceIntegrityResult.snapshot
+    .validationWarnings) {
     logWarn("audit_evidence_validation_warning", {
       businessId,
       auditId,
@@ -991,12 +1068,14 @@ async function buildAuditData({
     planType: plan,
     websiteCrawl,
     businessContext: effectiveBusinessContext,
-    goals: business.goals,
-    primaryGoal: business.primaryGoal,
+    goals: focusedGoals,
+    primaryGoal: focusedPrimaryGoal,
     deterministicAudit: auditResult,
-    socialEvidence: socialAnalysis,
-    reviewEvidence: reviewAnalysis,
-    competitorEvidence: competitorIntelligence,
+    socialEvidence: socialGrowthEnabled ? socialAnalysis : null,
+    reviewEvidence: localGrowthEnabled ? reviewAnalysis : null,
+    competitorEvidence: competitorIntelligenceEnabled
+      ? competitorIntelligence
+      : null,
     onProgress: (stage) => setAuditProgressStage(businessId, auditId, stage),
   });
   auditResult.findings.push(
@@ -1011,34 +1090,47 @@ async function buildAuditData({
       evidence: toJsonValue(recommendation.evidence),
     })),
   );
+  auditResult.findings = auditResult.findings.filter((finding) =>
+    isWebsiteSeoCategory(finding.category),
+  );
+  auditResult.recommendations = auditResult.recommendations.filter(
+    (recommendation) => isWebsiteSeoCategory(recommendation.category),
+  );
+  auditResult.scores = auditResult.scores.filter(
+    (score) => !score.platform && isWebsiteSeoReportCategory(score.category),
+  );
+  auditResult.scoreBreakdowns = auditResult.scoreBreakdowns.filter(
+    (breakdown) => isWebsiteSeoReportCategory(breakdown.category),
+  );
   if (
     selectiveAiResult.snapshot.synthesisSource === "AI_GENERATED" &&
     selectiveAiResult.snapshot.synthesis?.executiveSummary
   ) {
-    auditResult.summary =
-      selectiveAiResult.snapshot.synthesis.executiveSummary;
+    auditResult.summary = selectiveAiResult.snapshot.synthesis.executiveSummary;
   }
   await setAuditProgressStage(
     businessId,
     auditId,
     "PRIORITIZING_RECOMMENDATIONS",
   );
-  const reportSocialStrategy = generateDeterministicSocialStrategy({
-    businessName: business.name,
-    initialInput: business.initialInput,
-    businessContext: effectiveBusinessContext,
-    goals: business.goals,
-    primaryGoal: business.primaryGoal,
-    profiles: approvedProfiles,
-    competitors: business.competitors,
-    socialAnalysis,
-    reviewAnalysis,
-    websiteAnalysis,
-    recommendations: auditResult.recommendations.map((recommendation) => ({
-      ...recommendation,
-      status: "TODO" as const,
-    })),
-  });
+  const reportSocialStrategy = socialGrowthEnabled
+    ? generateDeterministicSocialStrategy({
+        businessName: business.name,
+        initialInput: business.initialInput,
+        businessContext: effectiveBusinessContext,
+        goals: business.goals,
+        primaryGoal: business.primaryGoal,
+        profiles: approvedProfiles,
+        competitors: business.competitors,
+        socialAnalysis,
+        reviewAnalysis,
+        websiteAnalysis,
+        recommendations: auditResult.recommendations.map((recommendation) => ({
+          ...recommendation,
+          status: "TODO" as const,
+        })),
+      })
+    : null;
   const scoreValues = Object.fromEntries(
     auditResult.scores.map((score) => [score.category, score.score]),
   ) as Partial<Record<ScoreCategory, number>>;
@@ -1049,13 +1141,20 @@ async function buildAuditData({
     social: socialAnalysis,
     reviews: reviewAnalysis,
     selectiveAi: selectiveAiResult.snapshot,
-    businessProfiles: business.profiles.map((profile) => ({
+    businessProfiles: (socialGrowthEnabled || localGrowthEnabled
+      ? business.profiles
+      : business.profiles.filter(
+          (profile) => profile.platform === ProfilePlatform.WEBSITE,
+        )
+    ).map((profile) => ({
       platform: profile.platform,
       status: profile.status,
     })),
     businessContext: effectiveBusinessContext,
-    competitorConfigured: business.competitors.length > 0,
-    competitorAnalyzed: comparison.analyzedCompetitorCount > 0,
+    competitorConfigured:
+      competitorIntelligenceEnabled && business.competitors.length > 0,
+    competitorAnalyzed:
+      competitorIntelligenceEnabled && comparison.analyzedCompetitorCount > 0,
     scoreValues,
   });
   const postAiEvidenceIntegrityResult = buildAuditEvidenceIntegrity({
@@ -1065,12 +1164,20 @@ async function buildAuditData({
     social: socialAnalysis,
     reviews: reviewAnalysis,
     businessContext: effectiveBusinessContext,
-    businessProfiles: business.profiles.map((profile) => ({
+    businessProfiles: (socialGrowthEnabled || localGrowthEnabled
+      ? business.profiles
+      : business.profiles.filter(
+          (profile) => profile.platform === ProfilePlatform.WEBSITE,
+        )
+    ).map((profile) => ({
       id: profile.id,
       platform: profile.platform,
       status: profile.status,
     })),
-    competitors: business.competitors.map((competitor) => ({
+    competitors: (competitorIntelligenceEnabled
+      ? business.competitors
+      : []
+    ).map((competitor) => ({
       id: competitor.id,
       name: competitor.name,
       profiles: competitor.discoveredProfiles.map((profile) => ({
@@ -1090,9 +1197,6 @@ async function buildAuditData({
     sourceVersions: {
       website: WEBSITE_ANALYZER_VERSION,
       seo: SEO_ANALYZER_VERSION,
-      social: "social-analyzer-v3-coverage",
-      reviews: "review-analyzer-v3-data-sufficiency",
-      competitors: COMPETITOR_COMPARISON_VERSION,
       scoring: SCORING_ENGINE_VERSION,
     },
   });
@@ -1135,12 +1239,20 @@ async function buildAuditData({
     social: socialAnalysis,
     reviews: reviewAnalysis,
     businessContext: effectiveBusinessContext,
-    businessProfiles: business.profiles.map((profile) => ({
+    businessProfiles: (socialGrowthEnabled || localGrowthEnabled
+      ? business.profiles
+      : business.profiles.filter(
+          (profile) => profile.platform === ProfilePlatform.WEBSITE,
+        )
+    ).map((profile) => ({
       id: profile.id,
       platform: profile.platform,
       status: profile.status,
     })),
-    competitors: business.competitors.map((competitor) => ({
+    competitors: (competitorIntelligenceEnabled
+      ? business.competitors
+      : []
+    ).map((competitor) => ({
       id: competitor.id,
       name: competitor.name,
       profiles: competitor.discoveredProfiles.map((profile) => ({
@@ -1160,9 +1272,13 @@ async function buildAuditData({
     sourceVersions: {
       website: WEBSITE_ANALYZER_VERSION,
       seo: SEO_ANALYZER_VERSION,
-      social: "social-analyzer-v3-coverage",
-      reviews: "review-analyzer-v3-data-sufficiency",
-      competitors: COMPETITOR_COMPARISON_VERSION,
+      ...(socialGrowthEnabled ? { social: "social-analyzer-v3-coverage" } : {}),
+      ...(localGrowthEnabled
+        ? { reviews: "review-analyzer-v3-data-sufficiency" }
+        : {}),
+      ...(competitorIntelligenceEnabled
+        ? { competitors: COMPETITOR_COMPARISON_VERSION }
+        : {}),
       scoring: SCORING_ENGINE_VERSION,
     },
   });
@@ -1175,9 +1291,6 @@ async function buildAuditData({
     analyzerVersions: {
       website: WEBSITE_ANALYZER_VERSION,
       seo: SEO_ANALYZER_VERSION,
-      social: "social-analyzer-v3-coverage",
-      reviews: "review-analyzer-v3-data-sufficiency",
-      competitors: COMPETITOR_COMPARISON_VERSION,
     },
     categoryWeights: auditResult.assessment.scoreWeights,
     applicableCategories: auditResult.assessment.applicableCategories,
@@ -1194,9 +1307,6 @@ async function buildAuditData({
     },
     selectiveAiCoverage: selectiveAiResult.snapshot.coverage,
     selectiveAiStatus: selectiveAiResult.snapshot.status,
-    competitorSnapshotIds: competitorIntelligence.snapshotIds,
-    competitorComparisonGeneratedAt: competitorIntelligence.generatedAt,
-    googleBusinessStatus: reviewAnalysis.googleBusinessStatus,
     generatedAt: new Date().toISOString(),
   };
 
@@ -1216,10 +1326,13 @@ async function buildAuditData({
           }
         : {}),
       aiAssistedAnalysis: selectiveAiResult.snapshot,
-      social: socialAnalysis,
-      reviews: reviewAnalysis,
+      ...(socialGrowthEnabled ? { social: socialAnalysis } : {}),
+      ...(localGrowthEnabled ? { reviews: reviewAnalysis } : {}),
       auditSources: {
-        includedProfiles: approvedProfiles.map((profile) => ({
+        includedProfiles: (socialGrowthEnabled || localGrowthEnabled
+          ? approvedProfiles
+          : websiteSeoProfiles
+        ).map((profile) => ({
           id: profile.id,
           platform: profile.platform,
           source: profile.source,
@@ -1232,32 +1345,42 @@ async function buildAuditData({
             (profile) => profile.status === BusinessProfileStatus.REMOVED,
           ).length,
         },
-        googleBusinessDecision: googleBusinessDecision ?? null,
+        ...(localGrowthEnabled
+          ? { googleBusinessDecision: googleBusinessDecision ?? null }
+          : {}),
       },
-      googleBusinessDiscovery,
-      competitors: competitorProfileSummary,
-      competitorIntelligence,
-      reportCompetitorComparison: {
-        generatedAt: competitorIntelligence.generatedAt,
-        sourceAuditId: auditId,
-        dependencyFingerprint: competitorComparisonDependencyFingerprint,
-        generatorVersion: COMPETITOR_COMPARISON_VERSION,
-        freshnessStatus:
-          comparison.analyzedCompetitorCount === 0
-            ? "UNAVAILABLE"
-            : comparison.staleCompetitorCount > 0 ||
-                comparison.failedCompetitorCount > 0
-              ? "PARTIAL"
-              : "CURRENT",
-      },
-      reportSocialStrategy: {
-        data: reportSocialStrategy,
-        generatedAt: new Date().toISOString(),
-        sourceAuditId: auditId,
-        dependencyFingerprint: socialStrategyDependencyFingerprint,
-        generatorVersion: SOCIAL_STRATEGY_GENERATOR_VERSION,
-        freshnessStatus: "CURRENT",
-      },
+      ...(localGrowthEnabled ? { googleBusinessDiscovery } : {}),
+      ...(competitorIntelligenceEnabled
+        ? {
+            competitors: competitorProfileSummary,
+            competitorIntelligence,
+            reportCompetitorComparison: {
+              generatedAt: competitorIntelligence.generatedAt,
+              sourceAuditId: auditId,
+              dependencyFingerprint: competitorComparisonDependencyFingerprint,
+              generatorVersion: COMPETITOR_COMPARISON_VERSION,
+              freshnessStatus:
+                comparison.analyzedCompetitorCount === 0
+                  ? "UNAVAILABLE"
+                  : comparison.staleCompetitorCount > 0 ||
+                      comparison.failedCompetitorCount > 0
+                    ? "PARTIAL"
+                    : "CURRENT",
+            },
+          }
+        : {}),
+      ...(socialGrowthEnabled && reportSocialStrategy
+        ? {
+            reportSocialStrategy: {
+              data: reportSocialStrategy,
+              generatedAt: new Date().toISOString(),
+              sourceAuditId: auditId,
+              dependencyFingerprint: socialStrategyDependencyFingerprint,
+              generatorVersion: SOCIAL_STRATEGY_GENERATOR_VERSION,
+              freshnessStatus: "CURRENT",
+            },
+          }
+        : {}),
       scoringMetadata,
       assessment: auditResult.assessment,
       normalizedFacts,

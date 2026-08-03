@@ -14,31 +14,26 @@ export const recommendationCategoryLabels: Record<ScoreCategory, string> = {
   COMPETITORS: "Competitors",
 };
 
-export const actionableCategories = [
-  ScoreCategory.WEBSITE,
-  ScoreCategory.SEO,
-  ScoreCategory.SOCIAL,
-  ScoreCategory.BRANDING,
-  ScoreCategory.COMPETITORS,
-  ScoreCategory.REVIEWS,
-];
+export const actionableCategories = [ScoreCategory.WEBSITE, ScoreCategory.SEO];
 
-export const recommendationStatusLabels: Record<RecommendationStatus, string> = {
-  TODO: "To Do",
-  IN_PROGRESS: "In Progress",
-  COMPLETED: "Completed",
-  DISMISSED: "Dismissed",
-};
+export const recommendationStatusLabels: Record<RecommendationStatus, string> =
+  {
+    TODO: "To Do",
+    IN_PROGRESS: "In Progress",
+    COMPLETED: "Completed",
+    DISMISSED: "Dismissed",
+  };
 
-export const recommendationStatusStyles: Record<RecommendationStatus, string> = {
-  TODO: "border-zinc-200 bg-zinc-50 text-zinc-800 dark:border-zinc-800 dark:bg-zinc-950/40 dark:text-zinc-100",
-  IN_PROGRESS:
-    "border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-100",
-  COMPLETED:
-    "border-teal-200 bg-teal-50 text-teal-800 dark:border-teal-900 dark:bg-teal-950/40 dark:text-teal-100",
-  DISMISSED:
-    "border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-100",
-};
+export const recommendationStatusStyles: Record<RecommendationStatus, string> =
+  {
+    TODO: "border-zinc-200 bg-zinc-50 text-zinc-800 dark:border-zinc-800 dark:bg-zinc-950/40 dark:text-zinc-100",
+    IN_PROGRESS:
+      "border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-100",
+    COMPLETED:
+      "border-teal-200 bg-teal-50 text-teal-800 dark:border-teal-900 dark:bg-teal-950/40 dark:text-teal-100",
+    DISMISSED:
+      "border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-100",
+  };
 
 export const recommendationPriorityStyles: Record<
   RecommendationPriority,
@@ -129,7 +124,8 @@ export function progressForRecommendations(
 ) {
   const total = recommendations.length;
   const completed = recommendations.filter(
-    (recommendation) => recommendation.status === RecommendationStatus.COMPLETED,
+    (recommendation) =>
+      recommendation.status === RecommendationStatus.COMPLETED,
   ).length;
 
   return {
@@ -181,38 +177,45 @@ export function buildThirtyDayPlan<T extends PlanRecommendation>(
       recommendation.category === ScoreCategory.SEO,
   );
   const week3 = pick(
-    (recommendation) => recommendation.category === ScoreCategory.SOCIAL,
+    (recommendation) =>
+      recommendation.category === ScoreCategory.WEBSITE &&
+      /content|copy|headline|call.to.action|cta|navigation|conversion/i.test(
+        `${recommendation.title} ${recommendation.description}`,
+      ),
   );
   const week4 = pick(
     (recommendation) =>
-      recommendation.category === ScoreCategory.COMPETITORS ||
-      recommendation.category === ScoreCategory.BRANDING ||
-      recommendation.category === ScoreCategory.REVIEWS,
+      recommendation.category === ScoreCategory.WEBSITE ||
+      recommendation.category === ScoreCategory.SEO,
   );
 
   return [
     {
       week: "Week 1",
       title: "Quick wins",
-      description: "Low effort, high impact recommendations to create early momentum.",
+      description:
+        "Low effort, high impact recommendations to create early momentum.",
       items: week1.length > 0 ? week1 : fallback(),
     },
     {
       week: "Week 2",
       title: "Website and SEO fundamentals",
-      description: "Improve homepage clarity, conversion paths, and search basics.",
+      description:
+        "Improve homepage clarity, conversion paths, and search basics.",
       items: week2.length > 0 ? week2 : fallback(),
     },
     {
       week: "Week 3",
-      title: "Social and content improvements",
-      description: "Strengthen the channels and content rhythm customers see most often.",
+      title: "Content and conversion improvements",
+      description:
+        "Improve page clarity, calls to action, trust, and customer paths.",
       items: week3.length > 0 ? week3 : fallback(),
     },
     {
       week: "Week 4",
-      title: "Competitors, branding, and review",
-      description: "Sharpen positioning, consistency, and the next audit loop.",
+      title: "Verification and follow-up",
+      description:
+        "Finish remaining website and SEO work, then prepare to verify changes.",
       items: week4.length > 0 ? week4 : fallback(),
     },
   ];

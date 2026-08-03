@@ -20,7 +20,10 @@ export function MarketingHeader() {
       <div className="mx-auto flex h-16 w-full max-w-7xl items-center gap-2 px-4 sm:gap-3 sm:px-6 lg:px-8">
         <BrandMark className="mr-auto" />
 
-        <nav aria-label="Primary navigation" className="hidden items-center gap-1 lg:flex">
+        <nav
+          aria-label="Primary navigation"
+          className="hidden items-center gap-1 lg:flex"
+        >
           {primaryLinks.map((link) => (
             <Link key={link.href} href={link.href} className={navLinkClass}>
               {link.label}
@@ -39,7 +42,7 @@ export function MarketingHeader() {
           data-marketing-cta="header"
           className="inline-flex h-9 shrink-0 items-center justify-center whitespace-nowrap rounded-lg bg-teal-300 px-3 text-sm font-semibold text-[#052b27] transition-colors hover:bg-teal-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white sm:px-4"
         >
-          Start Free Audit
+          Run Website Audit
         </Link>
 
         <details className="marketing-menu relative shrink-0 lg:hidden">
@@ -52,7 +55,11 @@ export function MarketingHeader() {
             className="absolute right-0 top-12 w-72 rounded-lg border border-white/15 bg-[#0d1718] p-2 shadow-2xl shadow-black/40"
           >
             {primaryLinks.map((link) => (
-              <Link key={link.href} href={link.href} className={`flex ${navLinkClass}`}>
+              <Link
+                key={link.href}
+                href={link.href}
+                className={`flex ${navLinkClass}`}
+              >
                 {link.label}
               </Link>
             ))}

@@ -9,7 +9,9 @@ test("presentation copy stays concise, client-facing, and evidence-based", () =>
   const deck = buildPresentationViewModel(createReportFixture("hospitality"));
   const clientCopy = clientFacingCopy(deck);
 
-  assert.equal(deck.socialStrategy.sourceLabel, "Evidence-based strategy");
+  assert.equal(deck.productScope, "website_seo");
+  assert.equal(deck.scoreLabel, "Website Growth Score");
+  assert.equal(deck.socialStrategy.sourceLabel, "Not part of this report");
   assert.doesNotMatch(clientCopy, /deterministic fallback/i);
   assert.doesNotMatch(
     clientCopy,
@@ -19,14 +21,24 @@ test("presentation copy stays concise, client-facing, and evidence-based", () =>
   assert.ok(deck.summary.attention.length <= 4);
   assert.ok(deck.summary.startHere.length <= 3);
   assert.ok(
-    [...deck.summary.working, ...deck.summary.attention, ...deck.summary.startHere].every(
-      (item) => item.length <= 180,
+    [
+      ...deck.summary.working,
+      ...deck.summary.attention,
+      ...deck.summary.startHere,
+    ].every((item) => item.length <= 180),
+  );
+  assert.ok(
+    deck.socialStrategy.contentIdeas.every((item) =>
+      item.callToAction.startsWith("CTA: "),
     ),
   );
-  assert.ok(deck.socialStrategy.contentIdeas.every((item) => item.callToAction.startsWith("CTA: ")));
   assert.doesNotMatch(clientCopy, /build relevant trust and attention/i);
   assert.ok(deck.actionPlan.every((week) => week.bullets.length <= 3));
-  assert.ok(deck.actionPlan.every((week) => week.bullets.every((item) => !item.includes(" | "))));
+  assert.ok(
+    deck.actionPlan.every((week) =>
+      week.bullets.every((item) => !item.includes(" | ")),
+    ),
+  );
   assert.doesNotMatch(clientCopy, /\.{3}|\u2026/);
 });
 
@@ -37,7 +49,11 @@ test("SEO warning states never use positive semantics", () => {
   );
 
   assert.ok(warnings.length > 0);
-  assert.ok(warnings.every((item) => item.tone === "warning" || item.tone === "critical"));
+  assert.ok(
+    warnings.every(
+      (item) => item.tone === "warning" || item.tone === "critical",
+    ),
+  );
   assert.ok(
     deck.seo.checks
       .filter((item) => item.tone === "positive")
@@ -45,38 +61,42 @@ test("SEO warning states never use positive semantics", () => {
   );
 });
 
-test("social profile labels keep confirmed channels explicit", () => {
+test("focused presentation data does not carry social profile evidence", () => {
   const deck = buildPresentationViewModel(createReportFixture("hospitality"));
 
-  assert.equal(typeof deck.social.confirmedCount, "number");
-  assert.ok(deck.social.confirmedPlatforms.length > 0);
-  assert.doesNotMatch(
-    `${deck.social.confirmedCount} confirmed social profiles`,
-    /\d+\s*\/\s*\d+/,
-  );
+  assert.equal(deck.social.confirmedCount, 0);
+  assert.deepEqual(deck.social.confirmedPlatforms, []);
+  assert.equal(deck.socialStrategy.available, false);
 });
 
-test("competitor presentation preserves comparability and public-evidence limits", () => {
+test("focused presentation data omits competitor comparisons", () => {
   const deck = buildPresentationViewModel(createReportFixture("hospitality"));
-  const reviews = deck.competitor.rows.find((item) => item.area === "Reviews");
-  const social = deck.competitor.rows.find((item) => item.area === "Social");
-
-  assert.equal(reviews?.result, "Not comparable");
-  assert.match(social?.businessValue ?? "", /confirmed/i);
-  assert.doesNotMatch(deck.competitor.limitationsNote, /engagement rate|performance score/i);
-  assert.match(deck.competitor.limitationsNote, /No private analytics, engagement, or post performance/i);
+  assert.equal(deck.competitor.available, false);
+  assert.equal(deck.competitor.competitorName, null);
+  assert.deepEqual(deck.competitor.rows, []);
+  assert.deepEqual(deck.competitor.opportunities, []);
 });
 
 test("consultant prompts demonstrate implementation and adapt to social-only audits", () => {
-  const websiteDeck = buildPresentationViewModel(createReportFixture("hospitality"));
-  const socialDeck = buildPresentationViewModel(createReportFixture("social_only"));
+  const websiteDeck = buildPresentationViewModel(
+    createReportFixture("hospitality"),
+  );
+  const socialDeck = buildPresentationViewModel(
+    createReportFixture("social_only"),
+  );
   const websitePrompts = websiteDeck.consultant.prompts.join(" ");
   const socialPrompts = socialDeck.consultant.prompts.join(" ");
 
   assert.match(websitePrompts, /draft|create|implementation/i);
-  assert.doesNotMatch(websitePrompts, /who is my target audience|do i need a google business/i);
+  assert.doesNotMatch(
+    websitePrompts,
+    /who is my target audience|do i need a google business/i,
+  );
   assert.doesNotMatch(socialPrompts, /homepage H1|homepage meta description/i);
-  assert.match(socialPrompts, /profile highlight|social content plan|implementation/i);
+  assert.match(
+    socialPrompts,
+    /profile highlight|social content plan|implementation/i,
+  );
 });
 
 test("presentation shell uses a fixed dynamic viewport and restores document overflow", async () => {
@@ -104,6 +124,10 @@ test("presentation shell uses a fixed dynamic viewport and restores document ove
   assert.match(deckSource, /Shift|shiftKey/);
   assert.match(deckSource, /requestFullscreen/);
   assert.match(deckSource, /onTouchStart/);
+  assert.match(deckSource, /disabledSlideIds/);
+  assert.match(deckSource, /"reviews"/);
+  assert.match(deckSource, /"social-strategy"/);
+  assert.match(deckSource, /"competitor-comparison"/);
   assert.match(primitivesSource, /ResizeObserver/);
   assert.match(primitivesSource, /data-slide-overflow/);
 });

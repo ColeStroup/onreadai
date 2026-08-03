@@ -20,7 +20,8 @@ import { encode } from "next-auth/jwt";
 import { createReportFixture } from "../src/lib/reports/report-fixtures.test-support";
 
 const databaseUrl = process.env.PRODUCTION_FLOW_TEST_DATABASE_URL;
-if (!databaseUrl) throw new Error("Production flow test database is unavailable.");
+if (!databaseUrl)
+  throw new Error("Production flow test database is unavailable.");
 
 const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString: databaseUrl }),
@@ -38,7 +39,8 @@ let sessionToken = "";
 
 test.beforeAll(async () => {
   const secret = process.env.NEXTAUTH_SECRET;
-  if (!secret) throw new Error("NEXTAUTH_SECRET is required for browser tests.");
+  if (!secret)
+    throw new Error("NEXTAUTH_SECRET is required for browser tests.");
 
   const admin = await prisma.user.create({
     data: {
@@ -134,8 +136,7 @@ test.beforeAll(async () => {
         businessId,
         platform: ProfilePlatform.GOOGLE_BUSINESS,
         url: "https://maps.google.com/?cid=audit-quality-fixture",
-        normalizedUrl:
-          "https://maps.google.com/?cid=audit-quality-fixture",
+        normalizedUrl: "https://maps.google.com/?cid=audit-quality-fixture",
         confidenceScore: 96,
         status: BusinessProfileStatus.CONFIRMED,
         source: BusinessProfileSource.DISCOVERED,
@@ -185,8 +186,8 @@ test.beforeAll(async () => {
     },
   });
 
-  const canonicalRecommendations =
-    reportFixture.recommendations.all.map((recommendation, index) => ({
+  const canonicalRecommendations = reportFixture.recommendations.all.map(
+    (recommendation, index) => ({
       issueKey: `audit-quality:${index}:${recommendation.title
         .toLowerCase()
         .replaceAll(/[^a-z0-9]+/g, "-")}`,
@@ -196,9 +197,7 @@ test.beforeAll(async () => {
       sourceFindingId: null,
       sourceFindingIds: [],
       sourceEvidenceIds: [],
-      affectedUrls: recommendation.sourceUrl
-        ? [recommendation.sourceUrl]
-        : [],
+      affectedUrls: recommendation.sourceUrl ? [recommendation.sourceUrl] : [],
       sourceTypes: ["deterministic"],
       findingType: recommendation.technical
         ? ("VERIFIED_TECHNICAL_ISSUE" as const)
@@ -221,7 +220,8 @@ test.beforeAll(async () => {
       priority: recommendation.priority,
       estimatedEffort: recommendation.estimatedEffort,
       expectedImpact: recommendation.expectedImpact,
-    }));
+    }),
+  );
 
   const analysisSnapshot = jsonValue({
     website: reportFixture.website,
@@ -342,10 +342,10 @@ test("cottage-food dashboard and PDF preserve one normalized evidence set", asyn
   });
 
   await expect(
-    page.getByRole("heading", { name: "Your decision-ready report" }),
+    page.getByRole("heading", { name: "Your website growth priorities" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Your next three moves" }),
+    page.getByRole("heading", { name: "Next two actions" }),
   ).toBeVisible();
   await expect(
     page.getByRole("heading", {
@@ -358,16 +358,14 @@ test("cottage-food dashboard and PDF preserve one normalized evidence set", asyn
     }),
   ).toHaveCount(1);
 
-  const confirmedMetric = page.getByText("User-confirmed", {
-    exact: true,
-  }).locator("..");
-  const detectedMetric = page.getByText("Publicly detected", {
-    exact: true,
-  }).locator("..");
-  await expect(confirmedMetric).toContainText("1");
-  await expect(detectedMetric).toContainText("3");
-  await expect(detectedMetric).toContainText("0 content-analyzed");
-  await expect(page.getByText("Limited evidence", { exact: true })).toBeVisible();
+  await expect(
+    page.locator('[aria-label^="Website Growth Score "]'),
+  ).toBeVisible();
+  await expect(page.getByText("Social Score", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Reviews Score", { exact: true })).toHaveCount(0);
+  await expect(
+    page.getByText("Competitor Intelligence", { exact: true }),
+  ).toHaveCount(0);
 
   const accessibility = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
@@ -377,14 +375,15 @@ test("cottage-food dashboard and PDF preserve one normalized evidence set", asyn
   await page.goto(`/dashboard/businesses/${businessId}/website`, {
     waitUntil: "networkidle",
   });
-  await page
-    .getByRole("button", { name: /Technical diagnostics/i })
-    .click();
+  await page.getByRole("button", { name: /Technical diagnostics/i }).click();
   await expect(page.getByText(/Homepage H1:\s*PIE POCKETS/)).toBeVisible();
 
   await page.goto(`/dashboard/businesses/${businessId}/action-plan`, {
     waitUntil: "networkidle",
   });
+  const allActions = page.getByRole("button", { name: /All actions/i });
+  await allActions.click();
+  await expect(allActions).toHaveAttribute("aria-expanded", "true");
   await expect(
     page.getByRole("heading", {
       name: "Add a clear main headline to Menu",
@@ -394,24 +393,27 @@ test("cottage-food dashboard and PDF preserve one normalized evidence set", asyn
     page.getByText(/Add a clear main headline to (?:the )?homepage/i),
   ).toHaveCount(0);
   await expect(
-    page.getByRole("heading", {
-      name: "Correct visible copy errors across key customer pages",
-    }).first(),
-  ).toBeVisible();
+    page
+      .getByRole("heading", {
+        name: "Correct visible copy errors across key customer pages",
+      })
+      .first(),
+  ).toHaveCount(0);
   await expect(
     page.getByRole("heading", { name: "Resolve the thin FAQ page" }).first(),
   ).toBeVisible();
   await expect(
-    page.getByRole("heading", {
-      name: "Differentiate near-duplicate product pages",
-    }).first(),
+    page
+      .getByRole("heading", {
+        name: "Differentiate near-duplicate product pages",
+      })
+      .first(),
   ).toBeVisible();
 
   for (const title of [
     "Make ordering the clear primary action",
     "Write descriptive metadata for the homepage and menu",
     "Add a clear main headline to Menu",
-    "Correct visible copy errors across key customer pages",
     "Resolve the thin FAQ page",
     "Differentiate near-duplicate product pages",
   ]) {
@@ -421,17 +423,24 @@ test("cottage-food dashboard and PDF preserve one normalized evidence set", asyn
       }),
     ).toBe(1);
   }
+  expect(
+    await prisma.recommendation.count({
+      where: {
+        businessId,
+        auditId,
+        title: "Correct visible copy errors across key customer pages",
+      },
+    }),
+  ).toBe(0);
 
   await page.goto(`/dashboard/businesses/${businessId}/social?view=strategy`, {
     waitUntil: "networkidle",
   });
   await expect(
-    page.getByText(/Products, flavors, and seasonal releases/i).first(),
+    page.getByRole("heading", {
+      name: "Social Growth is not part of the launch product",
+    }),
   ).toBeVisible();
-  const strategyText = (await page.locator("main").textContent()) ?? "";
-  expect(strategyText).not.toMatch(
-    /\b(?:dine in|guest atmosphere|guest experience|check directions)\b/i,
-  );
 
   await page.goto(`/dashboard/businesses/${businessId}/overview`, {
     waitUntil: "networkidle",
@@ -453,10 +462,14 @@ test("cottage-food dashboard and PDF preserve one normalized evidence set", asyn
   expect(pdfText).toMatch(
     /Measured H1 count: 0 on https:\/\/\s*sunrise-pocket\.example\/menu\./,
   );
-  expect(pdfText).toMatch(/User-confirmed social profiles\s+1/);
-  expect(pdfText).toMatch(/Publicly detected social profiles\s+3/);
-  expect(pdfText).toMatch(/Profile content analyzed\s+0/);
-  expect(pdfText).toMatch(/rating and review count are unavailable/i);
+  expect(pdfText).toContain("Website Growth Score");
+  expect(pdfText).not.toMatch(/User-confirmed social profiles/i);
+  expect(pdfText).not.toMatch(/Publicly detected social profiles/i);
+  expect(pdfText).not.toMatch(/Profile content analyzed/i);
+  expect(pdfText).not.toMatch(/rating and review count/i);
+  expect(pdfText).not.toContain(
+    "Correct visible copy errors across key customer pages",
+  );
   expect(pdfText).toContain("Make ordering the clear primary action");
   expect(pdfText).toContain(
     "Write descriptive metadata for the homepage and menu",

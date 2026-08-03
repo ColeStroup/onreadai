@@ -36,129 +36,166 @@ type NavigationGroup = {
   auditRoute?: boolean;
 };
 
-const groups: NavigationGroup[] = [
-  {
-    label: "Overview",
-    pages: [
-      {
-        label: "Overview",
-        segment: "overview",
-        icon: LayoutDashboard,
-        description: "Status and next actions",
-      },
-    ],
-  },
-  {
-    label: "Setup",
-    pages: [
-      {
-        label: "Guided setup",
-        segment: "setup",
-        icon: ClipboardCheck,
-        description: "Complete the essential business information",
-      },
-      {
-        label: "Profiles",
-        segment: "confirm",
-        icon: SearchCheck,
-        description: "Confirm public profiles and sources",
-      },
-      {
-        label: "Context",
-        segment: "context",
-        icon: BookOpenText,
-        description: "Describe the business, audience, and offer",
-      },
-      {
-        label: "Goals",
-        segment: "goals",
-        icon: Target,
-        description: "Choose the outcomes recommendations should prioritize",
-      },
-    ],
-  },
-  {
-    label: "Audit",
-    auditRoute: true,
-    pages: [
-      {
-        label: "Findings",
-        segment: "audit",
-        icon: FileSearch,
-        description: "Review all findings and supporting evidence",
-      },
-      {
-        label: "Website",
-        segment: "website",
-        icon: Globe2,
-        description: "Website clarity, pages, and conversion paths",
-      },
-      {
-        label: "SEO",
-        segment: "seo",
-        icon: Search,
-        description: "Search visibility and technical basics",
-      },
-      {
-        label: "Reviews",
-        segment: "reviews",
-        icon: Star,
-        description: "Review presence and customer trust signals",
-      },
-    ],
-  },
-  {
-    label: "Growth",
-    pages: [
-      {
-        label: "Social",
-        segment: "social",
-        icon: Share2,
-        description: "Channel coverage, strategy, and content direction",
-      },
-      {
-        label: "Competitors",
-        segment: "competitors",
-        icon: Swords,
-        description: "Public comparisons and supported opportunities",
-      },
-    ],
-  },
-  {
-    label: "Plan",
-    pages: [
-      {
-        label: "Action Plan",
-        segment: "action-plan",
-        icon: ListChecks,
-        description: "Tasks and implementation",
-      },
-      {
-        label: "History",
-        segment: "history",
-        icon: History,
-        description: "Previous audits and comparable progress",
-      },
-    ],
-  },
-  {
-    label: "Consultant",
-    pages: [
-      {
-        label: "AI Chat",
-        segment: "chat",
-        icon: MessageSquareText,
-        description: "Ask questions about your saved results",
-      },
-    ],
-  },
-];
+type EnabledModules = {
+  social: boolean;
+  competitors: boolean;
+  local: boolean;
+};
+
+function navigationGroups(enabled: EnabledModules): NavigationGroup[] {
+  const groups: NavigationGroup[] = [
+    {
+      label: "Overview",
+      pages: [
+        {
+          label: "Overview",
+          segment: "overview",
+          icon: LayoutDashboard,
+          description: "See your current website health and next priority",
+        },
+      ],
+    },
+    {
+      label: "Setup",
+      pages: [
+        {
+          label: "Guided setup",
+          segment: "setup",
+          icon: ClipboardCheck,
+          description: "Confirm your website and essential business context",
+        },
+        {
+          label: "Website source",
+          segment: "confirm",
+          icon: SearchCheck,
+          description: "Confirm the public website Onread should analyze",
+        },
+        {
+          label: "Context",
+          segment: "context",
+          icon: BookOpenText,
+          description: "Describe your audience, offer, and conversion goal",
+        },
+        {
+          label: "Goals",
+          segment: "goals",
+          icon: Target,
+          description:
+            "Choose the outcomes website recommendations should prioritize",
+        },
+      ],
+    },
+    {
+      label: "Audit",
+      auditRoute: true,
+      pages: [
+        {
+          label: "Findings",
+          segment: "audit",
+          icon: FileSearch,
+          description: "Review website and SEO findings with evidence",
+        },
+        {
+          label: "Website",
+          segment: "website",
+          icon: Globe2,
+          description: "Website clarity, pages, and conversion paths",
+        },
+        {
+          label: "SEO",
+          segment: "seo",
+          icon: Search,
+          description: "Search visibility and technical basics",
+        },
+      ],
+    },
+    {
+      label: "Plan",
+      pages: [
+        {
+          label: "Action Plan",
+          segment: "action-plan",
+          icon: ListChecks,
+          description: "Tasks and implementation",
+        },
+      ],
+    },
+    {
+      label: "Consultant",
+      pages: [
+        {
+          label: "Website & SEO Consultant",
+          segment: "chat",
+          icon: MessageSquareText,
+          description:
+            "Get help understanding and implementing recommendations",
+        },
+      ],
+    },
+    {
+      label: "Progress",
+      pages: [
+        {
+          label: "Progress",
+          segment: "history",
+          icon: History,
+          description: "Compare audits and verify improvements",
+        },
+      ],
+    },
+  ];
+
+  const futurePages: NavigationPage[] = [
+    ...(enabled.social
+      ? [
+          {
+            label: "Social",
+            segment: "social",
+            icon: Share2,
+            description: "Connected social growth",
+          },
+        ]
+      : []),
+    ...(enabled.local
+      ? [
+          {
+            label: "Local",
+            segment: "reviews",
+            icon: Star,
+            description: "Connected local growth",
+          },
+        ]
+      : []),
+    ...(enabled.competitors
+      ? [
+          {
+            label: "Competitors",
+            segment: "competitors",
+            icon: Swords,
+            description: "Competitive intelligence",
+          },
+        ]
+      : []),
+  ];
+  if (futurePages.length > 0) {
+    groups.splice(3, 0, { label: "Growth", pages: futurePages });
+  }
+
+  return groups;
+}
 
 function pageHref(businessId: string, segment: string) {
   return `/dashboard/businesses/${businessId}/${segment}`;
 }
 
-export function BusinessSubNavigation({ businessId }: { businessId: string }) {
+export function BusinessSubNavigation({
+  businessId,
+  enabledModules,
+}: {
+  businessId: string;
+  enabledModules: EnabledModules;
+}) {
+  const groups = navigationGroups(enabledModules);
   const pathname = usePathname();
   const router = useRouter();
   const [openGroup, setOpenGroup] = useState<string | null>(null);

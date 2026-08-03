@@ -4,40 +4,32 @@ import {
   FileText,
   Globe2,
   ListChecks,
-  MessageSquareText,
   Presentation,
   SearchCheck,
   ShieldCheck,
   Sparkles,
-  Star,
-  Users,
 } from "lucide-react";
 
 export const marketingFaqs = [
   {
     question: "What does the audit analyze?",
     answer:
-      "The audit can review a confirmed website, multi-page structure, technical SEO basics, review and trust presence, confirmed social profiles, Business Context, goals, and available public competitor evidence. The exact report depends on the information you provide and what the platform can verify.",
+      "Onread crawls your public website and checks website experience, conversion paths, content clarity, important-page coverage, and SEO foundations such as titles, descriptions, headings, internal links, indexability, canonicals, robots.txt, and sitemap.xml.",
   },
   {
     question: "Do I need a website?",
     answer:
-      "No. A business can complete setup with meaningful confirmed social profiles. Website and SEO are then marked not provided rather than scored as failures, and the assessment focuses on social presence, branding, trust, goals, competitors, and conversion paths.",
+      "Yes. The launch product is built specifically for website and SEO improvement, so a public website is required to run an audit.",
   },
   {
-    question: "Can I use it for a social-first business?",
+    question: "How many pages does Onread check?",
     answer:
-      "Yes. Creators, coaches, local operators, restaurants, consultants, and other social-first businesses can confirm their profiles and Business Context to receive platform, content, trust, and conversion guidance without supplying a traditional website.",
+      "The crawl limit depends on your plan. Onread starts with the homepage, prioritizes important pages, and records which URLs were analyzed, skipped, or unavailable so the report's coverage is clear.",
   },
   {
-    question: "Does it analyze individual social posts?",
+    question: "What does the Website Growth Score mean?",
     answer:
-      "Not currently. Social analysis uses confirmed profile coverage, platform mix, Business Context, goals, and public competitor coverage. It does not claim to measure private engagement, posting frequency, reach, or individual post performance.",
-  },
-  {
-    question: "How does competitor analysis work?",
-    answer:
-      "Competitor Intelligence compares timestamped public website, SEO, profile, review, and observable positioning evidence when available. Missing competitor data remains unavailable and is not treated as proof that a competitor is weak.",
+      "It is an explainable summary of the Website and SEO evidence Onread could verify. Website contributes 55% and SEO contributes 45%. Missing or unavailable evidence is disclosed rather than silently treated as a confirmed defect.",
   },
   {
     question: "Does the app change my website?",
@@ -47,7 +39,7 @@ export const marketingFaqs = [
   {
     question: "What does Implementation Help generate?",
     answer:
-      "Depending on the recommendation, it can draft headlines, meta descriptions, CTA structures, review-request templates, social post concepts, profile copy, and ordered implementation steps using saved Business Context and audit evidence.",
+      "Depending on the recommendation, it can draft headlines, page titles, meta descriptions, calls to action, page structures, and ordered implementation steps using saved Business Context and audit evidence.",
   },
   {
     question: "Can consultants use it for clients?",
@@ -57,12 +49,12 @@ export const marketingFaqs = [
   {
     question: "How do repeat audits measure progress?",
     answer:
-      "The latest completed audit is compared with the previous completed audit for the same business. The report identifies score changes, improved or declined categories, new or resolved findings, and recommendation progress while disclosing methodology or data-coverage changes.",
+      "The latest completed audit is compared with the previous compatible audit for the same website. Onread identifies score changes, new or resolved findings, and recommendation progress while clearly disclosing methodology or coverage changes.",
   },
   {
     question: "What happens when information is unavailable?",
     answer:
-      "Unavailable or unconfirmed information is labeled clearly. Categories that cannot be assessed may be excluded from the applicable overall score instead of automatically receiving a zero.",
+      "Unavailable pages and checks are labeled clearly. Onread separates verified issues, AI-reviewed opportunities, strengths, coverage notes, and limitations instead of treating every observation as a problem.",
   },
   {
     question: "Is a credit card required for the free audit?",
@@ -78,66 +70,70 @@ export const marketingFaqs = [
 
 export const howItWorks = [
   {
-    title: "Add your business",
+    title: "Add your website",
     description:
-      "Start with a website, public profile, or business name. The platform discovers relevant public signals for you to review.",
+      "Enter your business name and public website URL. No social profiles or competitor setup is required.",
     icon: Globe2,
   },
   {
-    title: "Confirm the context",
+    title: "Run the audit",
     description:
-      "Check the audience, offer, goals, profiles, and conversion path so the assessment reflects how the business actually works.",
+      "Onread crawls important pages and checks website experience, content, conversion paths, and SEO foundations.",
     icon: SearchCheck,
   },
   {
-    title: "See what deserves attention",
+    title: "See what to fix first",
     description:
-      "Review evidence-backed findings, applicable scores, public competitor comparisons, and a prioritized Action Plan.",
+      "Review evidence-backed findings and a prioritized Action Plan tied to affected pages and expected impact.",
     icon: BarChart3,
   },
   {
-    title: "Put the fixes into action",
+    title: "Make the improvements",
     description:
-      "Generate practical drafts and implementation steps, track recommendation status, and rerun the audit to compare progress.",
+      "Use implementation guidance and the Website & SEO Consultant to turn recommendations into finished work.",
     icon: Sparkles,
+  },
+  {
+    title: "Verify the results",
+    description:
+      "Run another audit to see what was fixed, what remains, and how compatible evidence changed.",
+    icon: ShieldCheck,
   },
 ] as const;
 
 export const analysisCategories = [
   {
-    title: "Website and conversion",
+    title: "Website experience",
     description:
-      "Page structure, important pages, visitor actions, headline clarity, contact paths, images, and conversion signals.",
-    points: ["Controlled multi-page crawl", "CTA and action-path clarity", "Important-page coverage"],
+      "Messaging, navigation, calls to action, trust elements, content clarity, and customer conversion paths.",
+    points: [
+      "Controlled multi-page crawl",
+      "CTA and conversion clarity",
+      "Important-page coverage",
+    ],
     icon: Globe2,
   },
   {
     title: "SEO",
     description:
-      "Titles, descriptions, headings, canonicals, robots.txt, sitemap.xml, and structural signals across scanned pages.",
-    points: ["Homepage SEO basics", "Multi-page metadata coverage", "Indexability signals"],
+      "Titles, descriptions, headings, internal links, canonicals, robots.txt, sitemap.xml, and indexability signals.",
+    points: [
+      "Page-level metadata",
+      "Heading and linking structure",
+      "Search accessibility",
+    ],
     icon: SearchCheck,
   },
   {
-    title: "Reviews and trust",
+    title: "Technical and content quality",
     description:
-      "Confirmed Google Business information, public review coverage, customer-proof signals, and trust opportunities.",
-    points: ["Listing confirmation status", "Available rating evidence", "Customer-proof opportunities"],
-    icon: Star,
-  },
-  {
-    title: "Social presence",
-    description:
-      "Confirmed profile coverage, channel suitability, content pillars, and the path from attention to a useful action.",
-    points: ["Platform coverage", "Social-first conversion guidance", "Context-led content direction"],
-    icon: MessageSquareText,
-  },
-  {
-    title: "Competitor Intelligence",
-    description:
-      "Public website and SEO comparison, confirmed or detected profiles, available reviews, and observable positioning.",
-    points: ["Timestamped public snapshots", "Side-by-side evidence", "Clearly labeled limitations"],
-    icon: Users,
+      "Broken links, thin or duplicate pages, image accessibility, page purpose, and important technical gaps.",
+    points: [
+      "Broken and inaccessible pages",
+      "Thin and duplicate content",
+      "Accessibility basics",
+    ],
+    icon: ShieldCheck,
   },
 ] as const;
 
@@ -151,13 +147,13 @@ export const userOutcomes = [
   {
     title: "Implementation Help",
     description:
-      "Create usable headlines, metadata, CTA structures, review templates, social ideas, and ordered fix instructions.",
+      "Create usable headlines, metadata, CTA structures, page outlines, and ordered fix instructions.",
     icon: Sparkles,
   },
   {
     title: "AI Consultant",
     description:
-      "Ask questions using the context of your business, audit, reviews, competitors, goals, and saved recommendations.",
+      "Ask questions using your website evidence, SEO findings, business context, goals, and saved recommendations.",
     icon: Bot,
   },
   {
@@ -175,49 +171,54 @@ export const userOutcomes = [
 ] as const;
 
 export const businessArchetypes = [
-  "Restaurant and hospitality",
-  "Local service business",
-  "Consultant or agency",
-  "Creator or personal brand",
-  "Podcast or media brand",
-  "Ecommerce or product business",
-  "SaaS or software",
-  "Community or nonprofit",
+  "Local service websites",
+  "Restaurant and hospitality websites",
+  "Consultant and agency websites",
+  "Ecommerce and product websites",
+  "SaaS and software websites",
+  "Creator and portfolio websites",
+  "Community and nonprofit websites",
+  "Multi-location business websites",
 ] as const;
 
 export const deliverables = [
   {
-    title: "Next 3 Moves",
-    description: "The most important actions, supported by current findings.",
+    title: "Top three actions",
+    description:
+      "The most important website and SEO improvements, supported by evidence.",
     icon: ListChecks,
   },
   {
-    title: "Competitor comparison",
-    description: "A public-evidence view of where each business appears stronger.",
-    icon: Users,
+    title: "Evidence-backed report",
+    description:
+      "Affected pages, observed evidence, limitations, and verification guidance.",
+    icon: SearchCheck,
   },
   {
     title: "Implementation drafts",
-    description: "Ready-to-review copy and practical steps tied to recommendations.",
+    description:
+      "Ready-to-review copy and practical steps tied to recommendations.",
     icon: Sparkles,
   },
   {
     title: "AI Consultant",
-    description: "Business-aware explanations and prioritization without inventing findings.",
+    description:
+      "Business-aware explanations and prioritization without inventing findings.",
     icon: Bot,
   },
   {
     title: "PDF and Presentation",
-    description: "Two professional formats for sharing and discussing the assessment.",
+    description:
+      "Two professional formats for sharing and discussing the assessment.",
     icon: FileText,
   },
 ] as const;
 
 export const trustPrinciples = [
   "Observed data is separated from interpretation.",
-  "Missing information remains unavailable instead of becoming a failure.",
-  "Confirmed and detected profiles are labeled separately.",
-  "Competitor reviews are compared only when both sides have evidence.",
+  "Unavailable pages and checks remain limitations instead of becoming failures.",
+  "Verified strengths are not presented as issues.",
+  "AI-reviewed opportunities are distinct from deterministic technical findings.",
   "Uncertain conclusions include confidence and limitations.",
   "Action Plan tasks connect back to findings and supporting evidence.",
 ] as const;
@@ -225,10 +226,8 @@ export const trustPrinciples = [
 export const unsupportedMarketingClaims = [
   "guaranteed growth",
   "guaranteed revenue",
-  "private competitor analytics",
-  "individual social post performance",
   "automatic website editing",
-  "automatic social publishing",
+  "private analytics without a connected data source",
 ] as const;
 
 export const trustIcon = ShieldCheck;

@@ -1,6 +1,5 @@
 import {
   AuditStatus,
-  CompetitorStatus,
   RecommendationStatus,
   ScoreCategory,
 } from "@prisma/client";
@@ -23,6 +22,7 @@ import {
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { CustomerEventImpression } from "@/components/analytics/customer-event-impression";
 import { ContextualHelpCard } from "@/components/dashboard/contextual-help-card";
 import { DisclosureSection } from "@/components/dashboard/disclosure-section";
 import { EmptyState } from "@/components/dashboard/empty-state";
@@ -37,10 +37,7 @@ import {
 import { SetupChecklist } from "@/components/onboarding/setup-checklist";
 import { buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import {
-  categoryLabel,
-  formatDelta,
-} from "@/lib/audits/audit-comparison";
+import { categoryLabel, formatDelta } from "@/lib/audits/audit-comparison";
 import { findingTypeLabels } from "@/lib/audits/finding-taxonomy";
 import {
   canUsePdfExport,
@@ -49,6 +46,7 @@ import {
 } from "@/lib/billing/entitlements";
 import {
   compactCoverageSummary,
+  compactWebsiteSeoCoverageSummary,
   plainCoverageLabel,
   plainHealthLabel,
   plainScoreInterpretation,
@@ -56,10 +54,7 @@ import {
   summarizeFindingTypes,
 } from "@/lib/customer-experience/overview";
 import { contextualHelp } from "@/lib/education/help-content";
-import {
-  businessGoalLabels,
-  getSuggestedQuestionsForGoals,
-} from "@/lib/goals";
+import { businessGoalLabels, getSuggestedQuestionsForGoals } from "@/lib/goals";
 import { deriveBusinessSetupProgress } from "@/lib/onboarding/business-setup";
 import { prisma } from "@/lib/prisma";
 import {
@@ -94,10 +89,10 @@ const overviewCategories = [
   ScoreCategory.COMPETITORS,
 ] as const;
 
-function ScoreRing({ score }: { score: number }) {
+function ScoreRing({ score, label }: { score: number; label: string }) {
   return (
     <div
-      aria-label={`Overall score ${score} out of 100`}
+      aria-label={`${label} ${score} out of 100`}
       className="flex size-32 shrink-0 items-center justify-center rounded-full"
       style={{
         background: `conic-gradient(var(--accent) ${score * 3.6}deg, color-mix(in srgb, var(--border) 78%, transparent) 0deg)`,
@@ -131,24 +126,20 @@ function sourcePageLabel(sourceUrl: string | null | undefined) {
   }
 }
 
-function scoreDisplay(
-  item: {
-    score: number | null;
-    status:
-      | "scored"
-      | "not_provided"
-      | "not_applicable"
-      | "not_configured"
-      | "saved_not_analyzed"
-      | "partial";
-  },
-  hasCompetitors: boolean,
-) {
+function scoreDisplay(item: {
+  score: number | null;
+  status:
+    | "scored"
+    | "not_provided"
+    | "not_applicable"
+    | "not_configured"
+    | "saved_not_analyzed"
+    | "partial";
+}) {
   if (item.status === "not_provided") return "Not provided";
   if (item.status === "not_applicable") return "Not applicable";
   if (item.status === "not_configured") return "Not configured";
   if (item.status === "saved_not_analyzed") return "Not analyzed";
-  if (!hasCompetitors && item.score === 0) return "Not configured";
   return item.score === null ? "Not scored" : `${item.score}/100`;
 }
 
@@ -197,21 +188,6 @@ export default async function BusinessOverviewPage({
           handle: true,
         },
       },
-      googleBusinessProfiles: {
-        where: { status: { not: "removed" } },
-        orderBy: [{ status: "asc" }, { matchConfidence: "desc" }],
-      },
-      competitors: {
-        where: { status: CompetitorStatus.ACTIVE },
-        orderBy: { name: "asc" },
-        select: {
-          id: true,
-          name: true,
-          discoveredProfiles: {
-            select: { platform: true, label: true, status: true },
-          },
-        },
-      },
     },
   });
 
@@ -224,8 +200,8 @@ export default async function BusinessOverviewPage({
       <div className="space-y-6">
         <PageIntro
           eyebrow="Overview"
-          title="Finish setup to see your growth priorities"
-          description="Confirm the essential business information, then run your first audit."
+          title="Finish setup to see your website priorities"
+          description="Confirm your website and essential business information, then run your first website audit."
         />
         <SetupChecklist
           businessId={business.id}
@@ -235,8 +211,8 @@ export default async function BusinessOverviewPage({
         <EmptyState
           compact
           icon={<AlertTriangle className="size-6" />}
-          title="No audit generated yet"
-          description="Run your first audit to receive scores, findings, and a prioritized action plan."
+          title="No website audit yet"
+          description="Run your first website audit to see what is helping or hurting visibility and conversions."
           action={
             <Link
               href={`/dashboard/businesses/${business.id}/setup`}
@@ -323,15 +299,13 @@ export default async function BusinessOverviewPage({
     report.findings.warnings.at(0)?.title ??
     "Keep building on the current foundation";
   const comparison = report.progress.comparison;
-  const social = report.social;
-  const reviews = report.reviews;
   const suggestedQuestions = getSuggestedQuestionsForGoals(
     business.goals,
     business.primaryGoal,
-    business.competitors.map((competitor) => competitor.name),
-    social.score,
-    reviews.score,
-    reviews.googleBusinessStatus,
+    [],
+    null,
+    null,
+    null,
     {
       description: business.description,
       targetAudience: business.targetAudience,
@@ -353,9 +327,7 @@ export default async function BusinessOverviewPage({
       ? reportFindings.find(
           (finding) => finding.id === reportRecommendation.sourceFindingId,
         )
-      : reportFindings.find(
-          (finding) => finding.category === category,
-        );
+      : reportFindings.find((finding) => finding.category === category);
 
     return {
       summary:
@@ -374,8 +346,8 @@ export default async function BusinessOverviewPage({
     <div className="space-y-6">
       <PageIntro
         eyebrow="Overview"
-        title="Your growth priorities"
-        description={`Last audited ${audit.createdAt.toLocaleDateString()}. Start with the recommended action, then open supporting evidence when you need it.`}
+        title="Your website growth priorities"
+        description={`Last audited ${audit.createdAt.toLocaleDateString()}. Start with the best next action, make the improvement, then verify it with a new audit.`}
         actions={
           <>
             <Link
@@ -383,7 +355,7 @@ export default async function BusinessOverviewPage({
               className={buttonVariants({ variant: "secondary", size: "sm" })}
             >
               <RefreshCw className="size-4" aria-hidden="true" />
-              Run audit
+              Re-audit website
             </Link>
             <Link
               href={
@@ -414,6 +386,15 @@ export default async function BusinessOverviewPage({
 
       <ContextualHelpCard {...contextualHelp.overview} />
 
+      {report.legacyScoring ? (
+        <DataSourceNotice>
+          <strong>Legacy scoring model.</strong> This historical report keeps
+          the categories and score that were saved when it was created. Its
+          score should not be compared directly with the current Website Growth
+          Score.
+        </DataSourceNotice>
+      ) : null}
+
       {report.assessment.mode === "social_first" ? (
         <DataSourceNotice>
           <strong>Social-first assessment.</strong> This report used confirmed
@@ -432,9 +413,14 @@ export default async function BusinessOverviewPage({
 
       <Card className="overflow-hidden">
         <div className="grid gap-6 p-5 lg:grid-cols-[auto_minmax(0,1fr)] lg:items-center lg:p-6">
-          <ScoreRing score={report.audit.overallScore} />
+          <ScoreRing
+            score={report.audit.overallScore}
+            label={report.scoreLabel}
+          />
           <div className="min-w-0">
-            <p className="text-sm font-medium text-accent">Current health</p>
+            <p className="text-sm font-medium text-accent">
+              {report.scoreLabel}
+            </p>
             <h2 className="mt-1 text-2xl font-semibold">
               {plainHealthLabel(report.audit.overallScore)}
               <span className="text-muted">
@@ -487,6 +473,10 @@ export default async function BusinessOverviewPage({
           aria-labelledby="recommended-first-action"
           className="rounded-lg border border-accent/40 bg-accent/[0.06] p-5 shadow-sm sm:p-6"
         >
+          <CustomerEventImpression
+            eventName="top_action_viewed"
+            surface="business_overview"
+          />
           <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
             <div className="min-w-0">
               <p className="text-sm font-semibold text-accent">
@@ -502,9 +492,7 @@ export default async function BusinessOverviewPage({
                 {firstMove.description}
               </p>
               <div className="mt-4 flex flex-wrap gap-x-4 gap-y-2 text-sm text-muted">
-                <span>
-                  {recommendationCategoryLabels[firstMove.category]}
-                </span>
+                <span>{recommendationCategoryLabels[firstMove.category]}</span>
                 <span>Effort: {displayEffort(firstMove)}</span>
                 <span>Expected impact: {displayImpact(firstMove)}</span>
               </div>
@@ -685,9 +673,7 @@ export default async function BusinessOverviewPage({
                       ? findingTypeLabels[finding.findingType]
                       : "Observation"}
                   </span>
-                  <span>
-                    {recommendationCategoryLabels[finding.category]}
-                  </span>
+                  <span>{recommendationCategoryLabels[finding.category]}</span>
                   <span>{sourcePageLabel(finding.sourceUrl)}</span>
                 </div>
                 <h3 className="mt-2 font-semibold">{finding.title}</h3>
@@ -714,9 +700,7 @@ export default async function BusinessOverviewPage({
                     ) : null}
                     {finding.confidence ? (
                       <p>
-                        <strong className="text-foreground">
-                          Confidence:
-                        </strong>{" "}
+                        <strong className="text-foreground">Confidence:</strong>{" "}
                         {finding.confidence}
                       </p>
                     ) : null}
@@ -760,10 +744,7 @@ export default async function BusinessOverviewPage({
                     </p>
                   ) : null}
                 </div>
-                <ListChecks
-                  className="size-5 text-accent"
-                  aria-hidden="true"
-                />
+                <ListChecks className="size-5 text-accent" aria-hidden="true" />
               </div>
               <div
                 className="mt-3 h-2 overflow-hidden rounded-full bg-foreground/10"
@@ -861,8 +842,16 @@ export default async function BusinessOverviewPage({
       </div>
 
       <ReportSection
-        title="Business health by area"
-        description="Each area appears once. Open a category for the detailed analysis."
+        title={
+          report.legacyScoring
+            ? "Business health by area"
+            : "Website health by area"
+        }
+        description={
+          report.legacyScoring
+            ? "Each legacy area appears once. Open a category for the saved analysis."
+            : "Website and SEO are the only categories included in the Website Growth Score."
+        }
       >
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {overviewCategories.map((category) => {
@@ -870,12 +859,7 @@ export default async function BusinessOverviewPage({
               (score) => score.category === category,
             );
             if (!item) return null;
-            const isEmptyCompetitor =
-              category === ScoreCategory.COMPETITORS &&
-              business.competitors.length === 0;
-            const href = isEmptyCompetitor
-              ? `/dashboard/businesses/${business.id}/competitors`
-              : `/dashboard/businesses/${business.id}/${categoryRoutes[category]}`;
+            const href = `/dashboard/businesses/${business.id}/${categoryRoutes[category]}`;
 
             return (
               <Link
@@ -896,13 +880,9 @@ export default async function BusinessOverviewPage({
                   />
                 </div>
                 <div className="mt-5">
-                  <p className="text-lg font-semibold">
-                    {scoreDisplay(item, business.competitors.length > 0)}
-                  </p>
+                  <p className="text-lg font-semibold">{scoreDisplay(item)}</p>
                   <p className="mt-1 text-sm leading-5 text-muted">
-                    {isEmptyCompetitor
-                      ? "Add a competitor for a public side-by-side comparison."
-                      : plainScoreInterpretation(item.score)}
+                    {plainScoreInterpretation(item.score)}
                   </p>
                 </div>
               </Link>
@@ -914,7 +894,11 @@ export default async function BusinessOverviewPage({
       {report.coverage ? (
         <DisclosureSection
           title="Analysis coverage"
-          description={compactCoverageSummary(report.coverage)}
+          description={
+            report.legacyScoring
+              ? compactCoverageSummary(report.coverage)
+              : compactWebsiteSeoCoverageSummary(report.coverage)
+          }
           analyticsEvent="overview_coverage_expanded"
           analyticsSurface="business_overview"
         >
@@ -937,24 +921,28 @@ export default async function BusinessOverviewPage({
                 {report.coverage.aiContent.explanation}
               </p>
             </div>
-            <div className="grid gap-1 py-3 sm:grid-cols-[14rem_1fr]">
-              <p className="font-semibold">Social profiles reviewed</p>
-              <p className="leading-6 text-muted">
-                {report.coverage.socialProfiles.explanation}
-              </p>
-            </div>
-            <div className="grid gap-1 py-3 sm:grid-cols-[14rem_1fr]">
-              <p className="font-semibold">Review evidence</p>
-              <p className="leading-6 text-muted">
-                {report.coverage.reviews.explanation}
-              </p>
-            </div>
-            <div className="grid gap-1 py-3 last:pb-0 sm:grid-cols-[14rem_1fr]">
-              <p className="font-semibold">Competitor evidence</p>
-              <p className="leading-6 text-muted">
-                {report.coverage.competitors.explanation}
-              </p>
-            </div>
+            {report.legacyScoring ? (
+              <>
+                <div className="grid gap-1 py-3 sm:grid-cols-[14rem_1fr]">
+                  <p className="font-semibold">Social profiles reviewed</p>
+                  <p className="leading-6 text-muted">
+                    {report.coverage.socialProfiles.explanation}
+                  </p>
+                </div>
+                <div className="grid gap-1 py-3 sm:grid-cols-[14rem_1fr]">
+                  <p className="font-semibold">Review evidence</p>
+                  <p className="leading-6 text-muted">
+                    {report.coverage.reviews.explanation}
+                  </p>
+                </div>
+                <div className="grid gap-1 py-3 last:pb-0 sm:grid-cols-[14rem_1fr]">
+                  <p className="font-semibold">Competitor evidence</p>
+                  <p className="leading-6 text-muted">
+                    {report.coverage.competitors.explanation}
+                  </p>
+                </div>
+              </>
+            ) : null}
           </div>
           <details className="mt-5 border-t border-border pt-4 text-sm">
             <summary className="cursor-pointer font-medium text-accent">
@@ -992,7 +980,7 @@ export default async function BusinessOverviewPage({
             </span>
             <div>
               <h2 className="font-semibold">
-                Continue with your AI Consultant
+                Continue with your Website &amp; SEO Consultant
               </h2>
               <p className="mt-1 text-sm leading-6 text-muted">
                 Ask about the current audit, choose an action, or draft an

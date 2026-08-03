@@ -1,4 +1,4 @@
-import { ArrowRight, Sparkles } from "lucide-react";
+import { ArrowRight, Globe2 } from "lucide-react";
 import { PlanType } from "@prisma/client";
 
 import { createBusiness } from "@/app/dashboard/businesses/new/actions";
@@ -20,34 +20,32 @@ type NewBusinessPageProps = {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 };
 
-const examples = [
-  "harborandpine.com",
-  "instagram.com/harborandpine",
-  "youtube.com/@harborandpine",
-  "Harbor & Pine Tampa",
-];
-
 export default async function NewBusinessPage({
   searchParams,
 }: NewBusinessPageProps) {
   const user = await requireUser("/dashboard/businesses/new");
   const params = await searchParams;
-  const initialBusinessInput =
-    typeof params.businessInput === "string"
-      ? params.businessInput.slice(0, 2_000)
+  const initialWebsiteUrl =
+    typeof params.websiteUrl === "string"
+      ? params.websiteUrl.slice(0, 2_000)
+      : "";
+  const initialBusinessName =
+    typeof params.businessName === "string"
+      ? params.businessName.slice(0, 160)
       : "";
   const creationCheck = await canCreateBusiness(user.id);
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <div>
-        <p className="text-sm font-medium text-muted">Add Business</p>
+        <p className="text-sm font-medium text-muted">Add website</p>
         <h1 className="mt-1 text-3xl font-semibold tracking-normal">
-          Start with your primary business link
+          Start your website growth workspace
         </h1>
         <p className="mt-2 max-w-2xl text-sm leading-6 text-muted">
-          Enter your website or one social profile. You&apos;ll be able to add
-          and confirm the rest during setup.
+          Add the public website you want Onread to audit. You&apos;ll confirm
+          the address, add useful business context, and choose your main goal
+          before the first audit runs.
         </p>
       </div>
 
@@ -65,37 +63,48 @@ export default async function NewBusinessPage({
       <Card>
         <CardHeader>
           <div className="mb-3 flex size-11 items-center justify-center rounded-lg bg-accent/10 text-accent">
-            <Sparkles className="size-5" />
+            <Globe2 className="size-5" />
           </div>
-          <CardTitle>Business input</CardTitle>
+          <CardTitle>Business and website</CardTitle>
           <CardDescription>
-            This is your starting source. Automatic discovery may not find
-            every profile.
+            Onread uses this website as the source for its Website Growth Score,
+            findings, and verification checks.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <form action={createBusiness} className="space-y-5">
             <div className="space-y-2">
-              <Label htmlFor="businessInput">
-                Start with your primary business link
-              </Label>
+              <Label htmlFor="businessName">Business name</Label>
               <Input
-                id="businessInput"
-                name="businessInput"
+                id="businessName"
+                name="businessName"
                 required
                 autoFocus
-                defaultValue={initialBusinessInput}
-                placeholder="harborandpine.com"
+                maxLength={160}
+                defaultValue={initialBusinessName}
+                placeholder="Harbor & Pine"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="websiteUrl">Website URL</Label>
+              <Input
+                id="websiteUrl"
+                name="websiteUrl"
+                type="url"
+                inputMode="url"
+                required
+                defaultValue={initialWebsiteUrl}
+                placeholder="https://harborandpine.com"
               />
               <p className="text-sm leading-6 text-muted">
-                Enter your website or one social profile. You&apos;ll be able
-                to add and confirm the rest during setup.
+                Use the public homepage you want Onread to crawl and analyze.
               </p>
             </div>
 
             {params.error === "missing" ? (
               <p className="text-sm font-medium text-rose-600">
-                Enter a website, social profile, or business name.
+                Enter both a business name and a public website URL.
               </p>
             ) : null}
 
@@ -107,38 +116,31 @@ export default async function NewBusinessPage({
 
             {params.error === "invalid_source" ? (
               <p className="text-sm font-medium text-rose-600">
-                Enter a valid public website or profile URL, or use the business
-                name instead.
+                Enter a valid public website URL, such as
+                https://harborandpine.com.
               </p>
             ) : null}
 
             <div className="rounded-lg border border-border bg-background p-4">
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted">
-                Examples
+                Example
               </p>
               <div className="mt-3 flex flex-wrap gap-2">
-                {examples.map((example) => (
-                  <span
-                    key={example}
-                    className="rounded-lg border border-border bg-card px-3 py-2 text-sm text-muted"
-                  >
-                    {example}
-                  </span>
-                ))}
+                <span className="rounded-lg border border-border bg-card px-3 py-2 text-sm text-muted">
+                  https://harborandpine.com
+                </span>
               </div>
-            </div>
-
-            <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-950 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-100">
-              <strong>No website? That&apos;s okay.</strong> We can create a
-              social-first growth assessment using your confirmed profiles,
-              Business Context, goals, reviews, and competitors.
             </div>
 
             <SubmitButton
               pendingLabel="Creating business..."
-              className={!creationCheck.allowed ? "pointer-events-none opacity-55" : undefined}
+              className={
+                !creationCheck.allowed
+                  ? "pointer-events-none opacity-55"
+                  : undefined
+              }
             >
-              Continue
+              Continue setup
               <ArrowRight className="size-4" />
             </SubmitButton>
           </form>

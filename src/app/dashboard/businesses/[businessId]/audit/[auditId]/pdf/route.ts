@@ -4,6 +4,7 @@ import {
 } from "@/lib/audits/pdf-report";
 import { canUsePdfExport } from "@/lib/billing/entitlements";
 import { buildAuditReportViewModel } from "@/lib/reports/audit-report-view-model";
+import { logInfo } from "@/lib/observability/log";
 import { getCurrentUser } from "@/lib/session";
 import {
   currentRequestRateLimitIdentifier,
@@ -41,7 +42,11 @@ export async function GET(_request: Request, { params }: AuditPdfRouteContext) {
   try {
     await enforceRateLimit({
       scope: "pdf-export",
-      identifiers: [user.id, auditId, await currentRequestRateLimitIdentifier()],
+      identifiers: [
+        user.id,
+        auditId,
+        await currentRequestRateLimitIdentifier(),
+      ],
       limit: 30,
       windowMs: 60 * 60 * 1_000,
     });
@@ -68,6 +73,11 @@ export async function GET(_request: Request, { params }: AuditPdfRouteContext) {
     businessName: report.business.name,
     businessId: report.business.id,
     auditDate: report.audit.date,
+  });
+  logInfo("report_exported", {
+    businessId: report.business.id,
+    auditId: report.audit.id,
+    format: "pdf",
   });
 
   return new Response(new Uint8Array(pdf), {

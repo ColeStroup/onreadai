@@ -14,6 +14,19 @@ export const auditProgressStages = [
   "PREPARING_RESULTS",
 ] as const;
 
+export const websiteSeoAuditProgressStages = [
+  "PREPARING_BUSINESS_INFORMATION",
+  "REVIEWING_CONFIRMED_PROFILES",
+  "ANALYZING_WEBSITE",
+  "CHECKING_TECHNICAL_ISSUES",
+  "BUILDING_FINDINGS",
+  "SELECTING_IMPORTANT_PAGES",
+  "REVIEWING_KEY_PAGES",
+  "CONSOLIDATING_FINDINGS",
+  "PRIORITIZING_RECOMMENDATIONS",
+  "PREPARING_RESULTS",
+] as const satisfies readonly AuditProgressStage[];
+
 export type AuditProgressStage = (typeof auditProgressStages)[number];
 
 export const auditProgressStageLabels: Record<AuditProgressStage, string> = {

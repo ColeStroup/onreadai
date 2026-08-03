@@ -21,7 +21,10 @@ import type {
 } from "@/lib/analyzers/website-crawler";
 import type { WebsiteAnalysis } from "@/lib/analyzers/website-analyzer";
 import { generateDeterministicSocialStrategy } from "@/lib/ai/social-strategy-generator";
-import { buildAuditAssessment } from "@/lib/audits/audit-applicability";
+import {
+  buildAuditAssessment,
+  getAuditAssessment,
+} from "@/lib/audits/audit-applicability";
 import type { AuditComparison } from "@/lib/audits/audit-comparison";
 import { EVIDENCE_CONTRACT_VERSION } from "@/lib/audits/evidence-contracts";
 import { buildNormalizedAuditFacts } from "@/lib/audits/normalized-audit-facts";
@@ -96,7 +99,8 @@ const fixtureConfigs: Record<ReportFixtureKind, FixtureConfig> = {
     description:
       "A B2B SaaS analytics platform that helps operations teams find and resolve workflow bottlenecks.",
     targetAudience: "Operations leaders at growing software companies.",
-    mainOffer: "A subscription analytics platform with a free trial and product demo.",
+    mainOffer:
+      "A subscription analytics platform with a free trial and product demo.",
     industry: "Software",
     businessType: "B2B SaaS",
     conversionGoal: "Start a free trial or request a product demo.",
@@ -113,8 +117,10 @@ const fixtureConfigs: Record<ReportFixtureKind, FixtureConfig> = {
     archetype: "local_service",
     description:
       "A local roofing contractor serving homeowners across the Tampa service area.",
-    targetAudience: "Homeowners who need roof inspections, repairs, or replacement.",
-    mainOffer: "Roof inspections, repairs, replacements, and storm-response service.",
+    targetAudience:
+      "Homeowners who need roof inspections, repairs, or replacement.",
+    mainOffer:
+      "Roof inspections, repairs, replacements, and storm-response service.",
     industry: "Home services",
     businessType: "Local roofing contractor",
     conversionGoal: "Call or request a roofing estimate.",
@@ -131,7 +137,8 @@ const fixtureConfigs: Record<ReportFixtureKind, FixtureConfig> = {
     archetype: "creator_community",
     description:
       "A social-first creative studio sharing practical illustration lessons and commissioned artwork.",
-    targetAudience: "Aspiring illustrators and customers seeking commissioned artwork.",
+    targetAudience:
+      "Aspiring illustrators and customers seeking commissioned artwork.",
     mainOffer: "Illustration education, commissions, and digital products.",
     industry: "Creative services",
     businessType: "Social-first creator business",
@@ -155,8 +162,7 @@ const fixtureConfigs: Record<ReportFixtureKind, FixtureConfig> = {
       "Seasonal pastry pockets available through a manual preorder inquiry.",
     industry: "Cottage food",
     businessType: "Home-based cottage-food preorder business",
-    conversionGoal:
-      "Submit an order inquiry for pickup or local delivery.",
+    conversionGoal: "Submit an order inquiry for pickup or local delivery.",
     brandTone: "Warm, practical, and product-focused.",
     goal: BusinessGoal.MORE_CUSTOMERS,
     hasWebsite: true,
@@ -213,6 +219,7 @@ export function createReportFixture(
   options?: { stress?: boolean },
 ): AuditReportViewModel {
   const config = fixtureConfigs[kind];
+  const legacyFixture = kind === "social_only";
   const auditDate = new Date("2026-07-14T12:00:00.000Z");
   const profileRecords = [
     ...(config.hasWebsite
@@ -245,7 +252,9 @@ export function createReportFixture(
         ]
       : []),
   ];
-  const assessment = buildAuditAssessment({ profiles: profileRecords });
+  const assessment = legacyFixture
+    ? getAuditAssessment({ social: {} })
+    : buildAuditAssessment({ profiles: profileRecords });
   const website = config.hasWebsite
     ? createWebsite(config, options?.stress)
     : null;
@@ -266,10 +275,8 @@ export function createReportFixture(
             id: "google-fixture",
             displayName: config.name,
             googleMapsUri: "https://maps.google.com/?cid=fixture",
-            rating:
-              config.reviewMetricsAvailable === false ? null : 4.7,
-            reviewCount:
-              config.reviewMetricsAvailable === false ? null : 1240,
+            rating: config.reviewMetricsAvailable === false ? null : 4.7,
+            reviewCount: config.reviewMetricsAvailable === false ? null : 1240,
             matchConfidence: 96,
             status: "confirmed",
             source: "places_api",
@@ -287,6 +294,37 @@ export function createReportFixture(
       primaryConversionGoal: config.conversionGoal,
     },
   });
+  const reportSocial = legacyFixture
+    ? social
+    : {
+        ...analyzeSocialProfiles({ businessProfiles: [] }),
+        score: 0,
+        evidenceCompleteness: 0,
+        dataRequirementsMet: false,
+        missingRecommendedPlatforms: [],
+        strengths: [],
+        warnings: [],
+        opportunities: [],
+        recommendedFixes: [],
+        dataUsed: [],
+        limitations: ["Social Growth is not part of this report."],
+      };
+  const reportReviews = legacyFixture
+    ? reviews
+    : {
+        ...analyzeReviews({ businessProfiles: [] }),
+        score: 0,
+        evidenceCompleteness: 0,
+        dataRequirementsMet: false,
+        missingInputs: [],
+        reviewScoreExplanation:
+          "Local Growth and review performance are not part of this report.",
+        trustStrengths: [],
+        trustWarnings: [],
+        opportunities: [],
+        recommendedFixes: [],
+        competitorReviewCoverage: [],
+      };
   const strategy = generateDeterministicSocialStrategy({
     businessName: config.name,
     initialInput: config.initialInput,
@@ -319,17 +357,14 @@ export function createReportFixture(
     : null;
   const recommendations = createRecommendations(config, options?.stress);
   const findings = createFindings(config, options?.stress);
-  const overallScore =
-    config.archetype === "cottage_food"
-      ? 61
-      : config.hasWebsite
-        ? 76
-        : 79;
+  const overallScore = config.hasWebsite
+    ? Math.round((website?.score ?? 0) * 0.55 + (seo?.score ?? 0) * 0.45)
+    : 79;
   const scoreItems: AuditReportViewModel["scores"] = [
     {
       category: ScoreCategory.WEBSITE,
       label: "Website",
-      score: config.hasWebsite ? website?.score ?? 78 : null,
+      score: config.hasWebsite ? (website?.score ?? 78) : null,
       status: config.hasWebsite ? "scored" : "not_provided",
       confidence: config.hasWebsite ? "High" : "Low",
       evidenceCompleteness: config.hasWebsite ? 100 : 0,
@@ -339,7 +374,7 @@ export function createReportFixture(
     {
       category: ScoreCategory.SEO,
       label: "SEO",
-      score: config.hasWebsite ? seo?.score ?? 71 : null,
+      score: config.hasWebsite ? (seo?.score ?? 71) : null,
       status: config.hasWebsite ? "scored" : "not_applicable",
       confidence: config.hasWebsite ? "High" : "Low",
       evidenceCompleteness: config.hasWebsite ? 100 : 0,
@@ -361,10 +396,19 @@ export function createReportFixture(
       label: "Social profile coverage",
       score: social.score,
       status: "partial",
-      confidence: social.scoreConfidence === "HIGH" ? "High" : social.scoreConfidence === "MEDIUM" ? "Medium" : "Low",
+      confidence:
+        social.scoreConfidence === "HIGH"
+          ? "High"
+          : social.scoreConfidence === "MEDIUM"
+            ? "Medium"
+            : "Low",
       evidenceCompleteness: social.evidenceCompleteness,
       dataRequirementsMet: social.dataRequirementsMet,
-      missingInputs: ["Profile content", "Posting activity", "Engagement and performance"],
+      missingInputs: [
+        "Profile content",
+        "Posting activity",
+        "Engagement and performance",
+      ],
     },
     {
       category: ScoreCategory.REVIEWS,
@@ -373,7 +417,12 @@ export function createReportFixture(
         : "Reviews / listing presence",
       score: reviews.score,
       status: reviews.dataRequirementsMet ? "scored" : "partial",
-      confidence: reviews.scoreConfidence === "HIGH" ? "High" : reviews.scoreConfidence === "MEDIUM" ? "Medium" : "Low",
+      confidence:
+        reviews.scoreConfidence === "HIGH"
+          ? "High"
+          : reviews.scoreConfidence === "MEDIUM"
+            ? "Medium"
+            : "Low",
       evidenceCompleteness: reviews.evidenceCompleteness,
       dataRequirementsMet: reviews.dataRequirementsMet,
       missingInputs: reviews.missingInputs,
@@ -391,17 +440,43 @@ export function createReportFixture(
         : ["Saved competitors", "Completed public competitor analysis"],
     },
   ];
+  const reportScores = legacyFixture
+    ? scoreItems
+    : scoreItems.filter(
+        (item) =>
+          item.category === ScoreCategory.WEBSITE ||
+          item.category === ScoreCategory.SEO,
+      );
+  const reportRecommendations = legacyFixture
+    ? recommendations
+    : recommendations.filter(
+        (item) =>
+          item.category === ScoreCategory.WEBSITE ||
+          item.category === ScoreCategory.SEO,
+      );
+  const reportFindings = legacyFixture
+    ? findings
+    : findings.filter(
+        (item) =>
+          item.category === ScoreCategory.WEBSITE ||
+          item.category === ScoreCategory.SEO,
+      );
   const normalizedFacts = buildNormalizedAuditFacts({
     website,
     websiteCrawl,
     seo,
-    social,
-    reviews,
+    social: reportSocial,
+    reviews: reportReviews,
     selectiveAi: null,
-    businessProfiles: profileRecords.map((profile) => ({
-      platform: profile.platform,
-      status: profile.status,
-    })),
+    businessProfiles: profileRecords
+      .filter(
+        (profile) =>
+          legacyFixture || profile.platform === ProfilePlatform.WEBSITE,
+      )
+      .map((profile) => ({
+        platform: profile.platform,
+        status: profile.status,
+      })),
     businessContext: {
       name: config.name,
       description: config.description,
@@ -412,12 +487,12 @@ export function createReportFixture(
       primaryConversionGoal: config.conversionGoal,
       brandTone: config.brandTone,
     },
-    competitorConfigured: Boolean(competitorComparison),
-    competitorAnalyzed: Boolean(competitorComparison),
+    competitorConfigured: legacyFixture && Boolean(competitorComparison),
+    competitorAnalyzed: legacyFixture && Boolean(competitorComparison),
     scoreValues: {
       [ScoreCategory.OVERALL]: overallScore,
       ...Object.fromEntries(
-        scoreItems.flatMap((item) =>
+        reportScores.flatMap((item) =>
           item.score === null ? [] : [[item.category, item.score]],
         ),
       ),
@@ -425,6 +500,9 @@ export function createReportFixture(
     generatedAt: auditDate.toISOString(),
   });
   const report: AuditReportViewModel = {
+    productScope: legacyFixture ? "legacy_presence" : "website_seo",
+    scoreLabel: legacyFixture ? "Legacy overall score" : "Website Growth Score",
+    legacyScoring: legacyFixture,
     business: {
       id: `business-${kind}`,
       name: options?.stress
@@ -453,11 +531,25 @@ export function createReportFixture(
       userSelectedGrowthGoal: titleCase(config.goal),
       secondaryGoals: [],
       profileSummary: {
-        confirmed: profileRecords.length,
+        confirmed: legacyFixture
+          ? profileRecords.length
+          : profileRecords.filter(
+              (profile) => profile.platform === ProfilePlatform.WEBSITE,
+            ).length,
         pending: 0,
         removed: 0,
-        confirmedPlatforms: profileRecords.map((profile) => profile.label),
-        counts: aggregateProfileCounts(profileRecords),
+        confirmedPlatforms: profileRecords
+          .filter(
+            (profile) =>
+              legacyFixture || profile.platform === ProfilePlatform.WEBSITE,
+          )
+          .map((profile) => profile.label),
+        counts: aggregateProfileCounts(
+          profileRecords.filter(
+            (profile) =>
+              legacyFixture || profile.platform === ProfilePlatform.WEBSITE,
+          ),
+        ),
       },
     },
     audit: {
@@ -469,40 +561,68 @@ export function createReportFixture(
       executiveSummary: buildExecutiveSummary(config, overallScore),
     },
     assessment,
-    scores: scoreItems,
+    scores: reportScores,
     website,
     websiteCrawl,
     seo,
-    social,
-    reviews,
-    socialStrategy: {
-      data: strategy,
-      source: "deterministic_fallback",
-      sourceLabel: "Deterministic fallback",
-      freshness: {
-        status: "CURRENT",
-        generatedAt: auditDate,
-        sourceAuditId: `audit-${kind}`,
-        dependencyFingerprint: `strategy-${kind}`,
-        storedDependencyFingerprint:
-          kind === "stale_strategy" ? "old-fingerprint" : `strategy-${kind}`,
-        generatorVersion: SOCIAL_STRATEGY_GENERATOR_VERSION,
-        reason:
-          kind === "stale_strategy"
-            ? "Saved strategy dependencies changed, so this deterministic fallback was regenerated from current evidence."
-            : "Current evidence was used.",
-      },
-      scopeNote:
-        "Generated from Business Context, confirmed profiles, website content, goals, reviews, and competitor information. Individual posts, engagement, posting frequency, and content performance were not analyzed.",
-    },
+    social: reportSocial,
+    reviews: reportReviews,
+    socialStrategy: legacyFixture
+      ? {
+          data: strategy,
+          source: "deterministic_fallback",
+          sourceLabel: "Deterministic fallback",
+          freshness: {
+            status: "CURRENT",
+            generatedAt: auditDate,
+            sourceAuditId: `audit-${kind}`,
+            dependencyFingerprint: `strategy-${kind}`,
+            storedDependencyFingerprint: `strategy-${kind}`,
+            generatorVersion: SOCIAL_STRATEGY_GENERATOR_VERSION,
+            reason: "Current evidence was used.",
+          },
+          scopeNote:
+            "Generated from Business Context, confirmed profiles, website content, goals, reviews, and competitor information. Individual posts, engagement, posting frequency, and content performance were not analyzed.",
+        }
+      : {
+          data: {
+            recommendedPlatforms: [],
+            contentPillars: [],
+            weeklyPlan: [],
+            suggestedPosts: [],
+            conversionTips: [],
+            competitorOpportunities: [],
+            confidence: 0,
+            reasoningSummary: "Social Growth is not part of this report.",
+          },
+          source: "disabled",
+          sourceLabel: "Not part of this report",
+          freshness: {
+            status: "UNAVAILABLE",
+            generatedAt: null,
+            sourceAuditId: `audit-${kind}`,
+            dependencyFingerprint: "disabled-launch-module",
+            storedDependencyFingerprint: null,
+            generatorVersion: "disabled-launch-module",
+            reason: "Social Growth is not part of this report.",
+          },
+          scopeNote:
+            "Social Growth is disabled for the Website & SEO launch product.",
+        },
     competitors: {
-      status: competitorComparison ? "current" : "not_configured",
-      score: competitorComparison ? 63 : null,
-      label: competitorComparison ? "Current comparison" : "Not configured",
-      activeCount: competitorComparison ? 1 : 0,
-      confirmedProfilesCount: competitorComparison ? 2 : 0,
+      status:
+        legacyFixture && competitorComparison ? "current" : "not_configured",
+      score: legacyFixture && competitorComparison ? 63 : null,
+      label:
+        legacyFixture && competitorComparison
+          ? "Current comparison"
+          : legacyFixture
+            ? "Not configured"
+            : "Not part of this report",
+      activeCount: legacyFixture && competitorComparison ? 1 : 0,
+      confirmedProfilesCount: legacyFixture && competitorComparison ? 2 : 0,
       profileCounts: aggregateProfileCounts(
-        competitorComparison
+        legacyFixture && competitorComparison
           ? [
               {
                 platform: ProfilePlatform.WEBSITE,
@@ -516,57 +636,60 @@ export function createReportFixture(
           : [],
       ),
       profilesByCompetitor: [],
-      names: competitorComparison ? ["Boardwalk Kitchen"] : [],
-      intelligence: competitorIntelligence,
-      comparison: competitorComparison,
-      methodologyNote:
-        "Competitive Position reflects comparable public website, SEO, confirmed profile-coverage, review, and messaging signals. Missing data is not scored as a loss.",
-      snapshotDate: competitorComparison ? auditDate : null,
+      names: legacyFixture && competitorComparison ? ["Boardwalk Kitchen"] : [],
+      intelligence: legacyFixture ? competitorIntelligence : null,
+      comparison: legacyFixture ? competitorComparison : null,
+      methodologyNote: legacyFixture
+        ? "Competitive Position reflects comparable public website, SEO, confirmed profile-coverage, review, and messaging signals. Missing data is not scored as a loss."
+        : "Competitive Intelligence is disabled for the Website & SEO launch product.",
+      snapshotDate: legacyFixture && competitorComparison ? auditDate : null,
       businessAuditDate: auditDate,
       freshness: {
-        status: competitorComparison ? "CURRENT" : "UNAVAILABLE",
-        generatedAt: competitorComparison ? auditDate : null,
+        status:
+          legacyFixture && competitorComparison ? "CURRENT" : "UNAVAILABLE",
+        generatedAt: legacyFixture && competitorComparison ? auditDate : null,
         sourceAuditId: `audit-${kind}`,
         dependencyFingerprint: `competitor-${kind}`,
-        storedDependencyFingerprint: competitorComparison
-          ? `competitor-${kind}`
-          : null,
+        storedDependencyFingerprint:
+          legacyFixture && competitorComparison ? `competitor-${kind}` : null,
         generatorVersion: COMPETITOR_COMPARISON_VERSION,
-        reason: competitorComparison
-          ? "Current snapshots and profile states were used."
-          : "No active competitors are configured.",
+        reason:
+          legacyFixture && competitorComparison
+            ? "Current snapshots and profile states were used."
+            : legacyFixture
+              ? "No active competitors are configured."
+              : "Competitive Intelligence is not part of this report.",
       },
     },
     findings: {
-      strengths: findings.filter(
+      strengths: reportFindings.filter(
         (item) =>
           item.findingType === "VERIFIED_STRENGTH" ||
           (!item.findingType && item.severity === FindingSeverity.INFO),
       ),
-      warnings: findings.filter(
+      warnings: reportFindings.filter(
         (item) =>
           item.findingType === "VERIFIED_TECHNICAL_ISSUE" ||
           item.findingType === "LIMITATION" ||
           (!item.findingType && item.severity === FindingSeverity.HIGH),
       ),
-      opportunities: findings.filter(
+      opportunities: reportFindings.filter(
         (item) =>
           item.findingType === "AI_REVIEWED_OPPORTUNITY" ||
           item.findingType === "COVERAGE_INFORMATION" ||
           item.findingType === "OBSERVATION" ||
-          (!item.findingType &&
-            item.severity === FindingSeverity.MEDIUM),
+          (!item.findingType && item.severity === FindingSeverity.MEDIUM),
       ),
-      all: findings,
+      all: reportFindings,
     },
     recommendations: {
-      primary: recommendations.slice(0, 3),
-      technical: recommendations.slice(3),
-      all: recommendations,
+      primary: reportRecommendations.slice(0, 3),
+      technical: reportRecommendations.slice(3),
+      all: reportRecommendations,
       completed: 0,
-      total: recommendations.length,
+      total: reportRecommendations.length,
     },
-    nextMoves: recommendations.slice(0, 3).map((item) => ({
+    nextMoves: reportRecommendations.slice(0, 3).map((item) => ({
       title: item.title,
       whyItMatters: item.businessRelevance,
       expectedOutcome: expectedOutcome(item.category),
@@ -577,50 +700,75 @@ export function createReportFixture(
       impact: item.expectedImpact,
     })),
     progress: {
-      comparison: firstAuditComparison(`audit-${kind}`, findings, recommendations),
+      comparison: firstAuditComparison(
+        `audit-${kind}`,
+        reportFindings,
+        reportRecommendations,
+      ),
       previousScore: null,
       currentScore: overallScore,
-      note:
-        "Audit scores change only when analysis detects different evidence or scoring coverage changes. Completing a task does not directly change a score.",
+      note: "Audit scores change only when analysis detects different evidence or scoring coverage changes. Completing a task does not directly change a score.",
     },
     freshness: {
       businessContext: "CURRENT",
-      socialStrategy: "CURRENT",
-      competitorComparison: competitorComparison ? "CURRENT" : "UNAVAILABLE",
-      reviews: "CURRENT",
+      socialStrategy: legacyFixture ? "CURRENT" : "UNAVAILABLE",
+      competitorComparison:
+        legacyFixture && competitorComparison ? "CURRENT" : "UNAVAILABLE",
+      reviews: legacyFixture ? "CURRENT" : "UNAVAILABLE",
     },
     confidence: {
       pagesScanned: websiteCrawl?.pagesScanned ?? 0,
       crawlLimit: websiteCrawl?.crawlLimitUsed ?? 0,
       crawlStatus: websiteCrawl ? "full" : "not applicable",
       importantPagesIncluded: websiteCrawl?.importantPagesFound ?? [],
-      googleBusinessStatus: reviews.googleBusinessStatus,
+      googleBusinessStatus: legacyFixture
+        ? reviews.googleBusinessStatus
+        : "Not assessed",
       businessContextStatus: "Confirmed",
-      socialStrategyStatus: "CURRENT - Deterministic fallback",
-      competitorComparisonStatus: competitorComparison
-        ? "Current comparison"
-        : "Not configured",
+      socialStrategyStatus: legacyFixture
+        ? "CURRENT - Deterministic fallback"
+        : "Not part of this report",
+      competitorComparisonStatus:
+        legacyFixture && competitorComparison
+          ? "Current comparison"
+          : legacyFixture
+            ? "Not configured"
+            : "Not part of this report",
       limitations: [
-        "Individual social posts, engagement, posting frequency, reach, impressions, and content performance were not analyzed.",
-        "Competitor positioning is inferred from public evidence only.",
+        ...(legacyFixture
+          ? [
+              "Individual social posts, engagement, posting frequency, reach, impressions, and content performance were not analyzed.",
+              "Competitor positioning is inferred from public evidence only.",
+            ]
+          : [
+              "The Website Growth Score covers Website and SEO evidence only.",
+              "Pages outside the saved crawl coverage were not treated as verified issues.",
+            ]),
       ],
     },
     scoringMetadata: {
-      scoringEngineVersion: SCORING_ENGINE_VERSION,
+      scoringEngineVersion: legacyFixture
+        ? "growth-score-v4-data-sufficiency"
+        : SCORING_ENGINE_VERSION,
       reportViewModelVersion: REPORT_VIEW_MODEL_VERSION,
       analyzerVersions: {
         website: "website-analyzer-v2",
         seo: "seo-analyzer-v2",
-        social: "social-analyzer-v2",
-        reviews: "review-analyzer-v2",
-        competitors: COMPETITOR_COMPARISON_VERSION,
+        ...(legacyFixture
+          ? {
+              social: "social-analyzer-v2",
+              reviews: "review-analyzer-v2",
+              competitors: COMPETITOR_COMPARISON_VERSION,
+            }
+          : {}),
       },
       categoryWeights: assessment.scoreWeights,
       applicableCategories: assessment.applicableCategories,
       pagesScanned: websiteCrawl?.pagesScanned ?? 0,
       crawlLimit: websiteCrawl?.crawlLimitUsed ?? 0,
       crawlStatus: websiteCrawl ? "full" : "not_applicable",
-      competitorSnapshotIds: competitorComparison ? ["snapshot-fixture"] : [],
+      competitorSnapshotIds:
+        legacyFixture && competitorComparison ? ["snapshot-fixture"] : [],
       generatedAt: auditDate.toISOString(),
     },
     evidenceIntegrity: {
@@ -632,7 +780,12 @@ export function createReportFixture(
       canonicalRecommendations: [],
       dataConflicts: [],
       profileCounts: {
-        business: aggregateProfileCounts(profileRecords),
+        business: aggregateProfileCounts(
+          profileRecords.filter(
+            (profile) =>
+              legacyFixture || profile.platform === ProfilePlatform.WEBSITE,
+          ),
+        ),
         competitors: [],
         totals: aggregateProfileCounts([]),
       },
@@ -664,7 +817,7 @@ export function createReportFixture(
       duplicateUrlVariantsSkipped: websiteCrawl?.duplicateUrlsSkipped ?? null,
       pageResults: websiteCrawl?.pageResults ?? [],
       pageSelection: selectReportCrawlPages(websiteCrawl?.pageResults ?? []),
-      findings,
+      findings: reportFindings,
     },
   };
 
@@ -679,8 +832,7 @@ function createWebsite(config: FixtureConfig, stress = false): WebsiteAnalysis {
   const detectedSocialLinks = (
     config.detectedSocialPlatforms ?? [ProfilePlatform.INSTAGRAM]
   ).map(
-    (platform) =>
-      `https://${platform.toLowerCase()}.com/${slug(config.name)}`,
+    (platform) => `https://${platform.toLowerCase()}.com/${slug(config.name)}`,
   );
   const actionSummary = cottageRegression
     ? classifyWebsiteActions({
@@ -712,12 +864,10 @@ function createWebsite(config: FixtureConfig, stress = false): WebsiteAnalysis {
           })),
         ],
       })
-    : fixtureActionSummary([config.conversionGoal], [
-        config.conversionGoal,
-        longPath,
-        "About",
-        "Instagram",
-      ]);
+    : fixtureActionSummary(
+        [config.conversionGoal],
+        [config.conversionGoal, longPath, "About", "Instagram"],
+      );
   return {
     normalizedUrl: config.initialInput,
     pageTitle: cottageRegression
@@ -754,7 +904,10 @@ function createWebsite(config: FixtureConfig, stress = false): WebsiteAnalysis {
   };
 }
 
-function createCrawl(config: FixtureConfig, stress = false): WebsiteCrawlResult {
+function createCrawl(
+  config: FixtureConfig,
+  stress = false,
+): WebsiteCrawlResult {
   if (config.archetype === "cottage_food") {
     return createCottageRegressionCrawl(config);
   }
@@ -787,8 +940,7 @@ function createCrawl(config: FixtureConfig, stress = false): WebsiteCrawlResult 
     ).length,
     pagesWithCtaNeedsImprovement: pages.filter(
       (page) =>
-        page.actionSummary.primaryCtaAssessment.clarity ===
-        "NEEDS_IMPROVEMENT",
+        page.actionSummary.primaryCtaAssessment.clarity === "NEEDS_IMPROVEMENT",
     ).length,
     pagesWithUncertainPrimaryCta: 0,
     importantPagesFound: ["About", "Contact", "Services"],
@@ -820,8 +972,7 @@ function createCottageRegressionCrawl(
   const socialLinks = (
     config.detectedSocialPlatforms ?? [ProfilePlatform.INSTAGRAM]
   ).map(
-    (platform) =>
-      `https://${platform.toLowerCase()}.com/${slug(config.name)}`,
+    (platform) => `https://${platform.toLowerCase()}.com/${slug(config.name)}`,
   );
   const homepageActions = classifyWebsiteActions({
     businessKind: "general",
@@ -957,10 +1108,7 @@ function createCottageRegressionCrawl(
           confidence: "HIGH",
         },
       ],
-      warnings: [
-        "Meta description missing.",
-        "No H1 heading was detected.",
-      ],
+      warnings: ["Meta description missing.", "No H1 heading was detected."],
       score: 55,
       pageTypes: ["Menu"],
       hasContactInfo: false,
@@ -1034,12 +1182,9 @@ function createCottageRegressionCrawl(
       statusCode: 200,
       analysisStatus: "ANALYZED",
       title: `${flavor === "apple" ? "Apple" : "Cherry"} Pie Pocket`,
-      metaDescription:
-        "A seasonal pastry pocket available through preorder.",
+      metaDescription: "A seasonal pastry pocket available through preorder.",
       h1Count: 1,
-      h1Text: [
-        `${flavor === "apple" ? "Apple" : "Cherry"} Pie Pocket`,
-      ],
+      h1Text: [`${flavor === "apple" ? "Apple" : "Cherry"} Pie Pocket`],
       hasCanonical: true,
       hasViewportMeta: true,
       imageCount: 3,
@@ -1132,12 +1277,10 @@ function createCottageRegressionCrawl(
     pagesWithClearPrimaryCta: 0,
     pagesWithCtaNeedsImprovement: pages.filter(
       (page) =>
-        page.actionSummary.primaryCtaAssessment.clarity ===
-        "NEEDS_IMPROVEMENT",
+        page.actionSummary.primaryCtaAssessment.clarity === "NEEDS_IMPROVEMENT",
     ).length,
     pagesWithUncertainPrimaryCta: pages.filter(
-      (page) =>
-        page.actionSummary.primaryCtaAssessment.clarity === "UNCERTAIN",
+      (page) => page.actionSummary.primaryCtaAssessment.clarity === "UNCERTAIN",
     ).length,
     importantPagesFound: ["Menu", "Order", "FAQ"],
     importantPagesMissing: ["Contact"],
@@ -1159,10 +1302,7 @@ function createCottageRegressionCrawl(
     ],
     duplicateContentGroups: [
       {
-        urls: [
-          `${baseUrl}/products/apple`,
-          `${baseUrl}/products/cherry`,
-        ],
+        urls: [`${baseUrl}/products/apple`, `${baseUrl}/products/cherry`],
         similarity: 0.91,
         reason: "NEAR_DUPLICATE_MAIN_CONTENT",
       },
@@ -1414,46 +1554,196 @@ function recommendationDetails(config: FixtureConfig) {
 
   if (config.archetype === "restaurant_hospitality") {
     return [
-      action("Make menu, hours, and directions prominent", "Connect visual hospitality content to one practical visit action.", ScoreCategory.WEBSITE, "Current action-link evidence shows several options without one dominant visitor path.", "Restaurant visitors need a fast path from interest to a visit or order."),
-      action("Feature current customer proof near decision points", "Place approved review proof near menu, location, and order paths.", ScoreCategory.REVIEWS, "A confirmed Google listing provides current rating and review-count evidence.", "Visible trust helps local diners make a confident choice."),
-      action("Build short-form content around the guest experience", "Use atmosphere, food, drinks, events, and local traditions as repeatable content pillars.", ScoreCategory.SOCIAL, "Confirmed visual profiles and hospitality Business Context support this direction.", "The strategy matches a visual local hospitality business."),
-      action("Give every important page one descriptive H1", "Add a clear page-level headline where the crawl found a missing H1.", ScoreCategory.SEO, "One crawled page has no H1.", "Clear headings help visitors and search engines understand the page."),
-      action("Tighten missing page metadata", "Write the missing page description using specific visit information.", ScoreCategory.SEO, "One page is missing a meta description.", "Complete metadata improves search-result clarity."),
-      action("Keep public calls to action consistent", "Use the same practical next-step language across important pages and profiles.", ScoreCategory.BRANDING, "Current public paths use several different labels.", "Consistent actions reduce customer uncertainty."),
+      action(
+        "Make menu, hours, and directions prominent",
+        "Connect visual hospitality content to one practical visit action.",
+        ScoreCategory.WEBSITE,
+        "Current action-link evidence shows several options without one dominant visitor path.",
+        "Restaurant visitors need a fast path from interest to a visit or order.",
+      ),
+      action(
+        "Feature current customer proof near decision points",
+        "Place approved review proof near menu, location, and order paths.",
+        ScoreCategory.REVIEWS,
+        "A confirmed Google listing provides current rating and review-count evidence.",
+        "Visible trust helps local diners make a confident choice.",
+      ),
+      action(
+        "Build short-form content around the guest experience",
+        "Use atmosphere, food, drinks, events, and local traditions as repeatable content pillars.",
+        ScoreCategory.SOCIAL,
+        "Confirmed visual profiles and hospitality Business Context support this direction.",
+        "The strategy matches a visual local hospitality business.",
+      ),
+      action(
+        "Give every important page one descriptive H1",
+        "Add a clear page-level headline where the crawl found a missing H1.",
+        ScoreCategory.SEO,
+        "One crawled page has no H1.",
+        "Clear headings help visitors and search engines understand the page.",
+      ),
+      action(
+        "Tighten missing page metadata",
+        "Write the missing page description using specific visit information.",
+        ScoreCategory.SEO,
+        "One page is missing a meta description.",
+        "Complete metadata improves search-result clarity.",
+      ),
+      action(
+        "Keep public calls to action consistent",
+        "Use the same practical next-step language across important pages and profiles.",
+        ScoreCategory.BRANDING,
+        "Current public paths use several different labels.",
+        "Consistent actions reduce customer uncertainty.",
+      ),
     ];
   }
   if (config.archetype === "saas_software") {
     return [
-      action("Clarify the free-trial and demo paths", "Give the primary buyer one obvious choice between starting a trial and requesting a demo.", ScoreCategory.WEBSITE, "The website exposes both conversion paths.", "The recommendation matches the saved SaaS offer and buyer journey."),
-      action("Explain the operational outcome above the fold", "Connect the product headline to the workflow bottleneck it resolves.", ScoreCategory.BRANDING, "Business Context identifies operations leaders as the target buyer.", "Specific outcome language supports qualified signups."),
-      action("Publish short product workflows", "Use LinkedIn and YouTube Shorts for practical product demonstrations.", ScoreCategory.SOCIAL, "Confirmed professional and video profiles support these channels.", "The platform mix fits a B2B software audience."),
-      action("Complete page metadata", "Write the missing page description.", ScoreCategory.SEO, "One page is missing a meta description.", "Complete metadata supports search clarity."),
-      action("Keep one H1 per important page", "Add the missing page headline.", ScoreCategory.SEO, "One page has no H1.", "Consistent headings improve comprehension."),
+      action(
+        "Clarify the free-trial and demo paths",
+        "Give the primary buyer one obvious choice between starting a trial and requesting a demo.",
+        ScoreCategory.WEBSITE,
+        "The website exposes both conversion paths.",
+        "The recommendation matches the saved SaaS offer and buyer journey.",
+      ),
+      action(
+        "Explain the operational outcome above the fold",
+        "Connect the product headline to the workflow bottleneck it resolves.",
+        ScoreCategory.BRANDING,
+        "Business Context identifies operations leaders as the target buyer.",
+        "Specific outcome language supports qualified signups.",
+      ),
+      action(
+        "Publish short product workflows",
+        "Use LinkedIn and YouTube Shorts for practical product demonstrations.",
+        ScoreCategory.SOCIAL,
+        "Confirmed professional and video profiles support these channels.",
+        "The platform mix fits a B2B software audience.",
+      ),
+      action(
+        "Complete page metadata",
+        "Write the missing page description.",
+        ScoreCategory.SEO,
+        "One page is missing a meta description.",
+        "Complete metadata supports search clarity.",
+      ),
+      action(
+        "Keep one H1 per important page",
+        "Add the missing page headline.",
+        ScoreCategory.SEO,
+        "One page has no H1.",
+        "Consistent headings improve comprehension.",
+      ),
     ];
   }
   if (config.archetype === "local_service") {
     return [
-      action("Make call and estimate actions prominent", "Use one clear call or estimate path on every important service page.", ScoreCategory.WEBSITE, "Current conversion context prioritizes calls and estimates.", "Local homeowners need a fast contact path."),
-      action("Put service-area proof near the contact path", "Show verified local coverage and approved customer proof.", ScoreCategory.REVIEWS, "A confirmed Google listing supports local trust.", "Local proof reduces uncertainty before a call."),
-      action("Answer common roofing questions", "Create practical social posts about inspections, repairs, and storm response.", ScoreCategory.SOCIAL, "Confirmed local social profiles support educational content.", "Useful answers can build trust before a homeowner contacts the business."),
-      action("Complete page metadata", "Write the missing page description.", ScoreCategory.SEO, "One page is missing a meta description.", "Complete metadata supports local search clarity."),
-      action("Add the missing service-page H1", "Use one descriptive headline.", ScoreCategory.SEO, "One page has no H1.", "Clear structure helps visitors scan services."),
+      action(
+        "Make call and estimate actions prominent",
+        "Use one clear call or estimate path on every important service page.",
+        ScoreCategory.WEBSITE,
+        "Current conversion context prioritizes calls and estimates.",
+        "Local homeowners need a fast contact path.",
+      ),
+      action(
+        "Put service-area proof near the contact path",
+        "Show verified local coverage and approved customer proof.",
+        ScoreCategory.REVIEWS,
+        "A confirmed Google listing supports local trust.",
+        "Local proof reduces uncertainty before a call.",
+      ),
+      action(
+        "Answer common roofing questions",
+        "Create practical social posts about inspections, repairs, and storm response.",
+        ScoreCategory.SOCIAL,
+        "Confirmed local social profiles support educational content.",
+        "Useful answers can build trust before a homeowner contacts the business.",
+      ),
+      action(
+        "Complete page metadata",
+        "Write the missing page description.",
+        ScoreCategory.SEO,
+        "One page is missing a meta description.",
+        "Complete metadata supports local search clarity.",
+      ),
+      action(
+        "Add the missing service-page H1",
+        "Use one descriptive headline.",
+        ScoreCategory.SEO,
+        "One page has no H1.",
+        "Clear structure helps visitors scan services.",
+      ),
     ];
   }
   if (!config.hasWebsite) {
     return [
-      action("Rewrite the profile bio around the main offer", "State who the studio helps, what it offers, and the next step.", ScoreCategory.SOCIAL, "The audit uses confirmed Instagram and TikTok profiles plus Business Context.", "A clear bio anchors a social-first conversion path."),
-      action("Build a focused link-in-bio structure", "Prioritize commissions, products, and contact without adding an unsupported website task.", ScoreCategory.SOCIAL, "No website was supplied, so profile actions are the current conversion surface.", "The recommendation supports social-first sales and inquiries."),
-      action("Pin offer, proof, and next-step content", "Create three pinned posts that explain the offer, show authentic proof, and direct viewers to DM or the profile link.", ScoreCategory.BRANDING, "Confirmed social profiles are the primary public presence.", "Pinned content helps new profile visitors understand the business."),
-      action("Create a weekly content plan", "Rotate education, proof, offer clarity, and direct action.", ScoreCategory.SOCIAL, "Content direction comes from Business Context, not post-performance data.", "A lightweight plan turns strategy into usable assets."),
-      action("Prepare a review-request template", "Ask satisfied commission customers for authentic proof without inventing quotes.", ScoreCategory.REVIEWS, "Current review coverage is limited.", "Real customer proof can strengthen trust."),
+      action(
+        "Rewrite the profile bio around the main offer",
+        "State who the studio helps, what it offers, and the next step.",
+        ScoreCategory.SOCIAL,
+        "The audit uses confirmed Instagram and TikTok profiles plus Business Context.",
+        "A clear bio anchors a social-first conversion path.",
+      ),
+      action(
+        "Build a focused link-in-bio structure",
+        "Prioritize commissions, products, and contact without adding an unsupported website task.",
+        ScoreCategory.SOCIAL,
+        "No website was supplied, so profile actions are the current conversion surface.",
+        "The recommendation supports social-first sales and inquiries.",
+      ),
+      action(
+        "Pin offer, proof, and next-step content",
+        "Create three pinned posts that explain the offer, show authentic proof, and direct viewers to DM or the profile link.",
+        ScoreCategory.BRANDING,
+        "Confirmed social profiles are the primary public presence.",
+        "Pinned content helps new profile visitors understand the business.",
+      ),
+      action(
+        "Create a weekly content plan",
+        "Rotate education, proof, offer clarity, and direct action.",
+        ScoreCategory.SOCIAL,
+        "Content direction comes from Business Context, not post-performance data.",
+        "A lightweight plan turns strategy into usable assets.",
+      ),
+      action(
+        "Prepare a review-request template",
+        "Ask satisfied commission customers for authentic proof without inventing quotes.",
+        ScoreCategory.REVIEWS,
+        "Current review coverage is limited.",
+        "Real customer proof can strengthen trust.",
+      ),
     ];
   }
   return [
-    action("Make the consultation path prominent", "Use one clear booking action across important pages.", ScoreCategory.WEBSITE, "The observed conversion goal is an introductory consultation.", "Prospects need a clear next step."),
-    action("Explain the advisory outcome", "Connect services to a concrete operational result.", ScoreCategory.BRANDING, "Business Context identifies owner-led firms as the audience.", "Specific outcomes improve relevance."),
-    action("Publish practical advisory lessons", "Share useful operational guidance on LinkedIn.", ScoreCategory.SOCIAL, "A confirmed LinkedIn profile supports professional education.", "The channel matches the target audience."),
-    action("Complete page metadata", "Write the missing description.", ScoreCategory.SEO, "One page is missing a meta description.", "Complete metadata supports search clarity."),
+    action(
+      "Make the consultation path prominent",
+      "Use one clear booking action across important pages.",
+      ScoreCategory.WEBSITE,
+      "The observed conversion goal is an introductory consultation.",
+      "Prospects need a clear next step.",
+    ),
+    action(
+      "Explain the advisory outcome",
+      "Connect services to a concrete operational result.",
+      ScoreCategory.BRANDING,
+      "Business Context identifies owner-led firms as the audience.",
+      "Specific outcomes improve relevance.",
+    ),
+    action(
+      "Publish practical advisory lessons",
+      "Share useful operational guidance on LinkedIn.",
+      ScoreCategory.SOCIAL,
+      "A confirmed LinkedIn profile supports professional education.",
+      "The channel matches the target audience.",
+    ),
+    action(
+      "Complete page metadata",
+      "Write the missing description.",
+      ScoreCategory.SEO,
+      "One page is missing a meta description.",
+      "Complete metadata supports search clarity.",
+    ),
   ];
 }
 
@@ -1561,7 +1851,9 @@ function createFindings(
       id: "finding-opportunity",
       title: "The primary conversion path can be more prominent",
       description: config.conversionGoal,
-      category: config.hasWebsite ? ScoreCategory.WEBSITE : ScoreCategory.SOCIAL,
+      category: config.hasWebsite
+        ? ScoreCategory.WEBSITE
+        : ScoreCategory.SOCIAL,
       severity: FindingSeverity.MEDIUM,
       source: "selected_audit" as const,
     },
@@ -1584,44 +1876,48 @@ function createCompetitorComparison(date: Date): CompetitorComparisonResult {
     competitorValue: "91/100",
     sourceUrls: ["https://schooners.com/", "https://boardwalk.example/"],
   };
-  const categoryComparisons: CompetitorComparisonResult["categoryComparisons"] = [
-    {
-      competitorId: "competitor-fixture",
-      competitorName: "Boardwalk Kitchen",
-      category: "website",
-      businessScore: 78,
-      competitorScore: 91,
-      businessDisplay: "78/100",
-      competitorDisplay: "91/100",
-      status: "competitor_stronger",
-      observation: "The competitor presents one more prominent primary offer path.",
-      evidence: [evidence],
-    },
-    {
-      competitorId: "competitor-fixture",
-      competitorName: "Boardwalk Kitchen",
-      category: "reviews",
-      businessScore: null,
-      competitorScore: null,
-      businessDisplay: "Not comparable",
-      competitorDisplay: "Not comparable",
-      status: "not_comparable",
-      observation: "Comparable review evidence was unavailable for the competitor.",
-      evidence: [],
-    },
-    {
-      competitorId: "competitor-fixture",
-      competitorName: "Boardwalk Kitchen",
-      category: "social",
-      businessScore: 70,
-      competitorScore: 70,
-      businessDisplay: "2 confirmed",
-      competitorDisplay: "2 confirmed / 2 pending",
-      status: "similar",
-      observation: "Both businesses have two confirmed profiles; additional competitor links remain pending.",
-      evidence: [],
-    },
-  ];
+  const categoryComparisons: CompetitorComparisonResult["categoryComparisons"] =
+    [
+      {
+        competitorId: "competitor-fixture",
+        competitorName: "Boardwalk Kitchen",
+        category: "website",
+        businessScore: 78,
+        competitorScore: 91,
+        businessDisplay: "78/100",
+        competitorDisplay: "91/100",
+        status: "competitor_stronger",
+        observation:
+          "The competitor presents one more prominent primary offer path.",
+        evidence: [evidence],
+      },
+      {
+        competitorId: "competitor-fixture",
+        competitorName: "Boardwalk Kitchen",
+        category: "reviews",
+        businessScore: null,
+        competitorScore: null,
+        businessDisplay: "Not comparable",
+        competitorDisplay: "Not comparable",
+        status: "not_comparable",
+        observation:
+          "Comparable review evidence was unavailable for the competitor.",
+        evidence: [],
+      },
+      {
+        competitorId: "competitor-fixture",
+        competitorName: "Boardwalk Kitchen",
+        category: "social",
+        businessScore: 70,
+        competitorScore: 70,
+        businessDisplay: "2 confirmed",
+        competitorDisplay: "2 confirmed / 2 pending",
+        status: "similar",
+        observation:
+          "Both businesses have two confirmed profiles; additional competitor links remain pending.",
+        evidence: [],
+      },
+    ];
   const competitorEdge = {
     id: "competitor-edge",
     competitorId: "competitor-fixture",
@@ -1681,7 +1977,9 @@ function createCompetitorIntelligence(
       topBusinessAdvantages: [],
       topCompetitorAdvantages: ["Clearer public homepage offer path"],
       topOpportunities: ["Clarify the primary visitor action"],
-      recommendedResponses: ["Make current visit and order paths more prominent."],
+      recommendedResponses: [
+        "Make current visit and order paths more prominent.",
+      ],
       questionsToInvestigate: [],
       limitations: comparison.limitations,
       source: "deterministic_fallback",
@@ -1727,9 +2025,9 @@ function buildExecutiveSummary(config: FixtureConfig, score: number) {
     return `${config.name} has a ${score}/100 social-first foundation based on confirmed profiles, Business Context, goals, and trust evidence. Website and SEO were not supplied and did not reduce the score. Start with profile clarity, a focused link-in-bio path, and pinned offer and proof content. Individual post performance was not analyzed.`;
   }
   if (config.archetype === "cottage_food") {
-    return `${config.name}'s ${score}/100 assessment is grounded in a six-page technical crawl, confirmed Business Context, one user-confirmed social profile, three publicly detected social links, and a confirmed Google listing with limited review data. The homepage has one verified H1. Start by simplifying the manual preorder inquiry and making that confirmed path more prominent; the menu-only H1 gap and missing page descriptions follow. Social posts and review performance were not analyzed.`;
+    return `${config.name}'s Website Growth Score is ${score}/100, grounded in a six-page technical crawl and confirmed Business Context. The homepage has one verified H1. Start by simplifying the manual preorder inquiry and making that confirmed path more prominent; the menu-only H1 gap and missing page descriptions follow.`;
   }
-  return `${config.name} has a ${score}/100 online foundation. Confirmed profiles and clear Business Context are working well. The controlled crawl found one page without an H1 and one missing meta description. Start with the highest-confidence conversion and structure actions; individual social-post performance was not analyzed.`;
+  return `${config.name} has a ${score}/100 Website Growth Score based on saved website and SEO evidence. The controlled crawl found one page without an H1 and one missing meta description. Start with the highest-confidence conversion and structure action, then rerun the audit to verify the result.`;
 }
 
 function expectedOutcome(category: ScoreCategory) {
@@ -1759,5 +2057,8 @@ function titleCase(value: string) {
 }
 
 function slug(value: string) {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
 }

@@ -53,7 +53,7 @@ type DeckSlide = {
 
 function BigScore({
   score,
-  label = "Overall score",
+  label = "Website Growth Score",
   compact = false,
 }: {
   score: number;
@@ -115,7 +115,11 @@ export function PresentationDeck({ data }: { data: PresentationDeckData }) {
         content: (
           <PresentationSlide
             slideId="cover"
-            eyebrow="Growth Audit Report"
+            eyebrow={
+              data.productScope === "website_seo"
+                ? "Website & SEO Growth Report"
+                : "Growth Audit Report"
+            }
             title={data.businessName}
             icon={Sparkles}
             density="spacious"
@@ -123,8 +127,9 @@ export function PresentationDeck({ data }: { data: PresentationDeckData }) {
             <div className="grid h-full min-h-0 items-center gap-5 sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-10">
               <div className="min-w-0 self-center">
                 <p className="max-w-3xl text-lg font-medium leading-snug sm:text-2xl lg:text-3xl">
-                  A focused view of what is working, what needs attention, and
-                  what to implement next.
+                  {data.productScope === "website_seo"
+                    ? "See what is helping or hurting visibility and conversions, what to fix first, and how to verify progress."
+                    : "A focused view of what is working, what needs attention, and what to implement next."}
                 </p>
                 <div className="mt-4 flex flex-wrap gap-2 text-xs sm:mt-6 sm:text-sm">
                   <span className="rounded-full border border-border bg-card px-3 py-1.5 font-medium">
@@ -139,7 +144,7 @@ export function PresentationDeck({ data }: { data: PresentationDeckData }) {
                 </div>
               </div>
               <div className="flex justify-center sm:justify-end">
-                <BigScore score={data.overallScore} />
+                <BigScore score={data.overallScore} label={data.scoreLabel} />
               </div>
             </div>
           </PresentationSlide>
@@ -161,7 +166,11 @@ export function PresentationDeck({ data }: { data: PresentationDeckData }) {
                 <SlideBulletList items={data.summary.working} tone="positive" />
               </SlideInsightCard>
               <SlideInsightCard title="What needs attention" tone="warning">
-                <SlideBulletList items={data.summary.attention} tone="warning" compact />
+                <SlideBulletList
+                  items={data.summary.attention}
+                  tone="warning"
+                  compact
+                />
               </SlideInsightCard>
               <SlideInsightCard title="Start here">
                 <SlideBulletList items={data.summary.startHere} />
@@ -193,12 +202,18 @@ export function PresentationDeck({ data }: { data: PresentationDeckData }) {
                   label="Target audience"
                   value={data.businessContext.targetAudience}
                 />
-                <ContextItem label="Main offer" value={data.businessContext.mainOffer} />
+                <ContextItem
+                  label="Main offer"
+                  value={data.businessContext.mainOffer}
+                />
                 <ContextItem
                   label="Observed conversion goal"
                   value={data.businessContext.conversionGoal}
                 />
-                <ContextItem label="Brand tone" value={data.businessContext.brandTone} />
+                <ContextItem
+                  label="Brand tone"
+                  value={data.businessContext.brandTone}
+                />
               </dl>
             ) : (
               <EmptySlideState
@@ -215,8 +230,12 @@ export function PresentationDeck({ data }: { data: PresentationDeckData }) {
         content: (
           <PresentationSlide
             slideId="score-breakdown"
-            eyebrow="Overall Health"
-            title="Score breakdown"
+            eyebrow={data.scoreLabel}
+            title={
+              data.legacyScoring
+                ? "Score breakdown"
+                : "Website health breakdown"
+            }
             icon={BarChart3}
             footerNote={
               data.assessmentMode === "social_first"
@@ -226,7 +245,11 @@ export function PresentationDeck({ data }: { data: PresentationDeckData }) {
           >
             <div className="grid h-full min-h-0 content-center items-center gap-4 sm:grid-cols-[auto_minmax(0,1fr)] sm:gap-7">
               <div className="flex items-center justify-center sm:block">
-                <BigScore score={data.overallScore} compact />
+                <BigScore
+                  score={data.overallScore}
+                  label={data.scoreLabel}
+                  compact
+                />
               </div>
               <SlideMetricGrid columns={3} className="content-center">
                 {data.scores.map((score) => (
@@ -259,7 +282,9 @@ export function PresentationDeck({ data }: { data: PresentationDeckData }) {
             eyebrow="Website Analysis"
             title="Website and conversion"
             icon={Globe2}
-            footerNote={data.website.available ? data.website.assessmentNote : null}
+            footerNote={
+              data.website.available ? data.website.assessmentNote : null
+            }
             density="compact"
           >
             {!data.website.available ? (
@@ -270,9 +295,19 @@ export function PresentationDeck({ data }: { data: PresentationDeckData }) {
             ) : (
               <div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] gap-2 sm:gap-3">
                 <SlideMetricGrid columns={2}>
-                  <SlideMetric label="Website score" value={`${data.website.score}/100`} />
-                  <SlideMetric label="Pages scanned" value={data.website.pagesScanned} />
-                  <SlideMetric label="Homepage H1" value={data.website.h1Status} tone="warning" />
+                  <SlideMetric
+                    label="Website score"
+                    value={`${data.website.score}/100`}
+                  />
+                  <SlideMetric
+                    label="Pages scanned"
+                    value={data.website.pagesScanned}
+                  />
+                  <SlideMetric
+                    label="Homepage H1"
+                    value={data.website.h1Status}
+                    tone="warning"
+                  />
                   <SlideMetric
                     label="Primary CTA clarity"
                     value={data.website.primaryCtaClarity}
@@ -317,7 +352,10 @@ export function PresentationDeck({ data }: { data: PresentationDeckData }) {
             {!data.seo.available || data.seo.score === null ? (
               <EmptySlideState
                 title="SEO not applicable yet"
-                description={data.seo.recommendedFixes.at(0) ?? "Add a website to unlock SEO analysis."}
+                description={
+                  data.seo.recommendedFixes.at(0) ??
+                  "Add a website to unlock SEO analysis."
+                }
               />
             ) : (
               <div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] gap-2 sm:gap-3">
@@ -332,7 +370,11 @@ export function PresentationDeck({ data }: { data: PresentationDeckData }) {
                 </div>
                 <SlideStatusGrid statuses={data.seo.checks} />
                 <SlideInsightCard title="Highest-value fixes" tone="warning">
-                  <SlideBulletList items={data.seo.recommendedFixes} tone="warning" compact />
+                  <SlideBulletList
+                    items={data.seo.recommendedFixes}
+                    tone="warning"
+                    compact
+                  />
                 </SlideInsightCard>
               </div>
             )}
@@ -357,15 +399,26 @@ export function PresentationDeck({ data }: { data: PresentationDeckData }) {
                   label={data.reviews.scoreLabel}
                   value={`${data.reviews.score}/100`}
                   detail={data.reviews.scoreDetail}
+                  detailClassName="hidden xl:block"
                   tone={
                     data.reviews.scoreLabel === "Listing-presence score"
                       ? "warning"
                       : "positive"
                   }
                 />
-                <SlideMetric label="Google Business" value={data.reviews.googleStatus} tone="positive" />
-                <SlideMetric label="Google rating" value={data.reviews.rating} />
-                <SlideMetric label="Public review count" value={data.reviews.reviewCount} />
+                <SlideMetric
+                  label="Google Business"
+                  value={data.reviews.googleStatus}
+                  tone="positive"
+                />
+                <SlideMetric
+                  label="Google rating"
+                  value={data.reviews.rating}
+                />
+                <SlideMetric
+                  label="Public review count"
+                  value={data.reviews.reviewCount}
+                />
               </SlideMetricGrid>
               <ChipPanel
                 label="Confirmed review platforms"
@@ -380,7 +433,10 @@ export function PresentationDeck({ data }: { data: PresentationDeckData }) {
                   </p>
                 </SlideInsightCard>
                 <SlideInsightCard title="Recommended actions">
-                  <SlideBulletList items={data.reviews.recommendedActions} compact />
+                  <SlideBulletList
+                    items={data.reviews.recommendedActions}
+                    compact
+                  />
                 </SlideInsightCard>
               </div>
             </div>
@@ -401,7 +457,10 @@ export function PresentationDeck({ data }: { data: PresentationDeckData }) {
           >
             <div className="grid h-full min-h-0 grid-rows-[auto_auto_minmax(0,1fr)] gap-2 sm:gap-3">
               <SlideMetricGrid columns={3}>
-                <SlideMetric label="Social score" value={`${data.social.score}/100`} />
+                <SlideMetric
+                  label="Social score"
+                  value={`${data.social.score}/100`}
+                />
                 <SlideMetric
                   label="Branding score"
                   value={
@@ -415,21 +474,28 @@ export function PresentationDeck({ data }: { data: PresentationDeckData }) {
                   label="Profile coverage"
                   value={`${data.social.confirmedCount} confirmed / ${data.social.detectedCount} detected`}
                   detail={`${data.social.pendingCount} pending; ${data.social.contentAnalyzedCount} profile contents analyzed`}
+                  detailClassName="hidden sm:block"
                 />
               </SlideMetricGrid>
               <div className="flex flex-wrap items-center gap-2 text-xs sm:text-sm">
-                <ResultBadge tone="positive">{data.socialStrategy.sourceLabel}</ResultBadge>
-                <span className="font-medium">Confirmed: {data.social.confirmedPlatforms.join(", ") || "None"}</span>
+                <ResultBadge tone="positive">
+                  {data.socialStrategy.sourceLabel}
+                </ResultBadge>
+                <span className="font-medium">
+                  Confirmed:{" "}
+                  {data.social.confirmedPlatforms.join(", ") || "None"}
+                </span>
                 {data.social.recommendedChannels.length > 0 ? (
                   <span className="text-muted">
-                    Recommended next: {data.social.recommendedChannels.join(" and ")}
+                    Recommended next:{" "}
+                    {data.social.recommendedChannels.join(" and ")}
                   </span>
                 ) : null}
               </div>
               <div className="grid min-h-0 gap-2 sm:grid-cols-3 sm:gap-3">
                 {data.socialStrategy.contentPillars.map((pillar) => (
                   <SlideInsightCard key={pillar.title} title={pillar.title}>
-                    <p className="text-xs leading-5 text-muted sm:text-sm sm:leading-6">
+                    <p className="hidden text-xs leading-5 text-muted sm:block sm:text-sm sm:leading-6">
                       {pillar.description}
                     </p>
                   </SlideInsightCard>
@@ -457,16 +523,27 @@ export function PresentationDeck({ data }: { data: PresentationDeckData }) {
             <div className="grid h-full min-h-0 grid-rows-[minmax(0,1fr)_auto] gap-2 sm:gap-3">
               <div className="grid min-h-0 gap-2 sm:grid-cols-3 sm:gap-3">
                 {data.socialStrategy.contentIdeas.map((idea, index) => (
-                  <article key={`${idea.platform}-${idea.hook}`} className="min-h-0 rounded-lg border border-border bg-card p-3 sm:p-4">
+                  <article
+                    key={`${idea.platform}-${idea.hook}`}
+                    className="min-h-0 rounded-lg border border-border bg-card p-3 sm:p-4"
+                  >
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs font-semibold uppercase text-accent">Post {index + 1}</span>
+                      <span className="text-xs font-semibold uppercase text-accent">
+                        Post {index + 1}
+                      </span>
                       <span className="rounded-full border border-border px-2 py-1 text-[0.65rem] font-medium sm:text-xs">
                         {idea.platform}
                       </span>
                     </div>
-                    <h2 className="mt-2 text-base font-semibold leading-tight sm:text-lg">{idea.hook}</h2>
-                    <p className="mt-2 text-xs leading-5 text-muted sm:text-sm sm:leading-6">{idea.concept}</p>
-                    <p className="mt-2 text-xs font-semibold text-accent sm:text-sm">{idea.callToAction}</p>
+                    <h2 className="mt-2 text-base font-semibold leading-tight sm:text-lg">
+                      {idea.hook}
+                    </h2>
+                    <p className="mt-2 text-xs leading-5 text-muted sm:text-sm sm:leading-6">
+                      {idea.concept}
+                    </p>
+                    <p className="mt-2 text-xs font-semibold text-accent sm:text-sm">
+                      {idea.callToAction}
+                    </p>
                   </article>
                 ))}
               </div>
@@ -538,13 +615,20 @@ export function PresentationDeck({ data }: { data: PresentationDeckData }) {
           >
             <div className="grid h-full min-h-0 content-center gap-2 sm:grid-cols-3 sm:gap-3">
               {data.competitor.opportunities.map((opportunity, index) => (
-                <article key={opportunity.title} className="min-h-0 rounded-lg border border-border bg-card p-3 sm:p-4">
+                <article
+                  key={opportunity.title}
+                  className="min-h-0 rounded-lg border border-border bg-card p-3 sm:p-4"
+                >
                   <p className="text-xs font-semibold uppercase text-accent">
                     {index + 1}. {opportunity.category}
                   </p>
-                  <h2 className="mt-1.5 text-base font-semibold leading-tight sm:text-lg">{opportunity.title}</h2>
+                  <h2 className="mt-1.5 text-base font-semibold leading-tight sm:text-lg">
+                    {opportunity.title}
+                  </h2>
                   <p className="mt-2 text-xs leading-5 text-muted sm:text-sm">
-                    <span className="font-semibold text-foreground">Evidence:</span>{" "}
+                    <span className="font-semibold text-foreground">
+                      Evidence:
+                    </span>{" "}
                     {opportunity.evidence}
                   </p>
                   <p className="mt-2 text-xs leading-5 sm:text-sm">
@@ -604,9 +688,16 @@ export function PresentationDeck({ data }: { data: PresentationDeckData }) {
           >
             <div className="grid h-full min-h-0 grid-cols-2 gap-2 sm:gap-3">
               {data.actionPlan.map((week) => (
-                <article key={week.week} className="min-h-0 rounded-lg border border-border bg-card p-3 sm:p-4">
-                  <p className="text-xs font-semibold uppercase text-accent">{week.week}</p>
-                  <h2 className="mt-1 text-sm font-semibold leading-tight sm:text-lg">{week.outcome}</h2>
+                <article
+                  key={week.week}
+                  className="min-h-0 rounded-lg border border-border bg-card p-3 sm:p-4"
+                >
+                  <p className="text-xs font-semibold uppercase text-accent">
+                    {week.week}
+                  </p>
+                  <h2 className="mt-1 text-sm font-semibold leading-tight sm:text-lg">
+                    {week.outcome}
+                  </h2>
                   <div className="mt-2">
                     <SlideBulletList items={week.bullets} compact />
                   </div>
@@ -628,20 +719,34 @@ export function PresentationDeck({ data }: { data: PresentationDeckData }) {
             density="compact"
           >
             <div className="flex h-full min-h-0 flex-col justify-center gap-2 sm:gap-3">
-              <p className="max-w-4xl text-base font-medium leading-snug sm:text-xl">{data.consultant.lead}</p>
+              <p className="max-w-4xl text-base font-medium leading-snug sm:text-xl">
+                {data.consultant.lead}
+              </p>
               <div className="grid gap-2 sm:grid-cols-2 sm:gap-3">
                 {data.consultant.prompts.map((prompt) => (
-                  <div key={prompt} className="rounded-lg border border-border bg-card px-3 py-2.5 text-sm font-medium leading-snug shadow-sm sm:px-4 sm:py-3 sm:text-base">
+                  <div
+                    key={prompt}
+                    className="rounded-lg border border-border bg-card px-3 py-2.5 text-sm font-medium leading-snug shadow-sm sm:px-4 sm:py-3 sm:text-base"
+                  >
                     &quot;{prompt}&quot;
                   </div>
                 ))}
               </div>
               <div className="flex flex-wrap gap-2">
-                <Link href={chatHref} className={buttonVariants({ variant: "primary", size: "lg" })}>
+                <Link
+                  href={chatHref}
+                  className={buttonVariants({ variant: "primary", size: "lg" })}
+                >
                   <MessageSquareText className="size-4" />
                   Open AI Consultant
                 </Link>
-                <Link href={actionPlanHref} className={buttonVariants({ variant: "secondary", size: "lg" })}>
+                <Link
+                  href={actionPlanHref}
+                  className={buttonVariants({
+                    variant: "secondary",
+                    size: "lg",
+                  })}
+                >
                   <CheckCircle2 className="size-4" />
                   Open Action Plan
                 </Link>
@@ -651,6 +756,17 @@ export function PresentationDeck({ data }: { data: PresentationDeckData }) {
         ),
       },
     );
+
+    if (data.productScope === "website_seo") {
+      const disabledSlideIds = new Set([
+        "reviews",
+        "social-strategy",
+        "social-content",
+        "competitor-comparison",
+        "competitor-opportunities",
+      ]);
+      return result.filter((slide) => !disabledSlideIds.has(slide.id));
+    }
 
     return result;
   }, [actionPlanHref, chatHref, data]);
@@ -684,15 +800,20 @@ export function PresentationDeck({ data }: { data: PresentationDeckData }) {
   }, []);
 
   useEffect(() => {
-    const onFullscreenChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
+    const onFullscreenChange = () =>
+      setIsFullscreen(Boolean(document.fullscreenElement));
     document.addEventListener("fullscreenchange", onFullscreenChange);
-    return () => document.removeEventListener("fullscreenchange", onFullscreenChange);
+    return () =>
+      document.removeEventListener("fullscreenchange", onFullscreenChange);
   }, []);
 
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage) return;
-    const timeout = window.setTimeout(() => stage.focus({ preventScroll: true }), 0);
+    const timeout = window.setTimeout(
+      () => stage.focus({ preventScroll: true }),
+      0,
+    );
     return () => window.clearTimeout(timeout);
   }, [currentSlide]);
 
@@ -736,7 +857,10 @@ export function PresentationDeck({ data }: { data: PresentationDeckData }) {
       if (document.fullscreenElement) {
         await document.exitFullscreen();
       } else {
-        if (!document.fullscreenEnabled || !rootRef.current?.requestFullscreen) {
+        if (
+          !document.fullscreenEnabled ||
+          !rootRef.current?.requestFullscreen
+        ) {
           setFullscreenUnavailable(true);
           return;
         }
@@ -771,7 +895,10 @@ export function PresentationDeck({ data }: { data: PresentationDeckData }) {
   return (
     <div
       ref={rootRef}
-      className={cn(styles.root, "fixed inset-0 z-[100] bg-background text-foreground")}
+      className={cn(
+        styles.root,
+        "fixed inset-0 z-[100] bg-background text-foreground",
+      )}
       data-presentation-root
     >
       <header
@@ -782,10 +909,14 @@ export function PresentationDeck({ data }: { data: PresentationDeckData }) {
       >
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold">{data.businessName}</p>
-          <p className="hidden text-xs text-muted sm:block">{data.auditDate} | Completed</p>
+          <p className="hidden text-xs text-muted sm:block">
+            {data.auditDate} | Completed
+          </p>
         </div>
         <div className="min-w-0 flex-1 text-center">
-          <p className="truncate text-xs font-medium sm:text-sm">{slide.title}</p>
+          <p className="truncate text-xs font-medium sm:text-sm">
+            {slide.title}
+          </p>
           <p
             className="text-[0.65rem] text-muted sm:text-xs"
             data-slide-counter
@@ -812,7 +943,11 @@ export function PresentationDeck({ data }: { data: PresentationDeckData }) {
             title={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
             className={buttonVariants({ variant: "secondary", size: "sm" })}
           >
-            {isFullscreen ? <Minimize2 className="size-4" /> : <Expand className="size-4" />}
+            {isFullscreen ? (
+              <Minimize2 className="size-4" />
+            ) : (
+              <Expand className="size-4" />
+            )}
             <span className="hidden lg:inline">Fullscreen</span>
           </button>
           <Link
@@ -880,7 +1015,9 @@ export function PresentationDeck({ data }: { data: PresentationDeckData }) {
                 title={`${index + 1}. ${item.title}`}
                 className={cn(
                   "h-2.5 rounded-full bg-foreground/20 transition-all duration-150 motion-reduce:transition-none",
-                  index === currentSlide ? "w-7 bg-accent" : "w-2.5 hover:bg-foreground/40",
+                  index === currentSlide
+                    ? "w-7 bg-accent"
+                    : "w-2.5 hover:bg-foreground/40",
                 )}
               />
             ))}
@@ -918,9 +1055,18 @@ function ContextItem({
   className?: string;
 }) {
   return (
-    <div className={cn("min-w-0 border-b border-r border-border p-3 sm:p-4", className)}>
-      <dt className="text-[0.65rem] font-semibold uppercase text-muted sm:text-xs">{label}</dt>
-      <dd className="mt-1 text-xs leading-5 sm:text-base sm:leading-6">{value}</dd>
+    <div
+      className={cn(
+        "min-w-0 border-b border-r border-border p-3 sm:p-4",
+        className,
+      )}
+    >
+      <dt className="text-[0.65rem] font-semibold uppercase text-muted sm:text-xs">
+        {label}
+      </dt>
+      <dd className="mt-1 text-xs leading-5 sm:text-base sm:leading-6">
+        {value}
+      </dd>
     </div>
   );
 }
@@ -937,12 +1083,22 @@ function ChipPanel({
   horizontal?: boolean;
 }) {
   return (
-    <section className={cn("min-h-0 rounded-lg border border-border bg-card p-3 sm:p-4", horizontal && "flex items-center gap-3")}>
+    <section
+      className={cn(
+        "min-h-0 rounded-lg border border-border bg-card p-3 sm:p-4",
+        horizontal && "flex items-center gap-3",
+      )}
+    >
       <h2 className="shrink-0 text-xs font-semibold sm:text-sm">{label}</h2>
-      <div className={cn("flex flex-wrap gap-1.5", horizontal ? "mt-0" : "mt-2")}>
+      <div
+        className={cn("flex flex-wrap gap-1.5", horizontal ? "mt-0" : "mt-2")}
+      >
         {items.length > 0 ? (
           items.map((item) => (
-            <span key={item} className="rounded-full border border-border bg-background px-2 py-1 text-[0.65rem] font-medium sm:text-xs">
+            <span
+              key={item}
+              className="rounded-full border border-border bg-background px-2 py-1 text-[0.65rem] font-medium sm:text-xs"
+            >
               {item}
             </span>
           ))
@@ -965,7 +1121,9 @@ function EmptySlideState({
     <div className="flex h-full min-h-0 items-center justify-center rounded-lg border border-dashed border-border bg-card p-5 text-center sm:p-8">
       <div className="max-w-3xl">
         <h2 className="text-2xl font-semibold sm:text-4xl">{title}</h2>
-        <p className="mt-3 text-sm leading-6 text-muted sm:text-xl sm:leading-8">{description}</p>
+        <p className="mt-3 text-sm leading-6 text-muted sm:text-xl sm:leading-8">
+          {description}
+        </p>
       </div>
     </div>
   );
@@ -974,6 +1132,10 @@ function EmptySlideState({
 function isInteractiveTarget(target: EventTarget | null) {
   return (
     target instanceof HTMLElement &&
-    Boolean(target.closest("a, button, input, textarea, select, [contenteditable='true']"))
+    Boolean(
+      target.closest(
+        "a, button, input, textarea, select, [contenteditable='true']",
+      ),
+    )
   );
 }

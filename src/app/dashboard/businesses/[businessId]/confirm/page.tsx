@@ -10,7 +10,7 @@ import {
   Trash2,
 } from "lucide-react";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
 import {
   addManualProfile,
@@ -33,6 +33,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SubmitButton } from "@/components/ui/submit-button";
 import { platformLabels } from "@/lib/profiles/platforms";
+import { isWebsiteSeoLaunchScope } from "@/lib/features/feature-flags";
 import {
   hasConfirmedAuditablePresence,
   hasConfirmedWebsite,
@@ -96,7 +97,9 @@ function ProfileEditForm({
         <input type="hidden" name="businessId" value={businessId} />
         <input type="hidden" name="profileId" value={profile.id} />
         <div className="space-y-2">
-          <Label htmlFor={`profileValue-${profile.id}`}>Public profile URL</Label>
+          <Label htmlFor={`profileValue-${profile.id}`}>
+            Public profile URL
+          </Label>
           <Input
             id={`profileValue-${profile.id}`}
             name="profileValue"
@@ -105,11 +108,7 @@ function ProfileEditForm({
             required
           />
         </div>
-        <SubmitButton
-          variant="primary"
-          size="sm"
-          pendingLabel="Saving..."
-        >
+        <SubmitButton variant="primary" size="sm" pendingLabel="Saving...">
           Save changes
         </SubmitButton>
       </form>
@@ -262,6 +261,10 @@ export default async function ConfirmBusinessPage({
     notFound();
   }
 
+  if (isWebsiteSeoLaunchScope()) {
+    redirect(`/dashboard/businesses/${business.id}/setup?step=profiles`);
+  }
+
   const pendingProfiles = business.profiles.filter(
     (profile) => profile.status === BusinessProfileStatus.PENDING,
   );
@@ -293,16 +296,18 @@ export default async function ConfirmBusinessPage({
 
       <SummaryStrip>
         <strong>{confirmedProfiles.length} confirmed</strong>
-        <span className="text-muted">{pendingProfiles.length} awaiting review</span>
+        <span className="text-muted">
+          {pendingProfiles.length} awaiting review
+        </span>
         <span className="text-muted">{removedProfiles.length} removed</span>
       </SummaryStrip>
 
       {!websiteConfirmed ? (
         <DataSourceNotice>
           <strong>No website? That&apos;s okay.</strong> We can create a
-          social-first growth assessment using your confirmed profiles,
-          Business Context, goals, reviews, and competitors. Website and SEO
-          will be marked not provided instead of scored as failures.
+          social-first growth assessment using your confirmed profiles, Business
+          Context, goals, reviews, and competitors. Website and SEO will be
+          marked not provided instead of scored as failures.
         </DataSourceNotice>
       ) : null}
 
@@ -319,7 +324,8 @@ export default async function ConfirmBusinessPage({
           <div>
             <h3 className="text-lg font-semibold">Profiles requiring review</h3>
             <p className="mt-1 text-sm text-muted">
-              Confidence is an automated clue. Your confirmation is the source of truth.
+              Confidence is an automated clue. Your confirmation is the source
+              of truth.
             </p>
           </div>
           <div className="grid gap-4 lg:grid-cols-2">
@@ -431,7 +437,8 @@ export default async function ConfirmBusinessPage({
           <div>
             <p className="font-semibold">Profiles ready</p>
             <p className="mt-1 text-sm text-muted">
-              {confirmedProfiles.length} confirmed · {pendingProfiles.length} awaiting review · {removedProfiles.length} removed
+              {confirmedProfiles.length} confirmed · {pendingProfiles.length}{" "}
+              awaiting review · {removedProfiles.length} removed
             </p>
           </div>
           <form action={prepareAuditRun}>

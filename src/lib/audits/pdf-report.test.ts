@@ -10,16 +10,13 @@ import {
 } from "@/lib/reports/report-fixtures.test-support";
 
 const requiredSections = [
-  "Growth Audit Report",
+  "Website & SEO Growth Report",
   "Executive Summary",
   "Business Context",
   "Your Next 3 Moves",
   "Overall Health",
   "Website and Conversion",
   "SEO",
-  "Reviews and Trust",
-  "Social Strategy",
-  "Competitor Intelligence",
   "Recommended Action Plan",
   "Progress Since Previous Audit",
   "Report Confidence and Data Notes",
@@ -109,7 +106,7 @@ test("fixture PDFs parse cleanly and keep every text item inside safe bounds", a
   }
 });
 
-test("hospitality PDF contains every required section and no contradictory leakage", async () => {
+test("focused hospitality PDF contains supported sections without disabled modules", async () => {
   const pdf = await inspectFixture("hospitality");
   for (const heading of requiredSections) {
     assert.match(pdf.text, new RegExp(escapeRegex(heading), "i"));
@@ -119,19 +116,25 @@ test("hospitality PDF contains every required section and no contradictory leaka
     /Discord|gaming audiences?|developer community|free trial|software demo|SaaS/i,
   );
   assert.doesNotMatch(pdf.text, /Future analysis can compare|content cadence/i);
-  assert.match(pdf.text, /Individual posts, engagement, posting frequency, and content performance were not analyzed/i);
-  assert.match(
+  assert.match(pdf.text, /Website Growth Score/i);
+  assert.doesNotMatch(
     pdf.text,
-    /Reviews[\s\S]*Not comparable|Not comparable[\s\S]*Reviews/i,
+    /Reviews and Trust|Social Strategy|Competitor Intelligence/i,
   );
 });
 
-test("cottage regression PDF preserves page-specific evidence and limited review scope", async () => {
+test("cottage regression PDF preserves page-specific website evidence", async () => {
   const pdf = await inspectFixture("cottage_regression");
 
   assert.match(pdf.text, /PIE POCKETS/i);
-  assert.match(pdf.text, /menu page.*(?:missing|no).*main (?:heading|headline)/i);
-  assert.match(pdf.text, /listing presence|limited evidence|rating.*unavailable/i);
+  assert.match(
+    pdf.text,
+    /menu page.*(?:missing|no).*main (?:heading|headline)/i,
+  );
+  assert.doesNotMatch(
+    pdf.text,
+    /listing presence|review count|Google Business/i,
+  );
   assert.match(pdf.text, /preorder|pickup|delivery/i);
   assert.doesNotMatch(
     pdf.text,
@@ -205,17 +208,24 @@ test("cross-business PDFs preserve applicability and industry language", async (
     ]);
 
   assert.match(saas.text, /free trial|product demo/i);
-  assert.doesNotMatch(saas.text, /menu specials|table reservations|happy hour/i);
+  assert.doesNotMatch(
+    saas.text,
+    /menu specials|table reservations|happy hour/i,
+  );
   assert.match(localService.text, /call|estimate|service area/i);
   assert.doesNotMatch(localService.text, /free trial|software demo/i);
   assert.match(socialOnly.text, /Website Not provided/i);
   assert.match(socialOnly.text, /SEO Not applicable|Status Not applicable/i);
   assert.match(socialOnly.text, /profile bio|link-in-bio|pinned posts/i);
   assert.doesNotMatch(socialOnly.text, /Website 0\/100|SEO 0\/100/i);
-  assert.match(noCompetitor.text, /Competitive Position Not configured/i);
-  assert.doesNotMatch(noCompetitor.text, /Competitive Position 0\/100/i);
-  assert.match(staleStrategy.text, /Deterministic fallback/i);
-  assert.match(staleStrategy.text, /CURRENT/i);
+  assert.doesNotMatch(
+    noCompetitor.text,
+    /Competitive Position|Competitor Intelligence/i,
+  );
+  assert.doesNotMatch(
+    staleStrategy.text,
+    /Social Strategy|Deterministic fallback/i,
+  );
   assert.doesNotMatch(
     staleStrategy.text,
     /add competitor data|Google Business.*still needs confirmation/i,
@@ -239,7 +249,10 @@ test("stress PDF paginates long text, URLs, tables, and findings safely", async 
     }
     for (const item of page.items) {
       assert(item.x >= 53, `stress text crossed left bound: ${item.text}`);
-      assert(item.right <= 559, `stress text crossed right bound: ${item.text}`);
+      assert(
+        item.right <= 559,
+        `stress text crossed right bound: ${item.text}`,
+      );
       assert(item.y >= 25, `stress text crossed bottom bound: ${item.text}`);
       assert(item.top <= 750, `stress text crossed top bound: ${item.text}`);
     }

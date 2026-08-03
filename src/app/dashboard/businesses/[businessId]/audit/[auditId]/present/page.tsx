@@ -34,11 +34,11 @@ export default async function AuditPresentationPage({
       <div className="mx-auto max-w-3xl">
         <LockedFeature
           title="Presentation Mode is locked"
-          description="Turn a completed audit into full-screen client-ready slides for review calls, internal planning, or sales conversations."
+          description="Turn a completed website and SEO audit into full-screen slides for review calls, planning, or implementation conversations."
           requiredPlan={PlanType.ONE_TIME_AUDIT}
           preview={[
-            "Cover slide with score and audit date",
-            "Executive summary and score breakdown",
+            "Website Growth Score and audit date",
+            "Website and SEO evidence summary",
             "Top priorities and 30-day action plan",
           ]}
         />

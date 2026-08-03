@@ -7,10 +7,7 @@ import {
   type ProfilePlatform,
 } from "@prisma/client";
 
-import {
-  confirmedSocialProfiles,
-  hasConfirmedWebsite,
-} from "@/lib/audits/audit-applicability";
+import { hasConfirmedWebsite } from "@/lib/audits/audit-applicability";
 
 export const businessSetupSteps = [
   "profiles",
@@ -82,72 +79,41 @@ export type BusinessSetupProgress = {
 export function deriveBusinessSetupProgress(
   business: BusinessSetupSource,
 ): BusinessSetupProgress {
-  const confirmedProfiles = business.profiles.filter(
+  const websiteProfiles = business.profiles.filter(
+    (profile) => profile.platform === "WEBSITE",
+  );
+  const confirmedProfiles = websiteProfiles.filter(
     (profile) =>
       profile.status === BusinessProfileStatus.CONFIRMED &&
       Boolean(profile.url?.trim() || profile.handle?.trim()),
   );
-  const pendingProfiles = business.profiles.filter(
+  const pendingProfiles = websiteProfiles.filter(
     (profile) => profile.status === BusinessProfileStatus.PENDING,
   );
-  const removedProfiles = business.profiles.filter(
+  const removedProfiles = websiteProfiles.filter(
     (profile) => profile.status === BusinessProfileStatus.REMOVED,
   );
-  const manuallyAddedProfiles = business.profiles.filter(
+  const manuallyAddedProfiles = websiteProfiles.filter(
     (profile) =>
       profile.source === BusinessProfileSource.MANUAL &&
       profile.status !== BusinessProfileStatus.REMOVED,
   );
-  const pendingGoogleBusinessProfiles =
-    business.googleBusinessProfiles?.filter(
-      (profile) => profile.status.toLowerCase() === "pending",
-    ) ?? [];
-  const hasConfirmedGoogleBusiness = Boolean(
-    business.googleBusinessProfiles?.some(
-      (profile) => profile.status.toLowerCase() === "confirmed",
-    ),
-  );
-  const confirmedGoogleAlreadyCounted = confirmedProfiles.some(
-    (profile) => profile.platform === "GOOGLE_BUSINESS",
-  );
-  const googleDecision = business.profileDecisions?.find(
-    (decision) => decision.platform === "GOOGLE_BUSINESS",
-  )?.decision;
-  const googleReviewed =
-    hasConfirmedGoogleBusiness ||
-    confirmedGoogleAlreadyCounted ||
-    googleDecision === ProfileReviewDecision.SKIPPED ||
-    googleDecision === ProfileReviewDecision.NOT_USED;
-  const skippedDecisions =
-    business.profileDecisions?.filter(
-      (decision) => decision.decision === ProfileReviewDecision.SKIPPED,
-    ).length ?? 0;
-  const notUsedDecisions =
-    business.profileDecisions?.filter(
-      (decision) => decision.decision === ProfileReviewDecision.NOT_USED,
-    ).length ?? 0;
+  const googleReviewed = true;
   const websiteConfirmed = hasConfirmedWebsite(business.profiles);
-  const confirmedSocialCount = confirmedSocialProfiles(
-    business.profiles,
-  ).length;
-  const socialFirst = !websiteConfirmed && confirmedSocialCount > 0;
-  const profilesComplete =
-    (confirmedProfiles.length > 0 || hasConfirmedGoogleBusiness) &&
-    pendingProfiles.length === 0 &&
-    pendingGoogleBusinessProfiles.length === 0 &&
-    googleReviewed;
+  const socialFirst = false;
+  const profilesComplete = websiteConfirmed && pendingProfiles.length === 0;
   const contextHasCoreDetails = Boolean(
     business.description?.trim() &&
-      business.targetAudience?.trim() &&
-      business.mainOffer?.trim(),
+    business.targetAudience?.trim() &&
+    business.mainOffer?.trim(),
   );
   const hasContext = Boolean(
     business.description?.trim() ||
-      business.targetAudience?.trim() ||
-      business.mainOffer?.trim() ||
-      business.industry?.trim() ||
-      business.businessType?.trim() ||
-      business.primaryConversionGoal?.trim(),
+    business.targetAudience?.trim() ||
+    business.mainOffer?.trim() ||
+    business.industry?.trim() ||
+    business.businessType?.trim() ||
+    business.primaryConversionGoal?.trim(),
   );
   const contextState = !hasContext
     ? "missing"
@@ -175,15 +141,12 @@ export function deriveBusinessSetupProgress(
 
   return {
     profileCounts: {
-      confirmed:
-        confirmedProfiles.length +
-        (hasConfirmedGoogleBusiness && !confirmedGoogleAlreadyCounted ? 1 : 0),
-      pending:
-        pendingProfiles.length + pendingGoogleBusinessProfiles.length,
+      confirmed: confirmedProfiles.length,
+      pending: pendingProfiles.length,
       removed: removedProfiles.length,
       manuallyAdded: manuallyAddedProfiles.length,
-      skipped: skippedDecisions,
-      notUsed: notUsedDecisions,
+      skipped: 0,
+      notUsed: 0,
     },
     profilesComplete,
     googleReviewed,
@@ -196,22 +159,14 @@ export function deriveBusinessSetupProgress(
     auditComplete,
     resultsReviewed,
     readyToAudit:
-      profilesComplete &&
-      (socialFirst
-        ? contextState === "complete" && contextHasCoreDetails
-        : contextState !== "missing") &&
-      goalsComplete,
+      profilesComplete && contextState !== "missing" && goalsComplete,
     completedSteps,
     currentStep,
     completedCount,
     percent: Math.round((completedCount / businessSetupSteps.length) * 100),
     listStatus: auditComplete
       ? "Audit complete"
-      : profilesComplete &&
-          (socialFirst
-            ? contextState === "complete" && contextHasCoreDetails
-            : contextState !== "missing") &&
-          goalsComplete
+      : profilesComplete && contextState !== "missing" && goalsComplete
         ? "Ready to audit"
         : "Setup incomplete",
   };

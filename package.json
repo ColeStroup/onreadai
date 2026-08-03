@@ -41,7 +41,7 @@
     "test:production-flow:e2e": "node --conditions=react-server node_modules/@playwright/test/cli.js test --config playwright.production-flow.config.ts",
     "test:guided-setup:e2e": "playwright test --config playwright.guided-setup.config.ts",
     "test:auth": "node --env-file=.env --conditions=react-server --import tsx --test src/lib/auth/auth-security.test.ts",
-    "test:customer-experience": "node --conditions=react-server --import tsx --test src/lib/analytics/customer-events.test.ts src/lib/customer-experience/overview.test.ts",
+    "test:customer-experience": "node --conditions=react-server --import tsx --test src/lib/analytics/customer-events.test.ts src/lib/customer-experience/overview.test.ts src/lib/product/website-seo-scope.test.ts",
     "test:auth:e2e": "playwright test --config playwright.auth.config.ts",
     "presentation:contact-sheets": "node --import tsx scripts/create-presentation-contact-sheets.ts",
     "report:generate": "node --conditions=react-server --import tsx scripts/generate-audit-report.ts",

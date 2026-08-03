@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { notFound, redirect } from "next/navigation";
 
 import { platformLabels } from "@/lib/profiles/platforms";
+import { isCompetitorIntelligenceEnabled } from "@/lib/features/feature-flags";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
 
@@ -34,6 +35,10 @@ async function requireOwnedCompetitor({
 
   if (!competitor) {
     notFound();
+  }
+
+  if (!isCompetitorIntelligenceEnabled()) {
+    throw new Error("Competitive Intelligence is not currently available.");
   }
 
   return competitor;
@@ -132,7 +137,9 @@ export async function updateCompetitorProfile(formData: FormData) {
   await requireOwnedCompetitor({ businessId, competitorId });
 
   if (!profileValue) {
-    redirect(`${profilesPath({ businessId, competitorId })}?error=profile-value`);
+    redirect(
+      `${profilesPath({ businessId, competitorId })}?error=profile-value`,
+    );
   }
 
   await prisma.competitorProfile.updateMany({
@@ -161,7 +168,9 @@ export async function addManualCompetitorProfile(formData: FormData) {
   await requireOwnedCompetitor({ businessId, competitorId });
 
   if (!isProfilePlatform(platformValue) || !profileValue) {
-    redirect(`${profilesPath({ businessId, competitorId })}?error=manual-profile`);
+    redirect(
+      `${profilesPath({ businessId, competitorId })}?error=manual-profile`,
+    );
   }
 
   await prisma.competitorProfile.create({

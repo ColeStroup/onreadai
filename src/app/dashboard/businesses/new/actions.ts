@@ -3,17 +3,16 @@
 import {
   BusinessInputType,
   BusinessProfileSource,
+  BusinessProfileStatus,
+  ProfilePlatform,
 } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { canCreateBusiness } from "@/lib/billing/entitlements";
-import { discoverSubmittedProfiles } from "@/lib/discovery/submitted-profile-discovery";
-import { discoverGoogleBusinessProfiles } from "@/lib/google/google-business-discovery";
 import { prisma } from "@/lib/prisma";
-import { logError, logInfo } from "@/lib/observability/log";
+import { logInfo } from "@/lib/observability/log";
 import { requireUser } from "@/lib/session";
-import { platformForSubmittedUrl } from "@/lib/profiles/platforms";
 import {
   normalizeProfileUrlSyntax,
   ProfileUrlError,
@@ -24,74 +23,6 @@ import {
   enforceRateLimit,
   RateLimitError,
 } from "@/lib/security/rate-limit";
-
-function classifyInput(input: string) {
-  const value = input.trim().toLowerCase();
-  const socialHosts = [
-    "instagram.com",
-    "facebook.com",
-    "tiktok.com",
-    "youtube.com",
-    "linkedin.com",
-    "x.com",
-    "twitter.com",
-    "pinterest.com",
-  ];
-
-  if (
-    socialHosts.some((host) => value.includes(host)) ||
-    platformForSubmittedUrl(value)
-  ) {
-    return BusinessInputType.SOCIAL_PROFILE;
-  }
-
-  if (!value.includes(" ") && value.includes(".")) {
-    return BusinessInputType.WEBSITE;
-  }
-
-  return BusinessInputType.BUSINESS_NAME;
-}
-
-function normalizeUrl(input: string) {
-  const value = input.trim();
-
-  if (/^https?:\/\//i.test(value)) {
-    return value;
-  }
-
-  return `https://${value}`;
-}
-
-function titleCase(value: string) {
-  return value
-    .replace(/[-_.]+/g, " ")
-    .split(" ")
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-}
-
-function inferBusinessName(input: string) {
-  const inputType = classifyInput(input);
-
-  if (inputType === BusinessInputType.BUSINESS_NAME) {
-    return input.trim();
-  }
-
-  try {
-    const url = new URL(normalizeUrl(input));
-    const pathName = url.pathname
-      .split("/")
-      .filter(Boolean)
-      .at(0)
-      ?.replace(/^@/, "");
-    const hostName = url.hostname.replace(/^www\./, "").split(".").at(0);
-
-    return titleCase(pathName || hostName || input);
-  } catch {
-    return input.trim();
-  }
-}
 
 export async function createBusiness(formData: FormData) {
   const user = await requireUser("/dashboard/businesses/new");
@@ -114,31 +45,24 @@ export async function createBusiness(formData: FormData) {
     redirect("/dashboard/businesses/new?error=business_limit");
   }
 
-  const rawInput = String(formData.get("businessInput") ?? "").trim();
+  const businessName = String(formData.get("businessName") ?? "").trim();
+  const rawInput = String(formData.get("websiteUrl") ?? "").trim();
 
-  if (rawInput.length < 2) {
+  if (businessName.length < 2 || rawInput.length < 4) {
     redirect("/dashboard/businesses/new?error=missing");
   }
 
-  const inputType = classifyInput(rawInput);
-  const websiteUrl =
-    inputType === BusinessInputType.WEBSITE ? normalizeUrl(rawInput) : null;
-  let discoveredProfiles;
+  let websiteUrl: string;
+  let normalizedUrl: string;
   try {
-    discoveredProfiles = discoverSubmittedProfiles(rawInput, inputType).map(
-      (profile) => {
-        const normalized = profile.url
-          ? normalizeProfileUrlSyntax(profile.url, profile.platform)
-          : null;
-        return {
-          ...profile,
-          url: normalized?.url ?? null,
-          normalizedUrl: normalized
-            ? profileUrlComparisonKey(normalized.url, profile.platform)
-            : null,
-        };
-      },
+    const normalized = normalizeProfileUrlSyntax(
+      rawInput,
+      ProfilePlatform.WEBSITE,
     );
+    websiteUrl = normalized.url;
+    normalizedUrl =
+      profileUrlComparisonKey(normalized.url, ProfilePlatform.WEBSITE) ??
+      normalized.normalizedUrl;
   } catch (error) {
     if (error instanceof ProfileUrlError) {
       redirect("/dashboard/businesses/new?error=invalid_source");
@@ -149,43 +73,32 @@ export async function createBusiness(formData: FormData) {
   const business = await prisma.business.create({
     data: {
       ownerId: user.id,
-      name: inferBusinessName(rawInput),
+      name: businessName.slice(0, 160),
       initialInput: rawInput,
-      inputType,
+      inputType: BusinessInputType.WEBSITE,
       websiteUrl,
       profiles: {
-        create: discoveredProfiles.map((profile) => ({
-          platform: profile.platform,
-          displayName: profile.label,
-          url: profile.url,
-          handle: profile.handle,
-          normalizedUrl: profile.normalizedUrl,
-          confidenceScore: profile.confidenceScore,
-          status: profile.status,
+        create: {
+          platform: ProfilePlatform.WEBSITE,
+          displayName: "Website",
+          url: websiteUrl,
+          handle: null,
+          normalizedUrl,
+          confidenceScore: 100,
+          status: BusinessProfileStatus.PENDING,
           source: BusinessProfileSource.SUBMITTED,
           discoveredAt: new Date(),
-        })),
+        },
       },
     },
   });
 
-  for (const profile of discoveredProfiles) {
-    logInfo("guided_profile_discovered", {
-      businessId: business.id,
-      platform: profile.platform,
-      source: BusinessProfileSource.SUBMITTED,
-    });
-  }
-
-  try {
-    await discoverGoogleBusinessProfiles({
-      business,
-    });
-  } catch (error) {
-    logError("signup_google_business_discovery_failed", error, {
-      businessId: business.id,
-    });
-  }
+  logInfo("guided_profile_discovered", {
+    businessId: business.id,
+    platform: ProfilePlatform.WEBSITE,
+    source: BusinessProfileSource.SUBMITTED,
+  });
+  logInfo("website_added", { businessId: business.id });
 
   revalidatePath("/dashboard");
   revalidatePath("/dashboard/businesses");

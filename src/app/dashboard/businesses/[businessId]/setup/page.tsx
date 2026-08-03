@@ -2,6 +2,7 @@ import {
   AuditStatus,
   BusinessProfileStatus,
   PlanType,
+  ProfilePlatform,
   type Prisma,
   ScoreCategory,
 } from "@prisma/client";
@@ -34,7 +35,6 @@ import {
 import { EmptyState } from "@/components/dashboard/empty-state";
 import {
   CompactMetricCard,
-  DataSourceNotice,
   PageIntro,
   ReportSection,
   SummaryStrip,
@@ -52,7 +52,7 @@ import {
 import {
   businessGoalDescriptions,
   businessGoalLabels,
-  orderedBusinessGoals,
+  websiteSeoBusinessGoals,
 } from "@/lib/goals";
 import {
   businessSetupSteps,
@@ -74,7 +74,10 @@ import { cn } from "@/lib/utils";
 
 type SetupPageProps = {
   params: Promise<{ businessId: string }>;
-  searchParams: Promise<{ step?: string; [key: string]: string | string[] | undefined }>;
+  searchParams: Promise<{
+    step?: string;
+    [key: string]: string | string[] | undefined;
+  }>;
 };
 
 const stepDetails: Record<
@@ -82,10 +85,10 @@ const stepDetails: Record<
   { label: string; title: string; description: string }
 > = {
   profiles: {
-    label: "Profiles",
-    title: "Confirm your online profiles",
+    label: "Website",
+    title: "Confirm your website",
     description:
-      "Review what we found and add anything missing. Onread will use only the profiles you confirm in your audit.",
+      "Check the public website Onread should crawl and use as audit evidence.",
   },
   context: {
     label: "Context",
@@ -101,25 +104,21 @@ const stepDetails: Record<
   },
   audit: {
     label: "Audit",
-    title: "Run Your First Audit",
+    title: "Run Your First Website Audit",
     description:
-      "Review readiness, then hand off to the existing audit runner and progress experience.",
+      "Review the website and business context Onread will use, then start the analysis.",
   },
   results: {
     label: "Results",
     title: "Review Your Results",
     description:
-      "Start with the strongest area, largest opportunity, and three most useful next moves.",
+      "See your Website Growth Score, strongest evidence, and the next three improvements.",
   },
 };
 
 const scoreLabels: Partial<Record<ScoreCategory, string>> = {
   WEBSITE: "Website",
   SEO: "SEO",
-  BRANDING: "Branding",
-  SOCIAL: "Social",
-  REVIEWS: "Reviews",
-  COMPETITORS: "Competitors",
 };
 
 export default async function BusinessSetupPage({
@@ -187,11 +186,7 @@ export default async function BusinessSetupPage({
           <form action={dismissBusinessSetup}>
             <input type="hidden" name="businessId" value={business.id} />
             <input type="hidden" name="step" value={step} />
-            <SubmitButton
-              variant="outline"
-              size="sm"
-              pendingLabel="Saving..."
-            >
+            <SubmitButton variant="outline" size="sm" pendingLabel="Saving...">
               Finish later
             </SubmitButton>
           </form>
@@ -239,9 +234,7 @@ export default async function BusinessSetupPage({
             step === "profiles"
               ? progress.profilesComplete
               : step === "context"
-                ? progress.socialFirst
-                  ? progress.contextComplete && progress.contextHasCoreDetails
-                  : progress.contextState !== "missing"
+                ? progress.contextState !== "missing"
                 : step === "goals"
                   ? progress.goalsComplete
                   : progress.auditComplete
@@ -290,7 +283,9 @@ function SetupStepper({
                 >
                   {completed[step] ? <Check className="size-4" /> : index + 1}
                 </span>
-                <span className="truncate font-medium">{stepDetails[step].label}</span>
+                <span className="truncate font-medium">
+                  {stepDetails[step].label}
+                </span>
               </Link>
             </li>
           );
@@ -332,11 +327,14 @@ function ProfilesStep({
   return (
     <GuidedProfileManager
       businessId={business.id}
-      profiles={business.profiles}
-      googleCandidates={business.googleBusinessProfiles}
-      decisions={business.profileDecisions}
+      profiles={business.profiles.filter(
+        (profile) => profile.platform === ProfilePlatform.WEBSITE,
+      )}
+      googleCandidates={[]}
+      decisions={[]}
       profilesComplete={progress.profilesComplete}
       hasConfirmedWebsite={progress.hasConfirmedWebsite}
+      websiteOnly
     />
   );
 }
@@ -363,25 +361,6 @@ function ContextStep({
 
   return (
     <div className="space-y-5">
-      {progress.socialFirst ? (
-        <DataSourceNotice>
-          <strong>Business Context powers this social-first audit.</strong>{" "}
-          Confirm or edit what the business does, who it serves, and its main
-          offer before running the audit. We will not guess from a handle alone.
-        </DataSourceNotice>
-      ) : null}
-
-      {!progress.contextHasCoreDetails && progress.socialFirst ? (
-        <Card className="border-amber-200 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950/30">
-          <p className="text-sm font-semibold text-amber-950 dark:text-amber-100">
-            Add a description, target audience, and main offer to continue.
-          </p>
-          <p className="mt-1 text-sm leading-6 text-amber-900 dark:text-amber-200">
-            Social profile URLs do not provide enough reliable business detail
-            on their own.
-          </p>
-        </Card>
-      ) : null}
       {progress.contextState === "missing" ? (
         <EmptyState
           compact
@@ -404,7 +383,11 @@ function ContextStep({
         />
       ) : (
         <ReportSection
-          title={progress.contextComplete ? "Confirmed context" : "Draft needs review"}
+          title={
+            progress.contextComplete
+              ? "Confirmed context"
+              : "Draft needs review"
+          }
           description={
             progress.contextComplete
               ? "This information will guide the audit and Consultant."
@@ -418,9 +401,7 @@ function ContextStep({
                 className="grid gap-1 py-4 first:pt-0 last:pb-0 sm:grid-cols-[11rem_1fr]"
               >
                 <dt className="text-sm font-medium text-muted">{label}</dt>
-                <dd className="text-sm leading-6">
-                  {value || "Not provided"}
-                </dd>
+                <dd className="text-sm leading-6">{value || "Not provided"}</dd>
               </div>
             ))}
           </dl>
@@ -441,7 +422,10 @@ function ContextStep({
                 </SubmitButton>
               </form>
             ) : null}
-            <Link href={`/dashboard/businesses/${business.id}/context`} className={buttonVariants({ variant: "secondary", size: "sm" })}>
+            <Link
+              href={`/dashboard/businesses/${business.id}/context`}
+              className={buttonVariants({ variant: "secondary", size: "sm" })}
+            >
               Edit context
             </Link>
             <form action={regenerateBusinessContext}>
@@ -488,7 +472,7 @@ function GoalsStep({ business }: { business: NonNullable<SetupBusiness> }) {
         </p>
       </div>
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {orderedBusinessGoals.map((goal) => (
+        {websiteSeoBusinessGoals.map((goal) => (
           <Card key={goal} className="p-4">
             <label className="flex items-start gap-3">
               <input
@@ -499,8 +483,12 @@ function GoalsStep({ business }: { business: NonNullable<SetupBusiness> }) {
                 className="mt-1 size-4 accent-foreground dark:accent-accent"
               />
               <span>
-                <span className="text-sm font-semibold">{businessGoalLabels[goal]}</span>
-                <span className="mt-1 block text-xs leading-5 text-muted">{businessGoalDescriptions[goal]}</span>
+                <span className="text-sm font-semibold">
+                  {businessGoalLabels[goal]}
+                </span>
+                <span className="mt-1 block text-xs leading-5 text-muted">
+                  {businessGoalDescriptions[goal]}
+                </span>
               </span>
             </label>
             <label className="mt-3 flex items-center gap-2 border-t border-border pt-3 text-xs font-semibold text-muted">
@@ -564,7 +552,11 @@ function AuditStep({
   const requiresSourceAcknowledgement =
     plan !== PlanType.FREE && sourceReadiness.requiresAcknowledgement;
   const readiness = [
-    ["Profiles ready", progress.profilesComplete, `${progress.profileCounts.confirmed} confirmed`],
+    [
+      "Website ready",
+      progress.profilesComplete,
+      progress.profilesComplete ? "Confirmed" : "Needs confirmation",
+    ],
     [
       "Business Context",
       progress.contextComplete,
@@ -574,11 +566,17 @@ function AuditStep({
           ? "Needs review"
           : "Missing",
     ],
-    ["Goals selected", progress.goalsComplete, `${business.goals.length} selected`],
+    [
+      "Goals selected",
+      progress.goalsComplete,
+      `${business.goals.length} selected`,
+    ],
   ] as const;
   const confirmedPlatforms = business.profiles
     .filter(
-      (profile) => profile.status === BusinessProfileStatus.CONFIRMED,
+      (profile) =>
+        profile.status === BusinessProfileStatus.CONFIRMED &&
+        profile.platform === ProfilePlatform.WEBSITE,
     )
     .map((profile) => platformLabels[profile.platform]);
   const includedAnalysis = [
@@ -586,11 +584,11 @@ function AuditStep({
       ? `Website and SEO, including up to ${crawlLimit} public pages`
       : null,
     confirmedPlatforms.length > 0
-      ? `Confirmed profiles: ${confirmedPlatforms.join(", ")}`
+      ? `Confirmed source: ${confirmedPlatforms.join(", ")}`
       : null,
-    "Business Context and selected goals",
-    "Reviews, trust signals, and saved competitors when available",
-    "A prioritized action plan",
+    "Business Context and selected website goals",
+    "Evidence-backed Website and SEO findings",
+    "A prioritized implementation and verification plan",
   ].filter((item): item is string => Boolean(item));
 
   return (
@@ -634,20 +632,16 @@ function AuditStep({
               aria-hidden="true"
             />
             <div className="min-w-0">
-              <h3 className="font-semibold">Some sources have not been added</h3>
+              <h3 className="font-semibold">Setup details need attention</h3>
               <p className="mt-1 text-sm leading-6 text-muted">
-                Your audit can still run, but results for unavailable sources
-                may be limited. Only confirmed profiles will be analyzed as
-                belonging to your business.
+                A confirmed website is required. Optional context and goals make
+                prioritization more specific to this business.
               </p>
             </div>
           </div>
           <ul className="mt-4 divide-y divide-border/80 border-y border-border/80">
             {sourceReadiness.missingSources.map((source) => (
-              <li
-                key={source.code}
-                className="py-3"
-              >
+              <li key={source.code} className="py-3">
                 <p className="text-sm font-semibold">{source.label}</p>
                 <p className="mt-1 text-sm leading-5 text-muted">
                   {source.limitation}
@@ -677,12 +671,6 @@ function AuditStep({
             </li>
           ))}
         </ul>
-        {!progress.hasConfirmedWebsite ? (
-          <p className="mt-3 text-sm leading-6 text-muted">
-            Website and SEO will show as not provided, not as failed scores. Add
-            a website later to unlock those checks.
-          </p>
-        ) : null}
         <details className="mt-4 border-t border-border pt-4 text-sm">
           <summary className="cursor-pointer font-medium text-accent">
             Plan and analysis limits
@@ -691,7 +679,8 @@ function AuditStep({
             Current plan: {planName}. Website crawl limit:{" "}
             {progress.hasConfirmedWebsite
               ? `${crawlLimit} pages`
-              : "not applicable"}.
+              : "not applicable"}
+            .
           </p>
         </details>
         <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -707,11 +696,7 @@ function AuditStep({
             <input type="hidden" name="businessId" value={business.id} />
             <input type="hidden" name="returnTo" value="setup" />
             {requiresSourceAcknowledgement ? (
-              <input
-                type="hidden"
-                name="acknowledgeMissingSources"
-                value="1"
-              />
+              <input type="hidden" name="acknowledgeMissingSources" value="1" />
             ) : null}
             <SubmitButton
               variant="primary"
@@ -723,17 +708,15 @@ function AuditStep({
               data-customer-surface="guided_setup"
             >
               {requiresSourceAcknowledgement
-                ? "Continue with available information"
-                : "Run first audit"}
+                ? "Run with current context"
+                : "Run your first website audit"}
               <ArrowRight className="size-4" aria-hidden="true" />
             </SubmitButton>
           </form>
         </div>
         {!canRunAudit ? (
           <p className="mt-3 text-sm text-muted">
-            Confirm at least one website, social, or Google Business profile,
-            resolve every discovered match, and review the Google Business
-            source before running the audit.
+            Confirm a public website before running the audit.
           </p>
         ) : null}
       </Card>
@@ -749,9 +732,12 @@ function ResultsStep({ business }: { business: NonNullable<SetupBusiness> }) {
       <EmptyState
         icon={<ListChecks className="size-6" />}
         title="No completed audit yet"
-        description="Run your first audit to receive scores, findings, and an action plan."
+        description="Run your first website audit to receive evidence-backed Website and SEO findings with a prioritized action plan."
         action={
-          <Link href={`/dashboard/businesses/${business.id}/setup?step=audit`} className={buttonVariants({ variant: "primary" })}>
+          <Link
+            href={`/dashboard/businesses/${business.id}/setup?step=audit`}
+            className={buttonVariants({ variant: "primary" })}
+          >
             Go to audit step
           </Link>
         }
@@ -760,7 +746,9 @@ function ResultsStep({ business }: { business: NonNullable<SetupBusiness> }) {
   }
 
   const categories = audit.scores
-    .filter((score) => !score.platform && score.category !== ScoreCategory.OVERALL)
+    .filter(
+      (score) => !score.platform && score.category !== ScoreCategory.OVERALL,
+    )
     .sort((a, b) => b.score - a.score);
   const strongest = categories.at(0);
   const weakest = categories.at(-1);
@@ -769,7 +757,10 @@ function ResultsStep({ business }: { business: NonNullable<SetupBusiness> }) {
   return (
     <div className="space-y-5">
       <section className="grid gap-3 sm:grid-cols-3">
-        <CompactMetricCard label="Overall score" value={`${audit.overallScore ?? 0}/100`} />
+        <CompactMetricCard
+          label="Website Growth Score"
+          value={`${audit.overallScore ?? 0}/100`}
+        />
         <CompactMetricCard
           label="Strongest area"
           value={
@@ -790,16 +781,24 @@ function ResultsStep({ business }: { business: NonNullable<SetupBusiness> }) {
         />
       </section>
 
-      <ReportSection title="Your next three moves" description="Start here before opening the full recommendation backlog.">
+      <ReportSection
+        title="Your next three moves"
+        description="Start here before opening the full recommendation backlog."
+      >
         <ol className="space-y-3">
           {nextMoves.map((recommendation, index) => (
-            <li key={recommendation.id} className="flex gap-3 rounded-lg border border-border bg-background p-4">
+            <li
+              key={recommendation.id}
+              className="flex gap-3 rounded-lg border border-border bg-background p-4"
+            >
               <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-accent/10 text-sm font-semibold text-accent">
                 {index + 1}
               </span>
               <div>
                 <p className="font-semibold">{recommendation.title}</p>
-                <p className="mt-1 text-sm leading-6 text-muted">{recommendation.description}</p>
+                <p className="mt-1 text-sm leading-6 text-muted">
+                  {recommendation.description}
+                </p>
               </div>
             </li>
           ))}

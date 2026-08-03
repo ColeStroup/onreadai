@@ -8,6 +8,7 @@ import {
 import { revalidatePath } from "next/cache";
 
 import { deriveBusinessSetupProgress } from "@/lib/onboarding/business-setup";
+import { isWebsiteSeoLaunchScope } from "@/lib/features/feature-flags";
 import { logError, logInfo } from "@/lib/observability/log";
 import { platformLabels } from "@/lib/profiles/platforms";
 import {
@@ -87,6 +88,9 @@ export async function mutateGuidedProfile(
     },
     select: {
       id: true,
+      profiles: {
+        select: { id: true, platform: true },
+      },
     },
   });
 
@@ -94,6 +98,24 @@ export async function mutateGuidedProfile(
     return safeError(
       operation,
       "This business is unavailable or you no longer have access.",
+      values,
+      profileId,
+    );
+  }
+
+  const launchWebsiteOnly = isWebsiteSeoLaunchScope();
+  const existingProfile = business.profiles.find(
+    (profile) => profile.id === profileId,
+  );
+  const websiteOperationAllowed =
+    operation === "add" || operation === "edit"
+      ? platformValue === ProfilePlatform.WEBSITE
+      : ["confirm", "remove", "restore"].includes(operation) &&
+        existingProfile?.platform === ProfilePlatform.WEBSITE;
+  if (launchWebsiteOnly && !websiteOperationAllowed) {
+    return safeError(
+      operation,
+      "Only the website source can be changed in the current product.",
       values,
       profileId,
     );
@@ -111,9 +133,7 @@ export async function mutateGuidedProfile(
       windowMs: 60 * 60 * 1_000,
     });
 
-    const platform = isProfilePlatform(platformValue)
-      ? platformValue
-      : null;
+    const platform = isProfilePlatform(platformValue) ? platformValue : null;
 
     switch (operation) {
       case "add": {
@@ -384,12 +404,7 @@ export async function mutateGuidedProfile(
           profileId,
         );
       }
-      return safeError(
-        operation,
-        error.message,
-        values,
-        profileId,
-      );
+      return safeError(operation, error.message, values, profileId);
     }
     if (isUniqueConstraintError(error)) {
       return fieldError(
@@ -521,5 +536,7 @@ function isUniqueConstraintError(error: unknown) {
 }
 
 function clean(value: FormDataEntryValue | null, limit: number) {
-  return String(value ?? "").trim().slice(0, limit);
+  return String(value ?? "")
+    .trim()
+    .slice(0, limit);
 }

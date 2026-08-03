@@ -6,16 +6,12 @@ export const REPORT_VIEW_MODEL_VERSION = "audit-report-v3-normalized-facts";
 export const SOCIAL_STRATEGY_GENERATOR_VERSION =
   "social-strategy-v3-business-model";
 export const COMPETITOR_COMPARISON_VERSION = "competitor-comparison-v2";
-export const SCORING_ENGINE_VERSION = "growth-score-v4-data-sufficiency";
-export const WEBSITE_ANALYZER_VERSION =
-  "website-analyzer-v4-content-quality";
+export const SCORING_ENGINE_VERSION = "website-growth-score-v1";
+export const WEBSITE_ANALYZER_VERSION = "website-analyzer-v4-content-quality";
 export const SEO_ANALYZER_VERSION = "seo-analyzer-v3-guideline-quality";
 
 export type DerivedFreshnessStatus =
-  | "CURRENT"
-  | "STALE"
-  | "PARTIAL"
-  | "UNAVAILABLE";
+  "CURRENT" | "STALE" | "PARTIAL" | "UNAVAILABLE";
 
 export type DerivedFreshness = {
   status: DerivedFreshnessStatus;
@@ -79,7 +75,9 @@ export function buildSocialStrategyDependencyFingerprint(input: {
         handle: profile.handle ?? null,
         updatedAt: dateValue(profile.updatedAt),
       }))
-      .sort((a, b) => `${a.platform}:${a.id}`.localeCompare(`${b.platform}:${b.id}`)),
+      .sort((a, b) =>
+        `${a.platform}:${a.id}`.localeCompare(`${b.platform}:${b.id}`),
+      ),
     googleBusinessProfiles: input.googleBusinessProfiles
       .map((profile) => ({
         id: profile.id ?? null,
@@ -195,14 +193,12 @@ export function assessDerivedFreshness({
     return {
       ...base,
       status: "STALE",
-      reason: "Saved content is incompatible with the current business evidence.",
+      reason:
+        "Saved content is incompatible with the current business evidence.",
     };
   }
 
-  if (
-    storedGeneratorVersion &&
-    storedGeneratorVersion !== generatorVersion
-  ) {
+  if (storedGeneratorVersion && storedGeneratorVersion !== generatorVersion) {
     return {
       ...base,
       status: "STALE",
@@ -228,7 +224,8 @@ export function assessDerivedFreshness({
     return {
       ...base,
       status: "STALE",
-      reason: "One or more source records changed after this content was generated.",
+      reason:
+        "One or more source records changed after this content was generated.",
     };
   }
 

@@ -1,4 +1,4 @@
-import { AuditStatus, CompetitorStatus } from "@prisma/client";
+import { AuditStatus } from "@prisma/client";
 import { ArrowRight, MessageSquareText } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -8,66 +8,18 @@ import { ContextualHelpCard } from "@/components/dashboard/contextual-help-card"
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { PageIntro } from "@/components/dashboard/report-ui";
 import { buttonVariants } from "@/components/ui/button";
-import {
-  normalizeReviewAnalysisForDisplay,
-  type ReviewAnalysis,
-} from "@/lib/analyzers/review-analyzer";
-import type { SocialAnalysis } from "@/lib/analyzers/social-analyzer";
-import {
-  buildCompetitorConsultantContext,
-  getCompetitorSuggestedQuestions,
-} from "@/lib/ai/competitor-consultant-context";
 import { isOpenAIConfigured } from "@/lib/ai/openai-consultant";
 import { canSendAiMessage } from "@/lib/billing/entitlements";
 import { contextualHelp } from "@/lib/education/help-content";
 import { getSuggestedQuestionsForGoals } from "@/lib/goals";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
-import { parseSocialStrategy } from "@/lib/social-strategy";
 import type { ChatMessageView } from "@/app/dashboard/businesses/[businessId]/chat/actions";
 
 type BusinessChatPageProps = {
   params: Promise<{ businessId: string }>;
   searchParams?: Promise<{ prompt?: string | string[] }>;
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function getSocialAnalysis(snapshot: unknown): SocialAnalysis | null {
-  if (!isRecord(snapshot) || !isRecord(snapshot.social)) {
-    return null;
-  }
-
-  const social = snapshot.social;
-
-  if (
-    typeof social.score !== "number" ||
-    !Array.isArray(social.confirmedPlatforms)
-  ) {
-    return null;
-  }
-
-  return social as SocialAnalysis;
-}
-
-function getReviewAnalysis(snapshot: unknown): ReviewAnalysis | null {
-  if (!isRecord(snapshot) || !isRecord(snapshot.reviews)) {
-    return null;
-  }
-
-  const reviews = snapshot.reviews;
-
-  if (
-    typeof reviews.score !== "number" ||
-    !Array.isArray(reviews.confirmedReviewPlatforms)
-  ) {
-    return null;
-  }
-
-  return normalizeReviewAnalysisForDisplay(reviews as ReviewAnalysis);
-}
 
 export default async function BusinessChatPage({
   params,
@@ -77,8 +29,8 @@ export default async function BusinessChatPage({
   const { businessId } = await params;
   const query = searchParams ? await searchParams : {};
   const initialDraft = Array.isArray(query.prompt)
-    ? query.prompt[0] ?? ""
-    : query.prompt ?? "";
+    ? (query.prompt[0] ?? "")
+    : (query.prompt ?? "");
   const business = await prisma.business.findFirst({
     where: {
       id: businessId,
@@ -95,7 +47,6 @@ export default async function BusinessChatPage({
         take: 1,
         select: {
           id: true,
-          analysisSnapshot: true,
         },
       },
       chatThreads: {
@@ -114,23 +65,6 @@ export default async function BusinessChatPage({
           },
         },
       },
-      competitors: {
-        where: {
-          status: CompetitorStatus.ACTIVE,
-        },
-        orderBy: {
-          name: "asc",
-        },
-        select: {
-          name: true,
-        },
-      },
-      socialStrategies: {
-        orderBy: {
-          updatedAt: "desc",
-        },
-        take: 1,
-      },
     },
   });
 
@@ -143,15 +77,15 @@ export default async function BusinessChatPage({
       <div className="space-y-6">
         <PageIntro
           eyebrow="Consultant"
-          title="Ask about your results"
-          description="The Consultant uses saved audit evidence, goals, competitors, and action progress."
+          title="Ask your Website & SEO Consultant"
+          description="The Consultant uses your saved website evidence, SEO checks, goals, recommendations, and progress."
           icon={MessageSquareText}
         />
         <EmptyState
           compact
           icon={<MessageSquareText className="size-6" />}
           title="Run an audit before chatting"
-          description="The Consultant needs a completed audit before it can answer from saved scores, findings, recommendations, and confirmed profiles."
+          description="The Consultant needs a completed website audit before it can answer from saved findings, recommendations, and crawl evidence."
           action={
             <Link
               href={`/dashboard/businesses/${business.id}/audit/run`}
@@ -159,7 +93,7 @@ export default async function BusinessChatPage({
               data-customer-surface="empty_state"
               className={buttonVariants({ variant: "primary" })}
             >
-              Run audit
+              Run website audit
               <ArrowRight className="size-4" aria-hidden="true" />
             </Link>
           }
@@ -168,50 +102,21 @@ export default async function BusinessChatPage({
     );
   }
 
-  const latestAudit = business.audits.at(0);
-  const social = latestAudit
-    ? getSocialAnalysis(latestAudit.analysisSnapshot)
-    : null;
-  const reviews = latestAudit
-    ? getReviewAnalysis(latestAudit.analysisSnapshot)
-    : null;
-  const socialStrategy = parseSocialStrategy(business.socialStrategies.at(0));
-  const competitorContext = await buildCompetitorConsultantContext({
-    userId: user.id,
-    businessId: business.id,
-    auditId: latestAudit?.id,
-  });
-  const strategyQuestions = socialStrategy
-    ? [
-        socialStrategy.recommendedPlatforms.at(0)
-          ? `Should I focus on ${socialStrategy.recommendedPlatforms[0].platform} first?`
-          : null,
-        "What should I post this week?",
-        "Give me 5 content ideas.",
-        "How do I turn views into signups?",
-      ].filter((question): question is string => Boolean(question))
-    : [];
-  const suggestedQuestions = [
-    ...strategyQuestions,
-    ...getCompetitorSuggestedQuestions(competitorContext),
-    ...getSuggestedQuestionsForGoals(
-      business.goals,
-      business.primaryGoal,
-      business.competitors.map((competitor) => competitor.name),
-      social?.score,
-      reviews?.score,
-      reviews?.googleBusinessStatus,
-      {
-        description: business.description,
-        targetAudience: business.targetAudience,
-        businessType: business.businessType,
-        primaryConversionGoal: business.primaryConversionGoal,
-        contextConfirmedAt: business.contextConfirmedAt,
-      },
-    ),
-  ]
-    .filter((question, index, questions) => questions.indexOf(question) === index)
-    .slice(0, 3);
+  const suggestedQuestions = getSuggestedQuestionsForGoals(
+    business.goals,
+    business.primaryGoal,
+    [],
+    null,
+    null,
+    null,
+    {
+      description: business.description,
+      targetAudience: business.targetAudience,
+      businessType: business.businessType,
+      primaryConversionGoal: business.primaryConversionGoal,
+      contextConfirmedAt: business.contextConfirmedAt,
+    },
+  ).slice(0, 3);
   const initialMessages: ChatMessageView[] =
     business.chatThreads.at(0)?.messages.map((message) => ({
       id: message.id,
@@ -226,8 +131,8 @@ export default async function BusinessChatPage({
     <div id="chat-page-top" className="space-y-6">
       <PageIntro
         eyebrow="Consultant"
-        title="Ask about your results"
-        description="Get practical answers grounded in the latest saved audit, goals, competitors, and action progress."
+        title="Ask your Website & SEO Consultant"
+        description="Get practical help understanding findings, prioritizing fixes, drafting improvements, and verifying the result."
         icon={MessageSquareText}
       />
       <ContextualHelpCard {...contextualHelp.chat} />

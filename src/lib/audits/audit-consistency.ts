@@ -104,6 +104,7 @@ export function validateAuditConsistency<
       ...facts.siteWide.copyQualityFindings.map((item) => item.url),
       ...facts.siteWide.orderingFrictionPages.map((item) => item.url),
       ...facts.siteWide.duplicateContentGroups.flatMap((item) => item.urls),
+      ...auditedTechnicalSeoUrls(facts.homepage?.url),
     ]
       .filter(isString)
       .map(normalizeComparableUrl),
@@ -319,6 +320,16 @@ export function validateAuditConsistency<
     summary: safeSummary,
     snapshot,
   };
+}
+
+function auditedTechnicalSeoUrls(homepageUrl?: string | null) {
+  if (!homepageUrl) return [];
+  try {
+    const origin = new URL(homepageUrl).origin;
+    return [`${origin}/robots.txt`, `${origin}/sitemap.xml`];
+  } catch {
+    return [];
+  }
 }
 
 function findingContradiction({

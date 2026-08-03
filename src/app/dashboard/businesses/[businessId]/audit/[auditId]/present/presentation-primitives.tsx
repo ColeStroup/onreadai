@@ -103,11 +103,13 @@ export function SlideMetric({
   label,
   value,
   detail,
+  detailClassName,
   tone = "neutral",
 }: {
   label: string;
   value: ReactNode;
   detail?: string;
+  detailClassName?: string;
   tone?: PresentationTone;
 }) {
   return (
@@ -125,7 +127,12 @@ export function SlideMetric({
         {value}
       </div>
       {detail ? (
-        <p className="mt-1 text-xs leading-5 text-muted sm:mt-2 sm:text-sm">
+        <p
+          className={cn(
+            "mt-1 text-xs leading-5 text-muted sm:mt-2 sm:text-sm",
+            detailClassName,
+          )}
+        >
           {detail}
         </p>
       ) : null}

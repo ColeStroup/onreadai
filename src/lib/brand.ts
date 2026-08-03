@@ -8,7 +8,7 @@ export const brand = {
   touchIconPath: "/onread-icon-192.png",
   productionOrigin: "https://onread.ai",
   description:
-    "An evidence-backed business growth audit with prioritized actions, implementation help, and an AI Consultant grounded in saved business data.",
+    "Website and SEO audit software with evidence-backed findings, prioritized improvements, implementation help, and progress verification.",
 } as const;
 
 export function getMetadataBase() {
@@ -50,7 +50,8 @@ export function getCanonicalUrl(pathname: string) {
   const baseUrl = getPublicAppUrl();
   if (!baseUrl) return undefined;
 
-  const normalizedPath = pathname === "/" ? "/" : `/${pathname.replace(/^\/+|\/+$/g, "")}`;
+  const normalizedPath =
+    pathname === "/" ? "/" : `/${pathname.replace(/^\/+|\/+$/g, "")}`;
   return new URL(normalizedPath, baseUrl);
 }
 
@@ -84,7 +85,7 @@ export function createMarketingMetadata({
               url: image,
               width: 1200,
               height: 630,
-              alt: `${brand.name} evidence-backed growth audit preview`,
+              alt: `${brand.name} website and SEO audit preview`,
             },
           ]
         : undefined,

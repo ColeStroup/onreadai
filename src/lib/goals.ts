@@ -1,4 +1,8 @@
-import { BusinessGoal, RecommendationPriority, ScoreCategory } from "@prisma/client";
+import {
+  BusinessGoal,
+  RecommendationPriority,
+  ScoreCategory,
+} from "@prisma/client";
 
 type RecommendationLike = {
   title: string;
@@ -22,6 +26,18 @@ export const orderedBusinessGoals: BusinessGoal[] = [
   BusinessGoal.OTHER,
 ];
 
+export const websiteSeoBusinessGoals: BusinessGoal[] = [
+  BusinessGoal.MORE_CUSTOMERS,
+  BusinessGoal.MORE_LEADS,
+  BusinessGoal.IMPROVE_WEBSITE,
+  BusinessGoal.IMPROVE_SEO,
+  BusinessGoal.INCREASE_SALES,
+  BusinessGoal.IMPROVE_BRANDING,
+  BusinessGoal.INCREASE_CONVERSIONS,
+  BusinessGoal.BUILD_EMAIL_LIST,
+  BusinessGoal.OTHER,
+];
+
 export const businessGoalLabels: Record<BusinessGoal, string> = {
   MORE_CUSTOMERS: "More customers",
   MORE_LEADS: "More leads",
@@ -40,25 +56,29 @@ export const businessGoalLabels: Record<BusinessGoal, string> = {
 export const businessGoalDescriptions: Record<BusinessGoal, string> = {
   MORE_CUSTOMERS: "Attract more qualified buyers and repeat customers.",
   MORE_LEADS: "Turn more visitors and profile viewers into leads.",
-  IMPROVE_WEBSITE: "Make the website clearer, faster to trust, and easier to act on.",
+  IMPROVE_WEBSITE:
+    "Make the website clearer, faster to trust, and easier to act on.",
   IMPROVE_SEO: "Improve search visibility and homepage SEO fundamentals.",
-  GROW_SOCIAL_MEDIA: "Build a more consistent social presence and content rhythm.",
+  GROW_SOCIAL_MEDIA:
+    "Build a more consistent social presence and content rhythm.",
   INCREASE_SALES: "Improve the path from interest to purchase.",
   BEAT_COMPETITORS: "Compare against competitors and find positioning gaps.",
-  IMPROVE_BRANDING: "Make profiles, messaging, and visuals feel more consistent.",
+  IMPROVE_BRANDING:
+    "Make profiles, messaging, and visuals feel more consistent.",
   INCREASE_CONVERSIONS: "Get more visitors to take the next step.",
   BUILD_EMAIL_LIST: "Capture more owned audience and nurture demand.",
-  IMPROVE_LOCAL_VISIBILITY: "Strengthen local search, reviews, and map readiness.",
+  IMPROVE_LOCAL_VISIBILITY:
+    "Strengthen local search, reviews, and map readiness.",
   OTHER: "Keep recommendations flexible for a custom business priority.",
 };
 
 const defaultSuggestedQuestions = [
   "What should I fix first?",
-  "Why is my website score low?",
-  "What should I post this week?",
-  "How can I improve my social presence?",
-  "How do I compare to my competitors?",
-  "Create a 7-day action plan.",
+  "Explain why this issue matters.",
+  "Help me rewrite this page title.",
+  "Draft a stronger call to action.",
+  "Which pages need the most attention?",
+  "How can I verify this recommendation?",
 ];
 
 const goalSuggestedQuestions: Partial<Record<BusinessGoal, string[]>> = {
@@ -95,8 +115,8 @@ const goalSuggestedQuestions: Partial<Record<BusinessGoal, string[]>> = {
     "How can I make the offer clearer?",
   ],
   IMPROVE_BRANDING: [
-    "Where is my branding inconsistent?",
-    "How should I improve my profile messaging?",
+    "Where is my website messaging inconsistent?",
+    "How should I improve my website messaging?",
   ],
   BUILD_EMAIL_LIST: [
     "How can I capture more email subscribers?",
@@ -131,84 +151,21 @@ export function getSuggestedQuestionsForGoals(
   } | null,
 ) {
   const selectedGoals = uniqueGoals(goals, primaryGoal);
-  const socialGoalSelected = selectedGoals.includes(
-    BusinessGoal.GROW_SOCIAL_MEDIA,
-  );
-  const localTrustGoals: BusinessGoal[] = [
-      BusinessGoal.MORE_CUSTOMERS,
-      BusinessGoal.MORE_LEADS,
-      BusinessGoal.IMPROVE_LOCAL_VISIBILITY,
-      BusinessGoal.INCREASE_SALES,
-  ];
-  const localTrustGoalSelected = selectedGoals.some((goal) =>
-    localTrustGoals.includes(goal),
-  );
-  const socialPriorityQuestions =
-    socialGoalSelected || (typeof socialScore === "number" && socialScore < 55)
-      ? [
-          "What social platform should I focus on first?",
-          "What should I post this week?",
-          "How can I improve my social presence?",
-          "Are my competitors stronger on social?",
-        ]
-      : [];
-  const reviewPriorityQuestions =
-    localTrustGoalSelected ||
-    googleBusinessStatus === "missing" ||
-    googleBusinessStatus === "pending" ||
-    (typeof reviewScore === "number" && reviewScore < 55)
-      ? [
-          "How can I improve trust signals?",
-          "Do I need a Google Business profile?",
-          "How can reviews help me get more customers?",
-          "Are competitors stronger on local trust?",
-        ]
-      : [];
-  const competitorQuestions =
-    competitorNames.length > 0
-      ? [
-          `How should I compete against ${competitorNames[0]}?`,
-          "What should I watch from my competitors?",
-          "How can competitor tracking help my strategy?",
-        ]
-      : selectedGoals.includes(BusinessGoal.BEAT_COMPETITORS)
-        ? [
-            "What should I watch from my competitors?",
-            "How can competitor tracking help my strategy?",
-          ]
-        : [];
-  const contextText = [
-    businessContext?.description,
-    businessContext?.targetAudience,
-    businessContext?.businessType,
-    businessContext?.primaryConversionGoal,
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-  const contextQuestions = businessContext?.description
-    ? [
-        "Who is my target audience?",
-        "How should I market this business?",
-        ...(contextText.match(
-          /\b(discord|gaming|creator|community|server owner|community manager)\b/,
-        )
-          ? [
-              "What social platform fits my audience best?",
-              "What should I post for my community audience?",
-            ]
-          : []),
-      ]
-    : [
-        "Does the AI understand my business?",
-        "Who is my target audience?",
-      ];
+  void competitorNames;
+  void socialScore;
+  void reviewScore;
+  void googleBusinessStatus;
+  void businessContext;
   const questions = [
-    ...contextQuestions,
-    ...reviewPriorityQuestions,
-    ...socialPriorityQuestions,
-    ...competitorQuestions,
-    ...selectedGoals.flatMap((goal) => goalSuggestedQuestions[goal] ?? []),
+    ...selectedGoals
+      .filter((goal) => websiteSeoBusinessGoals.includes(goal))
+      .flatMap((goal) => goalSuggestedQuestions[goal] ?? [])
+      .filter(
+        (question) =>
+          !/social|competitor|google business|review|local visibility/i.test(
+            question,
+          ),
+      ),
     ...defaultSuggestedQuestions,
   ];
 
@@ -226,7 +183,8 @@ export function getRecommendationGoalWeight({
   goals?: BusinessGoal[];
   primaryGoal?: BusinessGoal | null;
 }) {
-  const text = `${recommendation.title} ${recommendation.description}`.toLowerCase();
+  const text =
+    `${recommendation.title} ${recommendation.description}`.toLowerCase();
   const selectedGoals = uniqueGoals(goals, primaryGoal);
 
   return selectedGoals.reduce((weight, goal) => {

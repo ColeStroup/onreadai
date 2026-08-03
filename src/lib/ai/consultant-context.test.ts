@@ -11,11 +11,10 @@ import {
 
 import { createReportFixture } from "@/lib/reports/report-fixtures.test-support";
 
-test("AI Consultant context consumes canonical evidence without CTA or profile coercion", async () => {
+test("Website and SEO Consultant context excludes disabled-module data", async () => {
   loadEnvConfig(process.cwd());
-  const { buildConsultantContext } = await import(
-    "@/lib/ai/consultant-context"
-  );
+  const { buildConsultantContext } =
+    await import("@/lib/ai/consultant-context");
   const report = createReportFixture("hospitality");
   assert(report.website);
   assert(report.websiteCrawl);
@@ -150,24 +149,26 @@ test("AI Consultant context consumes canonical evidence without CTA or profile c
   });
   const context = JSON.parse(contextJson);
 
-  assert.equal(context.website.primaryCtaClarity, "NEEDS_IMPROVEMENT");
-  assert.equal(context.websiteCrawl.pagesWithDetectedActionLinks, 34);
-  assert.equal(context.websiteCrawl.pagesWithStructurallyClearPrimaryCta, 0);
-  assert.equal(context.profiles.explicitCounts.confirmedPublicProfiles, 3);
-  assert.equal(context.profiles.explicitCounts.confirmedSocialProfiles, 2);
-  assert.match(context.profiles.terminology, /Social profile counts exclude websites/i);
-  assert.deepEqual(
-    context.latestAudit.evidenceIntegrity.canonicalRecommendations[0],
-    {
-      issueKey: "sitewide:h1:missing",
-      title: "Give important pages clear main headlines",
-      category: ScoreCategory.SEO,
-      evidence: "Homepage H1 count: 0. Two assessed pages have no H1.",
-      confidence: "HIGH",
-    },
-  );
   assert.equal(
-    context.latestAudit.evidenceIntegrity.dataConflicts[0].preferredSource,
-    "Dedicated hours page",
+    context.websiteEvidence.primaryCtaAssessment.clarity,
+    "NEEDS_IMPROVEMENT",
+  );
+  assert.equal(context.crawlEvidence.pagesWithNoDetectedActionLinks, 1);
+  assert.equal(context.productScope, "Website and SEO audit and growth");
+  assert.deepEqual(
+    context.latestAudit.scores.map(
+      (score: { category: string }) => score.category,
+    ),
+    ["Website", "SEO"],
+  );
+  assert.equal("profiles" in context, false);
+  assert.equal("competitors" in context, false);
+  assert.equal("reviews" in context, false);
+  assert(
+    context.recommendations.every(
+      (recommendation: { category: string }) =>
+        recommendation.category === "Website" ||
+        recommendation.category === "SEO",
+    ),
   );
 });

@@ -13,7 +13,7 @@ import {
 import {
   businessGoalDescriptions,
   businessGoalLabels,
-  orderedBusinessGoals,
+  websiteSeoBusinessGoals,
 } from "@/lib/goals";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
@@ -102,7 +102,7 @@ export default async function BusinessGoalsPage({
             </div>
 
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {orderedBusinessGoals.map((goal) => {
+              {websiteSeoBusinessGoals.map((goal) => {
                 const isSelected = selectedGoals.has(goal);
 
                 return (

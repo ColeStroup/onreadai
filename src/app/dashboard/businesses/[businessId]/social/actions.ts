@@ -16,6 +16,7 @@ import {
   canUseSocialStrategy,
 } from "@/lib/billing/entitlements";
 import { prisma } from "@/lib/prisma";
+import { isSocialGrowthEnabled } from "@/lib/features/feature-flags";
 import {
   currentRequestRateLimitIdentifier,
   enforceRateLimit,
@@ -88,6 +89,10 @@ export async function generateSocialStrategyAction(formData: FormData) {
     notFound();
   }
 
+  if (!isSocialGrowthEnabled()) {
+    throw new Error("Social Growth is not currently available.");
+  }
+
   const existingStrategyCount = await prisma.socialStrategy.count({
     where: {
       businessId: business.id,
@@ -101,9 +106,7 @@ export async function generateSocialStrategyAction(formData: FormData) {
   if (!strategyCheck.allowed) {
     redirect(
       `/dashboard/businesses/${business.id}/social?error=${
-        existingStrategyCount > 0
-          ? "strategy_regen_locked"
-          : "strategy_locked"
+        existingStrategyCount > 0 ? "strategy_regen_locked" : "strategy_locked"
       }`,
     );
   }
@@ -111,13 +114,19 @@ export async function generateSocialStrategyAction(formData: FormData) {
   try {
     await enforceRateLimit({
       scope: "social-strategy-generation",
-      identifiers: [user.id, business.id, await currentRequestRateLimitIdentifier()],
+      identifiers: [
+        user.id,
+        business.id,
+        await currentRequestRateLimitIdentifier(),
+      ],
       limit: 20,
       windowMs: 60 * 60 * 1_000,
     });
   } catch (error) {
     if (error instanceof RateLimitError) {
-      redirect(`/dashboard/businesses/${business.id}/social?error=strategy_rate_limited`);
+      redirect(
+        `/dashboard/businesses/${business.id}/social?error=strategy_rate_limited`,
+      );
     }
     throw error;
   }

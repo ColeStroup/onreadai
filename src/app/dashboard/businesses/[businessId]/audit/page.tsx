@@ -28,6 +28,7 @@ import {
   SummaryStrip,
 } from "@/components/dashboard/report-ui";
 import { buttonVariants } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import {
   findingTypeLabels,
   type AuditFindingType,
@@ -50,12 +51,7 @@ type AuditFindingsPageProps = {
 };
 
 type FindingView =
-  | "all"
-  | "priority"
-  | "issues"
-  | "opportunities"
-  | "strengths"
-  | "limitations";
+  "all" | "priority" | "issues" | "opportunities" | "strengths" | "limitations";
 
 const findingViews: FindingView[] = [
   "all",
@@ -158,7 +154,10 @@ function findingImpact(finding: ReportFinding) {
       "This identifies a public difference worth considering before choosing a competitive response.",
   };
 
-  return impacts[finding.category] ?? "This finding may affect the business's online growth priorities.";
+  return (
+    impacts[finding.category] ??
+    "This finding may affect the business's online growth priorities."
+  );
 }
 
 function sourcePageLabel(sourceUrl: string | null | undefined) {
@@ -263,10 +262,17 @@ export default async function AuditFindingsPage({
   });
   if (!report) notFound();
 
+  const availableFindingCategories = report.legacyScoring
+    ? findingCategories
+    : ([ScoreCategory.WEBSITE, ScoreCategory.SEO] as const);
+  const effectiveSelectedCategory = availableFindingCategories.find(
+    (category) => category === selectedCategory,
+  );
   const filteredFindings = report.findings.all.filter(
     (finding) =>
       matchesView(finding, selectedView) &&
-      (!selectedCategory || finding.category === selectedCategory),
+      (!effectiveSelectedCategory ||
+        finding.category === effectiveSelectedCategory),
   );
   const priorityCount = report.findings.all.filter((finding) =>
     matchesView(finding, "priority"),
@@ -292,16 +298,15 @@ export default async function AuditFindingsPage({
       )
     : null;
   const firstRecommendation = firstImportantFinding
-    ? audit.recommendations.find(
-        (recommendation) =>
-          recommendation.id === firstReportRecommendation?.id,
+    ? (audit.recommendations.find(
+        (recommendation) => recommendation.id === firstReportRecommendation?.id,
       ) ??
       audit.recommendations.find(
         (recommendation) =>
           recommendation.category === firstImportantFinding.category &&
           recommendation.status !== RecommendationStatus.COMPLETED &&
           recommendation.status !== RecommendationStatus.DISMISSED,
-      )
+      ))
     : null;
   const usedRecommendationIds = new Set(
     firstRecommendation ? [firstRecommendation.id] : [],
@@ -332,7 +337,7 @@ export default async function AuditFindingsPage({
       <PageIntro
         eyebrow="Audit"
         title="Findings and evidence"
-        description="Review the most important verified issues and opportunities first. Open evidence only when you need the supporting detail."
+        description="Review Website and SEO findings with their affected URLs, evidence, impact, next action, and verification method."
         icon={FileSearch}
         actions={
           <>
@@ -348,11 +353,18 @@ export default async function AuditFindingsPage({
               className={buttonVariants({ variant: "secondary", size: "sm" })}
             >
               <RefreshCw className="size-4" aria-hidden="true" />
-              Run audit
+              Re-audit website
             </Link>
           </>
         }
       />
+
+      {report.legacyScoring ? (
+        <Card className="border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
+          <strong>Legacy scoring model.</strong> This saved report retains its
+          original categories. Run a new audit to use the Website Growth Score.
+        </Card>
+      ) : null}
 
       {firstImportantFinding ? (
         <ReportSection
@@ -404,7 +416,7 @@ export default async function AuditFindingsPage({
       <SectionTabs
         items={findingViews.map((view) => ({
           label: findingViewLabels[view],
-          href: findingsHref(business.id, view, selectedCategory),
+          href: findingsHref(business.id, view, effectiveSelectedCategory),
           active: selectedView === view,
           count:
             view === "all"
@@ -418,8 +430,8 @@ export default async function AuditFindingsPage({
       <details className="rounded-lg border border-border bg-card">
         <summary className="cursor-pointer px-4 py-3 text-sm font-semibold">
           Filter by category
-          {selectedCategory
-            ? `: ${recommendationCategoryLabels[selectedCategory]}`
+          {effectiveSelectedCategory
+            ? `: ${recommendationCategoryLabels[effectiveSelectedCategory]}`
             : ""}
         </summary>
         <div className="flex flex-wrap gap-2 border-t border-border p-4">
@@ -427,18 +439,19 @@ export default async function AuditFindingsPage({
             href={findingsHref(business.id, selectedView)}
             className={cn(
               buttonVariants({ variant: "secondary", size: "sm" }),
-              !selectedCategory && "border-accent text-accent",
+              !effectiveSelectedCategory && "border-accent text-accent",
             )}
           >
             All categories
           </Link>
-          {findingCategories.map((category) => (
+          {availableFindingCategories.map((category) => (
             <Link
               key={category}
               href={findingsHref(business.id, selectedView, category)}
               className={cn(
                 buttonVariants({ variant: "secondary", size: "sm" }),
-                selectedCategory === category && "border-accent text-accent",
+                effectiveSelectedCategory === category &&
+                  "border-accent text-accent",
               )}
             >
               {recommendationCategoryLabels[category]}
@@ -533,7 +546,9 @@ export default async function AuditFindingsPage({
                       ) : null}
                       {finding.confidence ? (
                         <p>
-                          <strong className="text-foreground">Confidence:</strong>{" "}
+                          <strong className="text-foreground">
+                            Confidence:
+                          </strong>{" "}
                           {finding.confidence}
                         </p>
                       ) : null}

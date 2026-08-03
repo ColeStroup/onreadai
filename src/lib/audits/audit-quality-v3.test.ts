@@ -201,6 +201,50 @@ test("recommendations merge by root cause while H1 pages remain URL-scoped", () 
   assert.deepEqual(cta?.sourceFindingIds, ["cta-finding"]);
 });
 
+test("audited SEO support endpoints are valid evidence while external URLs remain rejected", () => {
+  const result = validateAuditConsistency({
+    facts: normalizedFacts(),
+    businessName: "Sample Bakery",
+    summary: "The technical SEO checks identified two setup actions.",
+    findings: [],
+    recommendations: [
+      recommendation({
+        title: "Add a readable robots.txt file",
+        description: "Publish a readable crawl policy.",
+        sourceUrl: "https://example.com/robots.txt",
+        issueKey: "seo:robots:status",
+      }),
+      recommendation({
+        title: "Publish a sitemap.xml file",
+        description: "Publish a sitemap for important pages.",
+        sourceUrl: "https://example.com/sitemap.xml",
+        issueKey: "seo:sitemap:status",
+      }),
+      recommendation({
+        title: "Copy another site's crawl policy",
+        description: "Use an unrelated external source.",
+        sourceUrl: "https://other-site.example/robots.txt",
+        issueKey: "seo:external-source",
+      }),
+    ],
+    generatedAt,
+  });
+
+  assert.deepEqual(
+    result.recommendations.map((item) => item.sourceUrl),
+    [
+      "https://example.com/robots.txt",
+      "https://example.com/sitemap.xml",
+    ],
+  );
+  assert.equal(
+    result.snapshot.issues.filter(
+      (item) => item.code === "UNSUPPORTED_SOURCE_URL_REJECTED",
+    ).length,
+    1,
+  );
+});
+
 test("action extraction separates order, contact, email, newsletter, and social links", () => {
   const summary = classifyWebsiteActions({
     businessKind: "general",

@@ -41,20 +41,25 @@ export function MarketingFooter() {
         <div>
           <BrandMark />
           <p className="mt-5 max-w-md text-sm leading-6 text-slate-400">
-            Evidence-backed online presence audits, practical implementation help,
-            and business-aware guidance for deciding what to improve next.
+            Evidence-backed website and SEO audits, prioritized improvements,
+            implementation help, and progress you can verify.
           </p>
           <p className="mt-4 max-w-lg text-xs leading-5 text-slate-400">
             Public and user-confirmed evidence has limits. The platform does not
-            claim private traffic, revenue, competitor performance, or guaranteed
+            claim private traffic, revenue, customer behavior, or guaranteed
             business outcomes.
           </p>
         </div>
 
-        <nav aria-label="Footer navigation" className="grid gap-8 sm:grid-cols-3">
+        <nav
+          aria-label="Footer navigation"
+          className="grid gap-8 sm:grid-cols-3"
+        >
           {footerGroups.map((group) => (
             <div key={group.title}>
-              <h2 className="text-sm font-semibold text-white">{group.title}</h2>
+              <h2 className="text-sm font-semibold text-white">
+                {group.title}
+              </h2>
               <ul className="mt-4 space-y-3">
                 {group.links.map(([label, href]) => (
                   <li key={href}>
@@ -73,7 +78,9 @@ export function MarketingFooter() {
       </div>
       <div className="border-t border-white/10">
         <div className="mx-auto flex w-full max-w-7xl flex-col gap-2 px-6 py-5 text-xs text-slate-400 sm:flex-row sm:items-center sm:justify-between lg:px-8">
-          <p>© {new Date().getFullYear()} {brand.name}.</p>
+          <p>
+            © {new Date().getFullYear()} {brand.name}.
+          </p>
           <p>Analysis supports decisions; it does not guarantee outcomes.</p>
         </div>
       </div>

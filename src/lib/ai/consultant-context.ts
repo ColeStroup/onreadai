@@ -35,7 +35,8 @@ import {
   readSelectiveAiAuditSnapshot,
   type SelectiveAiAuditSnapshot,
 } from "@/lib/audits/selective-ai/types";
-import { businessGoalLabels } from "@/lib/goals";
+import { businessGoalLabels, websiteSeoBusinessGoals } from "@/lib/goals";
+import { isWebsiteSeoLaunchScope } from "@/lib/features/feature-flags";
 import { prisma } from "@/lib/prisma";
 import { aggregateProfileCounts } from "@/lib/profiles/profile-counts";
 import {
@@ -48,6 +49,12 @@ import {
 } from "@/lib/ai/competitor-consultant-context";
 import { getAuditCompetitorIntelligence } from "@/lib/competitors/competitor-types";
 import type { SocialStrategyData } from "@/lib/social-strategy";
+import {
+  isWebsiteGrowthAuditSnapshot,
+  isWebsiteSeoCategory,
+  isWebsiteSeoReportCategory,
+  WEBSITE_GROWTH_SCORE_LABEL,
+} from "@/lib/product/website-seo-scope";
 
 type ConsultantContextBusiness = {
   id?: string;
@@ -202,7 +209,9 @@ const statusWeight: Record<RecommendationStatus, number> = {
   DISMISSED: 3,
 };
 
-export async function buildConsultantContext(input: BuildConsultantContextInput) {
+export async function buildConsultantContext(
+  input: BuildConsultantContextInput,
+) {
   const assessment = getAuditAssessment(input.latestAudit.analysisSnapshot);
   const evidenceIntegrity = readEvidenceIntegrity(
     input.latestAudit.analysisSnapshot,
@@ -219,6 +228,7 @@ export async function buildConsultantContext(input: BuildConsultantContextInput)
   );
   const website = getWebsiteAnalysis(input.latestAudit.analysisSnapshot);
   const websiteCrawl = getWebsiteCrawl(input.latestAudit.analysisSnapshot);
+  const seo = getSeoAnalysis(input.latestAudit.analysisSnapshot);
   const websiteActionSummary =
     website?.actionSummary ??
     classifyWebsiteActions({
@@ -239,19 +249,32 @@ export async function buildConsultantContext(input: BuildConsultantContextInput)
   const homepagePrimaryCta = website
     ? getPrimaryCtaAssessment(websiteActionSummary)
     : null;
-  const reservationRelevant = /\b(reservation|reservations|reserve|book a table|table booking)\b/i.test(
-    [
-      input.business.description,
-      input.business.targetAudience,
-      input.business.mainOffer,
-      input.business.industry,
-      input.business.businessType,
-      input.business.primaryConversionGoal,
-    ]
-      .filter(Boolean)
-      .join(" "),
-  );
-  const seo = getSeoAnalysis(input.latestAudit.analysisSnapshot);
+  if (
+    isWebsiteSeoLaunchScope() ||
+    isWebsiteGrowthAuditSnapshot(input.latestAudit.analysisSnapshot)
+  ) {
+    return buildWebsiteSeoConsultantContext({
+      input,
+      website,
+      websiteCrawl,
+      seo,
+      homepagePrimaryCta,
+      relevantAiPageEvidence,
+    });
+  }
+  const reservationRelevant =
+    /\b(reservation|reservations|reserve|book a table|table booking)\b/i.test(
+      [
+        input.business.description,
+        input.business.targetAudience,
+        input.business.mainOffer,
+        input.business.industry,
+        input.business.businessType,
+        input.business.primaryConversionGoal,
+      ]
+        .filter(Boolean)
+        .join(" "),
+    );
   const social = getSocialAnalysis(input.latestAudit.analysisSnapshot);
   const snapshotReviews = getReviewAnalysis(input.latestAudit.analysisSnapshot);
   const googleBusinessProfiles = await getCurrentGoogleBusinessProfiles({
@@ -322,36 +345,34 @@ export async function buildConsultantContext(input: BuildConsultantContextInput)
   const pendingProfiles = input.profiles.filter(
     (profile) => profile.status === BusinessProfileStatus.PENDING,
   );
-  const competitorSummary = input.competitors
-    .slice(0, 6)
-    .map((competitor) => {
-      const confirmed = competitor.discoveredProfiles.filter(
-        (profile) => profile.status === BusinessProfileStatus.CONFIRMED,
-      );
-      const counts = aggregateProfileCounts(competitor.discoveredProfiles);
+  const competitorSummary = input.competitors.slice(0, 6).map((competitor) => {
+    const confirmed = competitor.discoveredProfiles.filter(
+      (profile) => profile.status === BusinessProfileStatus.CONFIRMED,
+    );
+    const counts = aggregateProfileCounts(competitor.discoveredProfiles);
 
-      return [
-        competitor.name,
-        competitor.websiteUrl ? `website ${competitor.websiteUrl}` : null,
-        `${counts.confirmedPublicProfiles} confirmed public profile(s), including ${counts.confirmedWebsiteProfiles} website profile(s)`,
-        `${counts.confirmedSocialProfiles} confirmed social profile(s)`,
-        `${counts.pendingSocialProfiles} pending social link(s)`,
-        confirmed.length > 0
-          ? `confirmed platforms: ${unique(
-              confirmed.map((profile) => profile.label),
-            ).join(", ")}`
-          : null,
-      ]
-        .filter(Boolean)
-        .join(" | ");
-    });
+    return [
+      competitor.name,
+      competitor.websiteUrl ? `website ${competitor.websiteUrl}` : null,
+      `${counts.confirmedPublicProfiles} confirmed public profile(s), including ${counts.confirmedWebsiteProfiles} website profile(s)`,
+      `${counts.confirmedSocialProfiles} confirmed social profile(s)`,
+      `${counts.pendingSocialProfiles} pending social link(s)`,
+      confirmed.length > 0
+        ? `confirmed platforms: ${unique(
+            confirmed.map((profile) => profile.label),
+          ).join(", ")}`
+        : null,
+    ]
+      .filter(Boolean)
+      .join(" | ");
+  });
   const auditCompetitorIntelligence = getAuditCompetitorIntelligence(
     input.latestAudit.analysisSnapshot,
   );
   const currentCompetitorComparison =
     input.competitorContext !== undefined
-      ? input.competitorContext?.currentComparison ?? null
-      : auditCompetitorIntelligence?.comparison ?? null;
+      ? (input.competitorContext?.currentComparison ?? null)
+      : (auditCompetitorIntelligence?.comparison ?? null);
   const history = (input.recentChatHistory ?? [])
     .slice(-8)
     .map(
@@ -413,38 +434,33 @@ export async function buildConsultantContext(input: BuildConsultantContextInput)
       limitations: assessment.limitations,
       scoreBreakdown: input.scores
         .filter((score) => !score.platform)
-        .map(
-          (score) => {
-            if (
-              score.category === ScoreCategory.COMPETITORS &&
-              !currentCompetitorComparison?.analyzedCompetitorCount
-            ) {
-              return `${categoryLabels[score.category]}: ${
-                input.competitors.length > 0
-                  ? "Saved but not analyzed"
-                  : "Not configured"
-              }`;
-            }
+        .map((score) => {
+          if (
+            score.category === ScoreCategory.COMPETITORS &&
+            !currentCompetitorComparison?.analyzedCompetitorCount
+          ) {
+            return `${categoryLabels[score.category]}: ${
+              input.competitors.length > 0
+                ? "Saved but not analyzed"
+                : "Not configured"
+            }`;
+          }
 
-            return `${categoryLabels[score.category]}: ${score.score}/100`;
-          },
-        ),
+          return `${categoryLabels[score.category]}: ${score.score}/100`;
+        }),
       normalizedFacts: normalizedFacts
         ? {
             homepage: normalizedFacts.homepage,
             siteWide: {
-              pagesMissingTitles:
-                normalizedFacts.siteWide.pagesMissingTitles,
+              pagesMissingTitles: normalizedFacts.siteWide.pagesMissingTitles,
               pagesMissingMetaDescriptions:
                 normalizedFacts.siteWide.pagesMissingMetaDescriptions,
               pagesMissingH1: normalizedFacts.siteWide.pagesMissingH1,
-              pagesWithMultipleH1:
-                normalizedFacts.siteWide.pagesWithMultipleH1,
+              pagesWithMultipleH1: normalizedFacts.siteWide.pagesWithMultipleH1,
               thinPages: normalizedFacts.siteWide.thinPages,
               duplicateContentGroups:
                 normalizedFacts.siteWide.duplicateContentGroups,
-              copyQualityFindings:
-                normalizedFacts.siteWide.copyQualityFindings,
+              copyQualityFindings: normalizedFacts.siteWide.copyQualityFindings,
               orderingFrictionPages:
                 normalizedFacts.siteWide.orderingFrictionPages,
             },
@@ -452,8 +468,7 @@ export async function buildConsultantContext(input: BuildConsultantContextInput)
             scoreEvidence: normalizedFacts.scoreEvidence,
             coverage: normalizedFacts.coverage,
             businessModel: normalizedFacts.businessModel,
-            rule:
-              "These normalized audit-time facts take precedence over generated prose for objective claims.",
+            rule: "These normalized audit-time facts take precedence over generated prose for objective claims.",
           }
         : "Legacy audit without normalized facts; use deterministic analyzer snapshots and disclose uncertainty.",
       evidenceIntegrity: evidenceIntegrity
@@ -469,16 +484,15 @@ export async function buildConsultantContext(input: BuildConsultantContextInput)
                 reason: claim.reasons.join(" "),
                 safeFallback: claim.correctedClaim,
               })),
-            canonicalRecommendations:
-              evidenceIntegrity.canonicalRecommendations.slice(0, 8).map(
-                (recommendation) => ({
-                  issueKey: recommendation.issueKey,
-                  title: recommendation.title,
-                  category: categoryLabels[recommendation.category],
-                  evidence: recommendation.reportEvidence,
-                  confidence: recommendation.evidenceConfidence,
-                }),
-              ),
+            canonicalRecommendations: evidenceIntegrity.canonicalRecommendations
+              .slice(0, 8)
+              .map((recommendation) => ({
+                issueKey: recommendation.issueKey,
+                title: recommendation.title,
+                category: categoryLabels[recommendation.category],
+                evidence: recommendation.reportEvidence,
+                confidence: recommendation.evidenceConfidence,
+              })),
             scoreComponents: evidenceIntegrity.scoreBreakdowns.map(
               (breakdown) => ({
                 category: categoryLabels[breakdown.category],
@@ -489,7 +503,8 @@ export async function buildConsultantContext(input: BuildConsultantContextInput)
                   contribution: component.contribution,
                   explanation: component.explanation,
                 })),
-              })),
+              }),
+            ),
             dataConflicts: evidenceIntegrity.dataConflicts.map((conflict) => ({
               field: conflict.field,
               explanation: conflict.explanation,
@@ -539,17 +554,17 @@ export async function buildConsultantContext(input: BuildConsultantContextInput)
     topRecommendations: evidenceIntegrity
       ? [
           ...evidenceIntegrity.canonicalRecommendations
-          .slice(0, 8)
-          .map((recommendation) => {
-            const tracked = input.recommendations.find(
-              (item) => item.title === recommendation.title,
-            );
-            return `${recommendation.priority} | ${tracked?.status ?? "TODO"} | ${
-              categoryLabels[recommendation.category]
-            } | Effort ${recommendation.estimatedEffort} | Impact ${
-              recommendation.expectedImpact
-            }: ${recommendation.title} - ${recommendation.description} Evidence: ${recommendation.reportEvidence}`;
-          }),
+            .slice(0, 8)
+            .map((recommendation) => {
+              const tracked = input.recommendations.find(
+                (item) => item.title === recommendation.title,
+              );
+              return `${recommendation.priority} | ${tracked?.status ?? "TODO"} | ${
+                categoryLabels[recommendation.category]
+              } | Effort ${recommendation.estimatedEffort} | Impact ${
+                recommendation.expectedImpact
+              }: ${recommendation.title} - ${recommendation.description} Evidence: ${recommendation.reportEvidence}`;
+            }),
           ...sortedRecommendations
             .filter(
               (recommendation) =>
@@ -572,17 +587,19 @@ export async function buildConsultantContext(input: BuildConsultantContextInput)
               }. Evidence: ${evidence?.excerpt ?? "No concise excerpt saved."}`;
             }),
         ].slice(0, 10)
-      : sortedRecommendations.slice(0, 8).map(
-          (recommendation) =>
-            `${recommendation.priority} | ${recommendation.status} | ${
-              categoryLabels[recommendation.category]
-            } | Effort ${displayEffort(recommendation)} | Impact ${displayImpact(
-              recommendation,
-            )}: ${recommendation.title} - ${completeEvidenceSummary(
-              recommendation.description,
-              260,
-            )}`,
-        ),
+      : sortedRecommendations
+          .slice(0, 8)
+          .map(
+            (recommendation) =>
+              `${recommendation.priority} | ${recommendation.status} | ${
+                categoryLabels[recommendation.category]
+              } | Effort ${displayEffort(recommendation)} | Impact ${displayImpact(
+                recommendation,
+              )}: ${recommendation.title} - ${completeEvidenceSummary(
+                recommendation.description,
+                260,
+              )}`,
+          ),
     completedRecommendations: completedRecommendations
       .slice(0, 6)
       .map((recommendation) => recommendation.title),
@@ -633,28 +650,30 @@ export async function buildConsultantContext(input: BuildConsultantContextInput)
           pagesWithMultipleH1: websiteCrawl.pagesWithMultipleH1,
           pagesWithNoDetectedActionLinks: websiteCrawl.pagesWithNoCTA,
           pagesWithDetectedActionLinks:
-            websiteCrawl.pagesWithDetectedActionLinks ?? "Legacy snapshot unavailable",
+            websiteCrawl.pagesWithDetectedActionLinks ??
+            "Legacy snapshot unavailable",
           pagesWithCtaClarityAssessed:
-            websiteCrawl.pagesWithAssessedPrimaryCta ?? "Legacy snapshot unavailable",
+            websiteCrawl.pagesWithAssessedPrimaryCta ??
+            "Legacy snapshot unavailable",
           pagesWithStructurallyClearPrimaryCta:
-            websiteCrawl.pagesWithClearPrimaryCta ?? "Legacy snapshot unavailable",
+            websiteCrawl.pagesWithClearPrimaryCta ??
+            "Legacy snapshot unavailable",
           imagesMissingAlt: `${websiteCrawl.totalImagesMissingAlt} of ${websiteCrawl.totalImages}`,
           importantPagesScanned: websiteCrawl.importantPagesFound,
           importantPagesDiscoveredButSkipped:
             websiteCrawl.skippedImportantPages
               ?.slice(0, 8)
               .map((page) => `${page.type} (${page.path})`) ?? [],
-          importantPageTypesNotFound:
-            (
-              websiteCrawl.missingImportantPageTypes ??
-              websiteCrawl.importantPagesMissing
+          importantPageTypesNotFound: (
+            websiteCrawl.missingImportantPageTypes ??
+            websiteCrawl.importantPagesMissing
+          )
+            .filter(
+              (type) =>
+                reservationRelevant ||
+                !type.toLowerCase().includes("reservation"),
             )
-              .filter(
-                (type) =>
-                  reservationRelevant ||
-                  !type.toLowerCase().includes("reservation"),
-              )
-              .slice(0, 8),
+            .slice(0, 8),
           uncertaintyNote:
             "Do not claim an important page is missing if it appears in importantPagesDiscoveredButSkipped. Say it was discovered but not scanned and should be verified.",
           sampleProblemPages: websiteCrawl.pageResults
@@ -773,20 +792,16 @@ export async function buildConsultantContext(input: BuildConsultantContextInput)
             ),
           conversionTips: input.socialStrategy.conversionTips
             .slice(0, 5)
+            .map((tip) => `${tip.tip} - ${truncate(tip.reason, 180)}`),
+          competitorOpportunities: input.socialStrategy.competitorOpportunities
+            .slice(0, 4)
             .map(
-              (tip) =>
-                `${tip.tip} - ${truncate(tip.reason, 180)}`,
+              (opportunity) =>
+                `${opportunity.opportunity} - ${truncate(
+                  opportunity.reason,
+                  180,
+                )}`,
             ),
-          competitorOpportunities:
-            input.socialStrategy.competitorOpportunities
-              .slice(0, 4)
-              .map(
-                (opportunity) =>
-                  `${opportunity.opportunity} - ${truncate(
-                    opportunity.reason,
-                    180,
-                  )}`,
-              ),
           note: "Use saved Social Strategy for social platform, content idea, weekly plan, and social-to-conversion questions. Do not claim actual post engagement was analyzed.",
         }
       : "No saved Social Strategy yet. Use Business Context and social snapshot, and suggest generating Social Strategy when the user asks for detailed content planning.",
@@ -827,8 +842,9 @@ export async function buildConsultantContext(input: BuildConsultantContextInput)
       snapshotConflict: reviewSnapshotConflict
         ? "The saved audit reviews snapshot conflicts with current Google Business data. Use currentScore/status for answers and explain that the saved audit may be stale."
         : "No conflict detected between saved audit review snapshot and current Google Business data.",
-      googleBusinessProfiles: googleBusinessProfiles.slice(0, 8).map(
-        (profile) => ({
+      googleBusinessProfiles: googleBusinessProfiles
+        .slice(0, 8)
+        .map((profile) => ({
           id: profile.id,
           placeId: profile.googlePlaceId,
           name: profile.displayName,
@@ -845,13 +861,11 @@ export async function buildConsultantContext(input: BuildConsultantContextInput)
           updatedAt: profile.updatedAt?.toISOString() ?? null,
           businessStatus: profile.businessStatus,
           primaryType: profile.primaryType,
-        }),
-      ),
+        })),
       presenceLevel: reviews.reviewPresenceLevel,
       confirmedPlatforms: reviews.confirmedReviewPlatforms,
       pendingPlatforms: reviews.pendingReviewPlatforms,
-      note:
-        "Google Business is the review channel/platform. The listing name is separate evidence. Never describe a listing name as a review platform. Never say Google Business is pending, missing, or low-confidence when the current database status is confirmed. Do not infer review sentiment or themes without review text.",
+      note: "Google Business is the review channel/platform. The listing name is separate evidence. Never describe a listing name as a review platform. Never say Google Business is pending, missing, or low-confidence when the current database status is confirmed. Do not infer review sentiment or themes without review text.",
       warnings: reviews.trustWarnings.slice(0, 5),
       opportunities: reviews.opportunities.slice(0, 5),
       recommendedFixes: reviews.recommendedFixes.slice(0, 5),
@@ -868,66 +882,67 @@ export async function buildConsultantContext(input: BuildConsultantContextInput)
         }
       : auditCompetitorIntelligence
         ? {
-          generatedAt: auditCompetitorIntelligence.generatedAt,
-          executiveSummary: auditCompetitorIntelligence.summary.executiveSummary,
-          analyzedCompetitors:
-            auditCompetitorIntelligence.comparison.analyzedCompetitorCount,
-          savedButUnanalyzed:
-            auditCompetitorIntelligence.comparison.savedButUnanalyzedCount,
-          staleCompetitors:
-            auditCompetitorIntelligence.comparison.staleCompetitorCount,
-          failedCompetitors:
-            auditCompetitorIntelligence.comparison.failedCompetitorCount,
-          freshness: auditCompetitorIntelligence.comparison.freshness,
-          categoryComparisons:
-            auditCompetitorIntelligence.comparison.categoryComparisons
-              .slice(0, 12)
-              .map((item) => ({
-                competitor: item.competitorName,
-                category: item.category,
-                businessValue: item.businessDisplay,
-                competitorValue: item.competitorDisplay,
-                result: item.status,
-                observation: item.observation,
-                evidence: item.evidence.slice(0, 3),
-              })),
-          businessAdvantages:
-            auditCompetitorIntelligence.comparison.businessAdvantages
+            generatedAt: auditCompetitorIntelligence.generatedAt,
+            executiveSummary:
+              auditCompetitorIntelligence.summary.executiveSummary,
+            analyzedCompetitors:
+              auditCompetitorIntelligence.comparison.analyzedCompetitorCount,
+            savedButUnanalyzed:
+              auditCompetitorIntelligence.comparison.savedButUnanalyzedCount,
+            staleCompetitors:
+              auditCompetitorIntelligence.comparison.staleCompetitorCount,
+            failedCompetitors:
+              auditCompetitorIntelligence.comparison.failedCompetitorCount,
+            freshness: auditCompetitorIntelligence.comparison.freshness,
+            categoryComparisons:
+              auditCompetitorIntelligence.comparison.categoryComparisons
+                .slice(0, 12)
+                .map((item) => ({
+                  competitor: item.competitorName,
+                  category: item.category,
+                  businessValue: item.businessDisplay,
+                  competitorValue: item.competitorDisplay,
+                  result: item.status,
+                  observation: item.observation,
+                  evidence: item.evidence.slice(0, 3),
+                })),
+            businessAdvantages:
+              auditCompetitorIntelligence.comparison.businessAdvantages
+                .slice(0, 5)
+                .map((item) => ({
+                  competitor: item.competitorName,
+                  category: item.category,
+                  statement: item.description,
+                  evidence: item.evidence.slice(0, 3),
+                })),
+            competitorAdvantages:
+              auditCompetitorIntelligence.comparison.competitorAdvantages
+                .slice(0, 5)
+                .map((item) => ({
+                  competitor: item.competitorName,
+                  category: item.category,
+                  statement: item.description,
+                  evidence: item.evidence.slice(0, 3),
+                })),
+            opportunities: auditCompetitorIntelligence.comparison.opportunities
               .slice(0, 5)
               .map((item) => ({
                 competitor: item.competitorName,
                 category: item.category,
-                statement: item.description,
+                suggestion: item.description,
+                confidence: item.confidence,
                 evidence: item.evidence.slice(0, 3),
               })),
-          competitorAdvantages:
-            auditCompetitorIntelligence.comparison.competitorAdvantages
-              .slice(0, 5)
-              .map((item) => ({
-                competitor: item.competitorName,
-                category: item.category,
-                statement: item.description,
-                evidence: item.evidence.slice(0, 3),
-              })),
-          opportunities: auditCompetitorIntelligence.comparison.opportunities
-            .slice(0, 5)
-            .map((item) => ({
-              competitor: item.competitorName,
-              category: item.category,
-              suggestion: item.description,
-              confidence: item.confidence,
-              evidence: item.evidence.slice(0, 3),
-            })),
-          limitations: auditCompetitorIntelligence.limitations.slice(0, 8),
-          sourceNote:
-            "Use only these timestamped public observations. Do not infer traffic, sales, private analytics, engagement, reach, impressions, audience demographics, or post performance. A saved competitor name is not comparison evidence.",
-        }
+            limitations: auditCompetitorIntelligence.limitations.slice(0, 8),
+            sourceNote:
+              "Use only these timestamped public observations. Do not infer traffic, sales, private analytics, engagement, reach, impressions, audience demographics, or post performance. A saved competitor name is not comparison evidence.",
+          }
         : {
-          status:
-            input.competitors.length > 0
-              ? "Competitors are saved, but no current or historical structured comparison is available."
-              : "Competitor comparison is not configured.",
-        },
+            status:
+              input.competitors.length > 0
+                ? "Competitors are saved, but no current or historical structured comparison is available."
+                : "Competitor comparison is not configured.",
+          },
     progressSincePreviousAudit: input.auditComparison?.previousAuditId
       ? {
           overallScoreChange: formatDelta(
@@ -957,8 +972,209 @@ export async function buildConsultantContext(input: BuildConsultantContextInput)
               .map((recommendation) => recommendation.title),
         }
       : "No previous completed audit to compare.",
-    recentChatHistory: history.length > 0 ? history : ["No prior chat history."],
+    recentChatHistory:
+      history.length > 0 ? history : ["No prior chat history."],
     currentQuestion: input.question,
+  };
+
+  return JSON.stringify(context, null, 2);
+}
+
+function buildWebsiteSeoConsultantContext({
+  input,
+  website,
+  websiteCrawl,
+  seo,
+  homepagePrimaryCta,
+  relevantAiPageEvidence,
+}: {
+  input: BuildConsultantContextInput;
+  website: WebsiteAnalysis | null;
+  websiteCrawl: WebsiteCrawlResult | null;
+  seo: SeoAnalysis | null;
+  homepagePrimaryCta: ReturnType<typeof getPrimaryCtaAssessment> | null;
+  relevantAiPageEvidence: ReturnType<typeof selectRelevantAiPageEvidence>;
+}) {
+  const selectedGoals = [
+    ...(input.business.primaryGoal ? [input.business.primaryGoal] : []),
+    ...input.business.goals,
+  ].filter(
+    (goal, index, goals) =>
+      websiteSeoBusinessGoals.includes(goal) && goals.indexOf(goal) === index,
+  );
+  const relevantScores = input.scores
+    .filter(
+      (score) => !score.platform && isWebsiteSeoReportCategory(score.category),
+    )
+    .map((score) => ({
+      category: categoryLabels[score.category],
+      score: score.score,
+    }));
+  const relevantFindings = input.findings
+    .filter((finding) => isWebsiteSeoCategory(finding.category))
+    .sort(
+      (left, right) =>
+        severityWeight(right.severity) - severityWeight(left.severity),
+    )
+    .slice(0, 10)
+    .map((finding) => ({
+      category: categoryLabels[finding.category],
+      severity: finding.severity,
+      title: finding.title,
+      evidence: completeEvidenceSummary(finding.description, 320),
+      affectedUrl: finding.sourceUrl ?? null,
+    }));
+  const relevantRecommendations = input.recommendations
+    .filter((recommendation) => isWebsiteSeoCategory(recommendation.category))
+    .sort(
+      (left, right) =>
+        statusWeight[left.status] - statusWeight[right.status] ||
+        priorityWeight[left.priority] - priorityWeight[right.priority],
+    )
+    .slice(0, 10)
+    .map((recommendation) => ({
+      category: categoryLabels[recommendation.category],
+      title: recommendation.title,
+      description: completeEvidenceSummary(recommendation.description, 280),
+      priority: recommendation.priority,
+      status: recommendation.status,
+      effort: recommendation.estimatedEffort ?? recommendation.effort,
+      impact: recommendation.expectedImpact ?? recommendation.impact,
+      affectedUrl: recommendation.sourceUrl ?? null,
+    }));
+  const comparison = input.auditComparison;
+  const comparableProgress = comparison?.previousAuditId
+    ? comparison.methodologyChanged
+      ? {
+          status: "not_comparable",
+          note:
+            comparison.comparisonNote ??
+            "The previous audit used a different scoring methodology.",
+        }
+      : {
+          status: "comparable",
+          overallScoreChange: comparison.overallScoreChange,
+          summary: comparison.summary,
+          categoryChanges: comparison.categoryScoreChanges
+            .filter((change) => isWebsiteSeoCategory(change.category))
+            .map((change) => ({
+              category: categoryLabels[change.category],
+              previousScore: change.previousScore,
+              currentScore: change.currentScore,
+              delta: change.delta,
+            })),
+        }
+    : { status: "first_audit" };
+  const recentChatHistory = (input.recentChatHistory ?? [])
+    .filter(
+      (message) =>
+        !/\b(social|instagram|facebook|tiktok|youtube|competitor|reviews?|google business|local growth)\b/i.test(
+          message.content,
+        ),
+    )
+    .slice(-8)
+    .map((message) => ({
+      role: message.role,
+      content: message.content.slice(0, 1_200),
+    }));
+  const context = {
+    productScope: "Website and SEO audit and growth",
+    sourceOfTruth:
+      "Use only the saved website, crawl, SEO, finding, recommendation, and progress evidence below. Missing evidence is unknown, not negative evidence.",
+    business: {
+      name: input.business.name,
+      website: website?.normalizedUrl ?? input.business.initialInput,
+      description: input.business.description ?? null,
+      targetAudience: input.business.targetAudience ?? null,
+      mainOffer: input.business.mainOffer ?? null,
+      businessType:
+        input.business.businessType ?? input.business.industry ?? null,
+      primaryConversionGoal: input.business.primaryConversionGoal ?? null,
+      selectedGoals: selectedGoals.map((goal) => businessGoalLabels[goal]),
+      contextConfirmed: Boolean(input.business.contextConfirmedAt),
+    },
+    latestAudit: {
+      date: input.latestAudit.createdAt.toISOString().slice(0, 10),
+      scoreLabel: WEBSITE_GROWTH_SCORE_LABEL,
+      overallScore: input.latestAudit.overallScore,
+      summary: input.latestAudit.summary,
+      scores: relevantScores,
+    },
+    websiteEvidence: website
+      ? {
+          url: website.normalizedUrl,
+          title: website.pageTitle,
+          metaDescription: website.metaDescription,
+          h1Count: website.h1Count,
+          h1Text: website.h1Text.slice(0, 5),
+          images: website.imageCount,
+          imagesMissingAlt: website.imagesMissingAltCount,
+          internalLinks: website.internalLinksCount,
+          externalLinks: website.externalLinksCount,
+          detectedActionLinks:
+            website.actionSummary?.primaryActions?.slice(0, 8) ??
+            website.ctaCandidates.slice(0, 8),
+          primaryCtaAssessment: homepagePrimaryCta,
+          warnings: website.warnings.slice(0, 8),
+        }
+      : { status: "No saved website analysis." },
+    crawlEvidence: websiteCrawl
+      ? {
+          pagesScanned: websiteCrawl.pagesScanned,
+          successfulPages: websiteCrawl.successfulPages,
+          failedPages: websiteCrawl.failedPages,
+          crawlLimit: websiteCrawl.crawlLimitUsed,
+          crawlLimitReached: websiteCrawl.crawlLimitReached,
+          pagesMissingTitle: websiteCrawl.pagesMissingTitle,
+          pagesMissingMetaDescription: websiteCrawl.pagesMissingMetaDescription,
+          pagesWithNoH1: websiteCrawl.pagesWithNoH1,
+          pagesWithMultipleH1: websiteCrawl.pagesWithMultipleH1,
+          pagesWithNoDetectedActionLinks: websiteCrawl.pagesWithNoCTA,
+          importantPagesFound: websiteCrawl.importantPagesFound.slice(0, 12),
+          importantPagesMissing: websiteCrawl.importantPagesMissing.slice(
+            0,
+            12,
+          ),
+          thinPages: websiteCrawl.thinPages?.slice(0, 8) ?? [],
+          duplicateContentGroups:
+            websiteCrawl.duplicateContentGroups?.slice(0, 5) ?? [],
+          warnings: websiteCrawl.warnings.slice(0, 8),
+        }
+      : { status: "No saved multi-page crawl." },
+    seoEvidence: seo
+      ? {
+          score: seo.score,
+          titleStatus: seo.titleStatus,
+          titleLength: seo.titleLength,
+          metaDescriptionStatus: seo.metaDescriptionStatus,
+          metaDescriptionLength: seo.metaDescriptionLength,
+          h1Status: seo.h1Status,
+          canonicalStatus: seo.canonicalStatus,
+          viewportStatus: seo.viewportStatus,
+          robotsTxtStatus: seo.robotsTxtStatus,
+          sitemapStatus: seo.sitemapStatus,
+          warnings: [...seo.indexabilityWarnings, ...seo.seoWarnings].slice(
+            0,
+            10,
+          ),
+          recommendedFixes: seo.recommendedFixes.slice(0, 8),
+        }
+      : { status: "No saved SEO analysis." },
+    relevantPageReview: relevantAiPageEvidence.slice(0, 4),
+    findings: relevantFindings,
+    recommendations: relevantRecommendations,
+    actionProgress: {
+      completed: relevantRecommendations.filter(
+        (recommendation) =>
+          recommendation.status === RecommendationStatus.COMPLETED,
+      ).length,
+      total: relevantRecommendations.length,
+    },
+    progressSincePreviousAudit: comparableProgress,
+    recentChatHistory,
+    currentQuestion: input.question,
+    unavailableProductAreas:
+      "Social Growth, Competitive Intelligence, and Local Growth are disabled. Do not imply their data was analyzed or offer module-specific analysis. Redirect the user to website or SEO actions when useful.",
   };
 
   return JSON.stringify(context, null, 2);
@@ -1094,12 +1310,10 @@ function displayImpact(recommendation: {
 
 function formatProfiles(profiles: ConsultantContextProfile[]) {
   return profiles.length > 0
-    ? profiles
-        .slice(0, 12)
-        .map((profile) => {
-          const value = profile.url ?? profile.handle ?? "No URL or handle";
-          return `${platformLabels[profile.platform]}: ${value}`;
-        })
+    ? profiles.slice(0, 12).map((profile) => {
+        const value = profile.url ?? profile.handle ?? "No URL or handle";
+        return `${platformLabels[profile.platform]}: ${value}`;
+      })
     : ["None"];
 }
 
@@ -1111,7 +1325,10 @@ function truncate(value: string, limit: number) {
   const sentence = candidate.lastIndexOf(". ");
   const word = candidate.lastIndexOf(" ");
   const boundary = sentence > available * 0.5 ? sentence + 1 : word;
-  const summary = value.slice(0, Math.max(1, boundary)).trim().replace(/[,;:]$/, ".");
+  const summary = value
+    .slice(0, Math.max(1, boundary))
+    .trim()
+    .replace(/[,;:]$/, ".");
   return `${summary}${/[.!?]$/.test(summary) ? "" : "."}${suffix}`;
 }
 

@@ -49,11 +49,27 @@ test("marketing homepage is accurate, accessible, and responsive", async ({
   ).toBeGreaterThan(0);
 
   await expect(page.locator("h1")).toHaveCount(1);
-  await expect(page.locator("h1")).toContainText("holding your business back");
-  await expect(page.getByRole("heading", { name: "Stop guessing what deserves your attention." })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "One view of your online growth position." })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Not just a score—a plan you can use." })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Recommendations you can trace back to evidence." })).toBeVisible();
+  await expect(page.locator("h1")).toContainText("holding your website back");
+  await expect(
+    page.getByRole("heading", {
+      name: "Stop guessing what deserves your attention.",
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", {
+      name: "From website URL to verified improvement.",
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", {
+      name: "A score is useful only when it leads to action.",
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", {
+      name: "Recommendations you can trace back to evidence.",
+    }),
+  ).toBeVisible();
 
   const pageText = await page.locator("body").innerText();
   expect(pageText).not.toContain("EntryCore Fitness");
@@ -61,10 +77,21 @@ test("marketing homepage is accurate, accessible, and responsive", async ({
   expect(pageText).not.toContain("Guaranteed growth");
   expect(pageText).not.toContain("Increase revenue automatically");
   expect(pageText).not.toContain("View Demo");
+  expect(pageText).not.toContain("Social Growth");
+  expect(pageText).not.toContain("Competitor Intelligence");
+  expect(pageText).not.toContain("Google Business");
+  expect(pageText).not.toContain("Review Score");
 
-  const signupLinks = page.getByRole("link", { name: "Start Free Audit", exact: true });
+  const signupLinks = page.getByRole("link", {
+    name: "Run a Website Audit",
+    exact: true,
+  });
   await expect(signupLinks.first()).toHaveAttribute("href", "/signup");
-  await expect(page.getByRole("link", { name: "View Example Report", exact: true }).first()).toHaveAttribute("href", "/example-report");
+  await expect(
+    page
+      .getByRole("link", { name: "View Example Report", exact: true })
+      .first(),
+  ).toHaveAttribute("href", "/example-report");
 
   const overflow = await page.evaluate(() => ({
     document: document.documentElement.scrollWidth - window.innerWidth,
@@ -82,11 +109,19 @@ test("marketing homepage is accurate, accessible, and responsive", async ({
     await expect(menu).toBeVisible();
     await menu.focus();
     await page.keyboard.press("Enter");
-    await expect(page.locator('.marketing-menu nav[aria-label="Mobile navigation"]')).toBeVisible();
-    await expect(page.locator('.marketing-menu nav').getByRole("link", { name: "Pricing" })).toBeVisible();
+    await expect(
+      page.locator('.marketing-menu nav[aria-label="Mobile navigation"]'),
+    ).toBeVisible();
+    await expect(
+      page
+        .locator(".marketing-menu nav")
+        .getByRole("link", { name: "Pricing" }),
+    ).toBeVisible();
     await page.keyboard.press("Enter");
   } else {
-    await expect(page.getByRole("navigation", { name: "Primary navigation" })).toBeVisible();
+    await expect(
+      page.getByRole("navigation", { name: "Primary navigation" }),
+    ).toBeVisible();
   }
 
   const projectDirectory = path.join(artifactRoot, projectName);
@@ -99,7 +134,10 @@ test("marketing homepage is accurate, accessible, and responsive", async ({
     animations: "disabled",
   });
   await expectMeaningfulViewportPixels(viewportScreenshot);
-  await writeFile(path.join(projectDirectory, "homepage-viewport.png"), viewportScreenshot);
+  await writeFile(
+    path.join(projectDirectory, "homepage-viewport.png"),
+    viewportScreenshot,
+  );
   await page.screenshot({
     path: path.join(projectDirectory, "homepage-full.png"),
     fullPage: true,
@@ -107,9 +145,9 @@ test("marketing homepage is accurate, accessible, and responsive", async ({
   });
 
   await page.emulateMedia({ reducedMotion: "reduce" });
-  const animationDuration = await page.locator(".marketing-preview").evaluate(
-    (element) => getComputedStyle(element).animationDuration,
-  );
+  const animationDuration = await page
+    .locator(".marketing-preview")
+    .evaluate((element) => getComputedStyle(element).animationDuration);
   expect(Number.parseFloat(animationDuration)).toBeLessThanOrEqual(0.001);
 
   if (projectName === "laptop-1366") {
@@ -117,25 +155,55 @@ test("marketing homepage is accurate, accessible, and responsive", async ({
     expect(title.length).toBeGreaterThanOrEqual(50);
     expect(title.length).toBeLessThanOrEqual(65);
 
-    const metaDescription = await page.locator('meta[name="description"]').getAttribute("content");
+    const metaDescription = await page
+      .locator('meta[name="description"]')
+      .getAttribute("content");
     expect(metaDescription).toBeTruthy();
     expect(metaDescription?.length).toBeGreaterThanOrEqual(140);
     expect(metaDescription?.length).toBeLessThanOrEqual(165);
-    await expect(page.locator('link[rel="canonical"]')).toHaveAttribute("href", canonicalOrigin);
-    await expect(page.locator('meta[property="og:title"]')).toHaveAttribute("content", /AI Business Audit/);
-    await expect(page.locator('meta[property="og:image"]')).toHaveAttribute("content", /opengraph-image/);
-    await expect(page.locator('meta[name="twitter:card"]')).toHaveAttribute("content", "summary_large_image");
-    await expect(page.locator('meta[name="robots"]')).not.toHaveAttribute("content", /noindex/i);
+    await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
+      "href",
+      canonicalOrigin,
+    );
+    await expect(page.locator('meta[property="og:title"]')).toHaveAttribute(
+      "content",
+      /Website & SEO Audit/,
+    );
+    await expect(page.locator('meta[property="og:image"]')).toHaveAttribute(
+      "content",
+      /opengraph-image/,
+    );
+    await expect(page.locator('meta[name="twitter:card"]')).toHaveAttribute(
+      "content",
+      "summary_large_image",
+    );
+    await expect(page.locator('meta[name="robots"]')).not.toHaveAttribute(
+      "content",
+      /noindex/i,
+    );
 
-    const jsonLdText = await page.locator("#homepage-structured-data").textContent();
+    const jsonLdText = await page
+      .locator("#homepage-structured-data")
+      .textContent();
     expect(jsonLdText).toBeTruthy();
     const jsonLd = JSON.parse(jsonLdText ?? "{}") as {
       "@graph": Array<Record<string, unknown>>;
     };
-    const organization = jsonLd["@graph"].find((entry) => entry["@type"] === "Organization");
-    const application = jsonLd["@graph"].find((entry) => entry["@type"] === "WebApplication");
-    const faq = jsonLd["@graph"].find((entry) => entry["@type"] === "FAQPage") as
-      | { mainEntity?: Array<{ name: string; acceptedAnswer: { text: string } }> }
+    const organization = jsonLd["@graph"].find(
+      (entry) => entry["@type"] === "Organization",
+    );
+    const application = jsonLd["@graph"].find(
+      (entry) => entry["@type"] === "WebApplication",
+    );
+    const faq = jsonLd["@graph"].find(
+      (entry) => entry["@type"] === "FAQPage",
+    ) as
+      | {
+          mainEntity?: Array<{
+            name: string;
+            acceptedAnswer: { text: string };
+          }>;
+        }
       | undefined;
     expect(organization).toBeTruthy();
     expect(organization).toHaveProperty(
@@ -152,8 +220,12 @@ test("marketing homepage is accurate, accessible, and responsive", async ({
     const visibleFaqs = page.locator("#faq details");
     expect(faq?.mainEntity?.length).toBe(await visibleFaqs.count());
     for (let index = 0; index < (faq?.mainEntity?.length ?? 0); index += 1) {
-      await expect(visibleFaqs.nth(index).locator("summary")).toHaveText(faq?.mainEntity?.[index]?.name ?? "");
-      const visibleAnswer = (await visibleFaqs.nth(index).locator("p").textContent())?.trim();
+      await expect(visibleFaqs.nth(index).locator("summary")).toHaveText(
+        faq?.mainEntity?.[index]?.name ?? "",
+      );
+      const visibleAnswer = (
+        await visibleFaqs.nth(index).locator("p").textContent()
+      )?.trim();
       expect(visibleAnswer).toBe(faq?.mainEntity?.[index]?.acceptedAnswer.text);
     }
 
@@ -162,7 +234,20 @@ test("marketing homepage is accurate, accessible, and responsive", async ({
       .analyze();
     expect(accessibility.violations).toEqual([]);
 
-    for (const route of ["/pricing", "/help", "/methodology", "/for-consultants", "/example-report", "/privacy", "/terms", "/signup", "/signin", "/verify-email", "/forgot-password", "/reset-password"]) {
+    for (const route of [
+      "/pricing",
+      "/help",
+      "/methodology",
+      "/for-consultants",
+      "/example-report",
+      "/privacy",
+      "/terms",
+      "/signup",
+      "/signin",
+      "/verify-email",
+      "/forgot-password",
+      "/reset-password",
+    ]) {
       const response = await request.get(route);
       expect(response.status(), `${route} should resolve`).toBeLessThan(400);
     }
@@ -184,23 +269,48 @@ test("marketing homepage is accurate, accessible, and responsive", async ({
     const ogResponse = await request.get("/opengraph-image");
     expect(ogResponse.ok()).toBeTruthy();
     expect(ogResponse.headers()["content-type"]).toContain("image/png");
-    await writeFile(path.join(artifactRoot, "opengraph-preview.png"), await ogResponse.body());
+    await writeFile(
+      path.join(artifactRoot, "opengraph-preview.png"),
+      await ogResponse.body(),
+    );
+
+    await page.goto("/pricing", { waitUntil: "domcontentloaded" });
+    await expect(
+      page.getByRole("heading", {
+        level: 1,
+        name: /Plans for one website audit, ongoing improvement, and client delivery/,
+      }),
+    ).toBeVisible();
+    await page.screenshot({
+      path: path.join(projectDirectory, "pricing-full.png"),
+      fullPage: true,
+      animations: "disabled",
+    });
 
     await page.goto("/dashboard", { waitUntil: "domcontentloaded" });
     await expect(page).toHaveURL(/\/signin/);
     await expect(page.locator("[data-onread-logo]").first()).toBeVisible();
-    await expect(page.locator('meta[name="robots"]')).toHaveAttribute("content", /noindex/);
+    await expect(page.locator('meta[name="robots"]')).toHaveAttribute(
+      "content",
+      /noindex/,
+    );
   }
 
   if (["mobile-375", "laptop-1366"].includes(projectName)) {
     await page.goto("/example-report", { waitUntil: "domcontentloaded" });
-    await expect(page.getByRole("heading", { level: 1, name: "Harbor & Pine" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { level: 1, name: "Harbor & Pine" }),
+    ).toBeVisible();
     const exampleText = await page.locator("body").innerText();
     expect(exampleText).toContain("Sanitized fictional example");
     expect(exampleText).not.toContain("Schooners");
     expect(exampleText).not.toContain("EntryCore");
     expect(exampleText).not.toMatch(/cm[a-z0-9]{20,}/i);
-    expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(1);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth - window.innerWidth,
+      ),
+    ).toBeLessThanOrEqual(1);
     await page.screenshot({
       path: path.join(projectDirectory, "example-report-full.png"),
       fullPage: true,
