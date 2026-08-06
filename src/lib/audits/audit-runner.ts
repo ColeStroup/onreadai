@@ -1523,6 +1523,7 @@ async function buildAuditData({
       ...(competitorIntelligenceEnabled
         ? { competitors: COMPETITOR_COMPARISON_VERSION }
         : {}),
+      selectiveAi: selectiveAiResult.snapshot.version,
       scoring: validationPipelineEnabled
         ? VALIDATED_SCORING_ENGINE_VERSION
         : SCORING_ENGINE_VERSION,

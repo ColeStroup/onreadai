@@ -39,6 +39,7 @@ import {
   aggregateProfileCounts,
 } from "@/lib/profiles/profile-counts";
 import {
+  canonicalRecommendationIssueKey,
   canonicalizeRecommendations,
   type FindingCandidate,
   type RecommendationCandidate,
@@ -135,15 +136,21 @@ export function buildAuditEvidenceIntegrity<
     observedAt: generatedAt,
     sourceVersions,
   });
+  const normalizedFindings = findings.map(normalizeFindingCopy);
   const documentedScoreBreakdowns = attachScoreEvidence(
     scoreBreakdowns,
     observedEvidence,
   );
   const evidence = dedupeEvidence([
     ...observedEvidence,
+    ...buildAiReviewedFindingEvidence({
+      findings: normalizedFindings,
+      observedAt: generatedAt,
+      analyzerVersion:
+        sourceVersions.selectiveAi ?? "selective-ai-audit-v1",
+    }),
     ...scoreComponentEvidence(documentedScoreBreakdowns),
   ]);
-  const normalizedFindings = findings.map(normalizeFindingCopy);
   const recommendationsWithConflicts = [
     ...recommendations,
     ...dataConflicts
@@ -248,6 +255,77 @@ export function buildAuditEvidenceIntegrity<
     findings: normalizedFindings,
     recommendations: canonicalRecommendations,
   };
+}
+
+export function buildAiReviewedFindingEvidence({
+  findings,
+  observedAt,
+  analyzerVersion,
+}: {
+  findings: FindingCandidate[];
+  observedAt: string;
+  analyzerVersion: string;
+}): AuditEvidenceRecord[] {
+  return findings.flatMap((finding) => {
+    if (!isRecord(finding.evidence)) return [];
+    const stored = finding.evidence;
+    if (stored.findingType !== "AI_REVIEWED_OPPORTUNITY") return [];
+
+    const evidenceItems = Array.isArray(stored.evidence)
+      ? stored.evidence.filter(isRecord)
+      : [];
+    const issueKey = canonicalRecommendationIssueKey({
+      title: finding.title,
+      description: finding.description,
+      category: finding.category,
+      evidence: stored,
+    });
+    const stableFindingKey =
+      stringValue(stored.stableFindingKey) ?? finding.id;
+    const confidence = evidenceConfidence(stored.confidence);
+    const opportunityIds = stringArray(stored.opportunityIds);
+
+    return evidenceItems.flatMap((item, index) => {
+      const sourceUrl = stringValue(item.sourceUrl);
+      const excerpt = stringValue(item.excerpt);
+      if (!sourceUrl || !excerpt) return [];
+
+      return [
+        {
+          id: stableEvidenceId(
+            "selective-ai-opportunity",
+            stableFindingKey,
+            sourceUrl,
+            index,
+          ),
+          type: "AI_REVIEWED_PAGE_OPPORTUNITY",
+          category: finding.category,
+          source: "selective_ai_analyzer",
+          sourceUrl,
+          sourcePage: pageLabel(sourceUrl, []),
+          sourcePath: `aiAssistedAnalysis.findings.${stableFindingKey}.evidence.${index}`,
+          observedValue: {
+            excerpt,
+            opportunityIds,
+            pageAnalysisCacheId:
+              stringValue(item.pageAnalysisCacheId) ?? null,
+          },
+          interpretedValue: {
+            title: finding.title,
+            description: finding.description,
+            businessImpact: stringValue(stored.businessImpact),
+            suggestedAction: stringValue(stored.suggestedAction),
+          },
+          confidence,
+          applicability: "APPLICABLE",
+          observedAt,
+          analyzerVersion,
+          explanation: `${finding.title}: ${excerpt}`,
+          issueKeys: [issueKey],
+        } satisfies AuditEvidenceRecord,
+      ];
+    });
+  });
 }
 
 function attachScoreEvidence(
@@ -1693,6 +1771,25 @@ function dateString(value: Date | string) {
   return Number.isNaN(date.getTime())
     ? new Date().toISOString()
     : date.toISOString();
+}
+
+function evidenceConfidence(value: unknown) {
+  return value === "HIGH" || value === "MEDIUM" || value === "LOW"
+    ? value
+    : "LOW";
+}
+
+function stringValue(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function stringArray(value: unknown) {
+  return Array.isArray(value)
+    ? value.flatMap((item) => {
+        const parsed = stringValue(item);
+        return parsed ? [parsed] : [];
+      })
+    : [];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

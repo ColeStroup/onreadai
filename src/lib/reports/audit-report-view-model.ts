@@ -97,6 +97,8 @@ import {
 } from "@/lib/recommendations/recommendation-deduplication";
 import {
   attachCompatibilityCanonicalReport,
+  buildCanonicalAuditReport,
+  CANONICAL_AUDIT_REPORT_VERSION,
   materializeCanonicalReport,
   readCanonicalAuditReport,
   type CanonicalAffectedPage,
@@ -115,6 +117,7 @@ import {
   type ReportBusinessContext,
 } from "@/lib/reports/content-compatibility";
 import { scopeFindingEvidenceToAffectedPages } from "@/lib/reports/finding-evidence-scope";
+import { shouldRecoverSelectiveAiEvidence } from "@/lib/reports/selective-ai-report-recovery";
 import {
   assessDerivedFreshness,
   buildCompetitorComparisonDependencyFingerprint,
@@ -540,7 +543,14 @@ export async function buildAuditReportViewModel({
   const storedCanonicalReport = readCanonicalAuditReport(
     audit.analysisSnapshot,
   );
-  if (storedCanonicalReport) {
+  const storedEvidenceIntegrity = readEvidenceIntegrity(audit.analysisSnapshot);
+  const recoverLegacySelectiveAiEvidence =
+    shouldRecoverSelectiveAiEvidence({
+      canonicalReport: storedCanonicalReport,
+      evidenceIntegrity: storedEvidenceIntegrity,
+      findings: audit.findings,
+    });
+  if (storedCanonicalReport && !recoverLegacySelectiveAiEvidence) {
     return materializeCanonicalReport(
       storedCanonicalReport,
       audit.recommendations.map((recommendation) => ({
@@ -786,40 +796,41 @@ export async function buildAuditReportViewModel({
       profiles: competitor.discoveredProfiles,
     })),
   );
-  const storedEvidenceIntegrity = readEvidenceIntegrity(audit.analysisSnapshot);
   const evidenceIntegrity =
-    storedEvidenceIntegrity ??
-    buildAuditEvidenceIntegrity({
-      website,
-      websiteCrawl,
-      seo,
-      social,
-      reviews,
-      businessContext: compatibilityContext,
-      businessProfiles: business.profiles.map((profile) => ({
-        id: profile.id,
-        platform: profile.platform,
-        status: profile.status,
-      })),
-      competitors: business.competitors.map((competitor) => ({
-        id: competitor.id,
-        name: competitor.name,
-        profiles: competitor.discoveredProfiles.map((profile) => ({
-          id: profile.id,
-          platform: profile.platform,
-          status: profile.status,
-        })),
-      })),
-      competitorComparison: currentComparison,
-      recommendations: audit.recommendations,
-      findings: audit.findings,
-      scoreBreakdowns: [],
-      observedAt: audit.completedAt ?? audit.createdAt,
-      sourceVersions: {
-        ...scoringMetadata.analyzerVersions,
-        scoring: scoringMetadata.scoringEngineVersion,
-      },
-    }).snapshot;
+    storedEvidenceIntegrity && !recoverLegacySelectiveAiEvidence
+      ? storedEvidenceIntegrity
+      : buildAuditEvidenceIntegrity({
+          website,
+          websiteCrawl,
+          seo,
+          social,
+          reviews,
+          businessContext: compatibilityContext,
+          businessProfiles: business.profiles.map((profile) => ({
+            id: profile.id,
+            platform: profile.platform,
+            status: profile.status,
+          })),
+          competitors: business.competitors.map((competitor) => ({
+            id: competitor.id,
+            name: competitor.name,
+            profiles: competitor.discoveredProfiles.map((profile) => ({
+              id: profile.id,
+              platform: profile.platform,
+              status: profile.status,
+            })),
+          })),
+          competitorComparison: currentComparison,
+          recommendations: audit.recommendations,
+          findings: audit.findings,
+          scoreBreakdowns: storedEvidenceIntegrity?.scoreBreakdowns ?? [],
+          observedAt: audit.completedAt ?? audit.createdAt,
+          sourceVersions: {
+            ...scoringMetadata.analyzerVersions,
+            selectiveAi: aiAnalysis?.version ?? "selective-ai-audit-v1",
+            scoring: scoringMetadata.scoringEngineVersion,
+          },
+        }).snapshot;
   const builtFindings = buildCurrentFindings({
     auditFindings: audit.findings,
     reviews,
@@ -1146,9 +1157,21 @@ export async function buildAuditReportViewModel({
     },
   };
 
-  return attachCanonicalReport
-    ? attachCompatibilityCanonicalReport(baseReport)
-    : baseReport;
+  if (!attachCanonicalReport) return baseReport;
+  if (recoverLegacySelectiveAiEvidence) {
+    return materializeCanonicalReport(
+      buildCanonicalAuditReport(baseReport, {
+        strict: true,
+        reportVersion: CANONICAL_AUDIT_REPORT_VERSION,
+        generatedAt: audit.completedAt ?? audit.createdAt,
+      }),
+      audit.recommendations.map((recommendation) => ({
+        id: recommendation.id,
+        status: recommendation.status,
+      })),
+    );
+  }
+  return attachCompatibilityCanonicalReport(baseReport);
 }
 
 function focusedRecommendationSet(
@@ -2066,6 +2089,9 @@ function inferredFindingEvidenceTypes(
     types.add("SITEMAP_STATUS");
   }
   if (/alt text/.test(text)) types.add("IMAGE_ALT_COVERAGE");
+  if (stored.findingType === "AI_REVIEWED_OPPORTUNITY") {
+    types.add("AI_REVIEWED_PAGE_OPPORTUNITY");
+  }
   return types;
 }
 
@@ -2092,6 +2118,7 @@ function findingAffectedUrls(
     ...fromValue(stored.affectedPages),
     ...fromValue(stored.affectedUrls),
     ...fromValue(stored.pages),
+    ...fromValue(stored.evidence),
     ...fromValue(stored.normalizedUrl),
     ...(sourceUrl ? [sourceUrl] : []),
   ]);

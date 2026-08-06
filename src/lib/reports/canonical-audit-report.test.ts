@@ -31,6 +31,7 @@ import {
   buildCanonicalEmailSummary,
   buildCanonicalImplementationScope,
 } from "@/lib/reports/canonical-report-projections";
+import { shouldRecoverSelectiveAiEvidence } from "@/lib/reports/selective-ai-report-recovery";
 
 test("Just Pie canonical report binds exact facts, pages, classifications, and priorities", () => {
   const report = createJustPieCanonicalReportFixture();
@@ -104,6 +105,60 @@ test("Just Pie canonical report binds exact facts, pages, classifications, and p
       progress: report.progress,
     }),
     /deterministic analyzer|normalized facts|eligible canonical pages|audit-report-v\d|comparable with disclosed coverage differences/i,
+  );
+});
+
+test("legacy reports recover only when saved AI provenance is missing from the evidence index", () => {
+  const report = createJustPieCanonicalReportFixture();
+  const source = createJustPieCanonicalSourceFixture();
+  const canonical = structuredClone(report.canonicalReport!);
+  canonical.integrity = {
+    status: "NEEDS_REVIEW",
+    issues: [
+      {
+        code: "MISSING_EVIDENCE",
+        severity: "ERROR",
+        sourceId: "af_legacy",
+        message: "A publishable finding has no saved supporting evidence.",
+      },
+    ],
+  };
+  const aiFinding = {
+    evidence: {
+      findingType: "AI_REVIEWED_OPPORTUNITY",
+      confidence: "HIGH",
+      evidence: [
+        {
+          sourceUrl: "https://justpieorlando.example/",
+          excerpt: "Order Inquiries",
+        },
+      ],
+    },
+  };
+
+  assert.equal(
+    shouldRecoverSelectiveAiEvidence({
+      canonicalReport: canonical,
+      evidenceIntegrity: source.evidenceIntegrity,
+      findings: [aiFinding],
+    }),
+    true,
+  );
+
+  const indexedEvidence = structuredClone(source.evidenceIntegrity);
+  indexedEvidence.evidence.push({
+    ...indexedEvidence.evidence[0]!,
+    id: "selective-ai-indexed",
+    type: "AI_REVIEWED_PAGE_OPPORTUNITY",
+    source: "selective_ai_analyzer",
+  });
+  assert.equal(
+    shouldRecoverSelectiveAiEvidence({
+      canonicalReport: canonical,
+      evidenceIntegrity: indexedEvidence,
+      findings: [aiFinding],
+    }),
+    false,
   );
 });
 

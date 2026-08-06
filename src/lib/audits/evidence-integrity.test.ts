@@ -36,7 +36,10 @@ import type {
   AuditEvidenceRecord,
   CanonicalRecommendationSnapshot,
 } from "@/lib/audits/evidence-contracts";
-import { buildAuditEvidenceIntegrity } from "@/lib/audits/evidence-integrity";
+import {
+  buildAiReviewedFindingEvidence,
+  buildAuditEvidenceIntegrity,
+} from "@/lib/audits/evidence-integrity";
 import {
   completeEvidenceSummary,
   hasUnexplainedEllipsis,
@@ -55,6 +58,127 @@ import {
 } from "@/lib/scoring/score-breakdown";
 
 const observedAt = "2026-07-14T12:00:00.000Z";
+
+test("AI-reviewed page findings become indexed audit evidence", () => {
+  const records = buildAiReviewedFindingEvidence({
+    findings: [
+      {
+        id: "af_audit-scoped",
+        title: "Clarify the ordering next step",
+        description: "The page does not explain what happens after an inquiry.",
+        category: ScoreCategory.WEBSITE,
+        evidence: {
+          findingType: "AI_REVIEWED_OPPORTUNITY",
+          stableFindingKey: "aif_stable-analysis-key",
+          issueKey: "selective-ai:website:conversion-action",
+          opportunityIds: ["opportunity-1"],
+          confidence: "HIGH",
+          affectedUrls: ["https://example.com/order"],
+          evidence: [
+            {
+              sourceUrl: "https://example.com/order",
+              excerpt: "Email us with the items you would like to order.",
+              pageAnalysisCacheId: "cache-1",
+            },
+          ],
+          businessImpact: "Customers may not know what happens next.",
+          suggestedAction: "Explain the inquiry and confirmation steps.",
+        },
+      },
+    ],
+    observedAt,
+    analyzerVersion: "selective-ai-audit-v1",
+  });
+
+  assert.equal(records.length, 1);
+  assert.equal(records[0]?.type, "AI_REVIEWED_PAGE_OPPORTUNITY");
+  assert.equal(records[0]?.source, "selective_ai_analyzer");
+  assert.equal(records[0]?.sourceUrl, "https://example.com/order");
+  assert.deepEqual(records[0]?.issueKeys, [
+    "selective-ai:website:conversion-action",
+  ]);
+  assert.equal(records[0]?.confidence, "HIGH");
+});
+
+test("AI recommendations relink to audit-scoped findings through indexed page evidence", () => {
+  const fixture = schoonersFixture();
+  const findingId = "af_audit-scoped-finding";
+  const evidence = {
+    findingType: "AI_REVIEWED_OPPORTUNITY",
+    stableFindingKey: "aif_reusable-analysis-key",
+    issueKey: "selective-ai:website:conversion-action",
+    opportunityIds: ["opportunity-1"],
+    confidence: "HIGH",
+    affectedUrls: [fixture.website.normalizedUrl],
+    evidence: [
+      {
+        sourceUrl: fixture.website.normalizedUrl,
+        excerpt: "Contact us to discuss an order.",
+        pageAnalysisCacheId: "cache-1",
+      },
+    ],
+    businessImpact: "The next step may be unclear.",
+    suggestedAction: "Explain the order inquiry process.",
+  };
+  const result = buildAuditEvidenceIntegrity({
+    website: fixture.website,
+    websiteCrawl: fixture.websiteCrawl,
+    seo: fixture.seo,
+    social: fixture.social,
+    reviews: fixture.reviews,
+    businessContext: {
+      description: "Waterfront restaurant serving lunch and dinner.",
+      targetAudience: "Visitors and local diners",
+      mainOffer: "Waterfront dining",
+      industry: "Hospitality",
+      businessType: "Restaurant",
+      primaryConversionGoal: "Contact the restaurant",
+    },
+    businessProfiles: fixture.businessProfiles,
+    competitors: [fixture.competitor],
+    competitorComparison: null,
+    findings: [
+      {
+        id: findingId,
+        title: "Clarify the order inquiry next step",
+        description: "The page does not explain what happens after contact.",
+        category: ScoreCategory.WEBSITE,
+        evidence,
+      },
+    ],
+    recommendations: [
+      {
+        title: "Explain the order inquiry process",
+        description: "Tell customers what details to send and what happens next.",
+        category: ScoreCategory.WEBSITE,
+        priority: RecommendationPriority.HIGH,
+        estimatedEffort: "Low",
+        expectedImpact: "High",
+        sourceType: "ai_reviewed_opportunity",
+        sourceReferenceId: "aif_reusable-analysis-key",
+        sourceUrl: fixture.website.normalizedUrl,
+        evidence,
+      },
+    ],
+    scoreBreakdowns: [],
+    observedAt,
+    sourceVersions: {
+      website: "website-analyzer-v3",
+      seo: "seo-analyzer-v1",
+      selectiveAi: "selective-ai-audit-v1",
+      scoring: "website-growth-score-v1",
+    },
+  });
+  const recommendation = result.recommendations[0];
+  const aiEvidence = result.snapshot.evidence.filter(
+    (item) => item.type === "AI_REVIEWED_PAGE_OPPORTUNITY",
+  );
+
+  assert.equal(aiEvidence.length, 1);
+  assert.equal(recommendation?.sourceFindingId, findingId);
+  assert.equal(recommendation?.sourceReferenceId, findingId);
+  assert.deepEqual(recommendation?.sourceEvidenceIds, [aiEvidence[0]?.id]);
+});
 
 test("CTA detection stays separate from primary CTA clarity", () => {
   const saas = classifyWebsiteActions({

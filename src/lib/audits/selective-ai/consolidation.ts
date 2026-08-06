@@ -98,6 +98,9 @@ export function consolidateAiAuditInsights({
   for (const group of consolidated) {
     const { primary, evidenceItems } = group;
     const category = categoryForOpportunity(primary.opportunity.category);
+    const issueKey = `selective-ai:${category.toLowerCase()}:${themeFor(
+      primary.opportunity,
+    )}`;
     const findingId = stableFindingId(
       category,
       primary.opportunity.title,
@@ -107,6 +110,8 @@ export function consolidateAiAuditInsights({
       contractVersion: "ai-reviewed-opportunity-v1",
       findingType: "AI_REVIEWED_OPPORTUNITY",
       stableFindingKey: findingId,
+      issueKey,
+      affectedUrls: evidenceItems.map((item) => item.url),
       opportunityIds: evidenceItems.map((item) => item.opportunity.id),
       confidence: primary.opportunity.confidence,
       evidence: evidenceItems.map((item) => ({

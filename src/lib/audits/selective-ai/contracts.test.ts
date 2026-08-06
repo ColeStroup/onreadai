@@ -157,5 +157,12 @@ test("consolidated AI findings keep a stable analytical key outside the database
 
   assert.ok(finding);
   assert.equal(finding.evidence.stableFindingKey, finding.id);
+  assert.equal(
+    finding.evidence.issueKey,
+    "selective-ai:website:conversion-action",
+  );
+  assert.deepEqual(finding.evidence.affectedUrls, [
+    "https://example.test/services",
+  ]);
   assert.equal(result.recommendations[0]?.sourceReferenceId, finding.id);
 });

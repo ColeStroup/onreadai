@@ -42,6 +42,7 @@ export type AuditEvidenceType =
   | "REVIEW_METRICS"
   | "COMPETITOR_SNAPSHOT"
   | "POSITIONING_INFERENCE"
+  | "AI_REVIEWED_PAGE_OPPORTUNITY"
   | "BUSINESS_CONTEXT"
   | "SCORE_COMPONENT"
   | "DATA_UNAVAILABLE"
@@ -54,6 +55,7 @@ export type EvidenceSource =
   | "social_analyzer"
   | "review_analyzer"
   | "competitor_analyzer"
+  | "selective_ai_analyzer"
   | "business_context"
   | "live_profile"
   | "scoring_engine";
