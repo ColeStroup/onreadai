@@ -751,10 +751,18 @@ function ResultsStep({ business }: { business: NonNullable<SetupBusiness> }) {
   if (canonicalReport?.integrity.status === "NEEDS_REVIEW") {
     return <ReportQualityNotice businessId={business.id} />;
   }
-  const categories = (canonicalReport?.scores ?? audit.scores)
-    .filter(
-      (score) => !score.platform && score.category !== ScoreCategory.OVERALL,
-    )
+  const categories = (canonicalReport
+    ? canonicalReport.scores.flatMap((score) =>
+        score.score === null
+          ? []
+          : [{ category: score.category, score: score.score }],
+      )
+    : audit.scores
+        .filter(
+          (score) =>
+            !score.platform && score.category !== ScoreCategory.OVERALL,
+        )
+        .map((score) => ({ category: score.category, score: score.score })))
     .sort((a, b) => b.score - a.score);
   const strongest = categories.at(0);
   const weakest = categories.at(-1);

@@ -299,12 +299,14 @@ test("marketing homepage is accurate, accessible, and responsive", async ({
   if (["mobile-375", "laptop-1366"].includes(projectName)) {
     await page.goto("/example-report", { waitUntil: "domcontentloaded" });
     await expect(
-      page.getByRole("heading", { level: 1, name: "Harbor & Pine" }),
+      page.getByRole("heading", { level: 1, name: "Just Pie Orlando" }),
     ).toBeVisible();
     const exampleText = await page.locator("body").innerText();
     expect(exampleText).toContain("Sanitized fictional example");
+    expect(exampleText).toContain("4 of 6 missing");
     expect(exampleText).not.toContain("Schooners");
     expect(exampleText).not.toContain("EntryCore");
+    expect(exampleText).not.toContain("Harbor & Pine");
     expect(exampleText).not.toMatch(/cm[a-z0-9]{20,}/i);
     expect(
       await page.evaluate(

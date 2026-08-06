@@ -674,6 +674,16 @@ function buildEvidenceRecords({
     );
   }
 
+  if (websiteCrawl) {
+    records.push(
+      ...contentQualityEvidenceRecords({
+        crawl: websiteCrawl,
+        observedAt,
+        analyzerVersion: sourceVersions.website ?? "unknown",
+      }),
+    );
+  }
+
   records.push({
     id: stableEvidenceId("business-context", "current"),
     type: "BUSINESS_CONTEXT",
@@ -1078,6 +1088,140 @@ function fetchQualityEvidence({
         : `${pageLabel(page.url, page.pageTypes)} extraction was ${completeness.toLowerCase()}, so absence-based claims require caution.`,
     issueKeys: [],
   };
+}
+
+function contentQualityEvidenceRecords({
+  crawl,
+  observedAt,
+  analyzerVersion,
+}: {
+  crawl: WebsiteCrawlResult;
+  observedAt: string;
+  analyzerVersion: string;
+}) {
+  const pageName = (url: string) => {
+    const page = crawl.pageResults.find(
+      (item) => normalizeEvidenceUrl(item.url) === normalizeEvidenceUrl(url),
+    );
+    return pageLabel(url, page?.pageTypes ?? []);
+  };
+  const records: AuditEvidenceRecord[] = [];
+
+  for (const page of crawl.thinPages ?? []) {
+    records.push({
+      id: stableEvidenceId("website", "content-depth", page.url),
+      type: "CONTENT_DEPTH",
+      category: ScoreCategory.WEBSITE,
+      source: "website_crawler",
+      sourceUrl: page.url,
+      sourcePage: pageName(page.url),
+      sourcePath: `websiteCrawl.contentDepth.${page.url}`,
+      observedValue: {
+        wordCount: page.wordCount,
+        status: page.status,
+      },
+      interpretedValue: page.status,
+      confidence: "HIGH",
+      applicability: "APPLICABLE",
+      observedAt,
+      analyzerVersion,
+      explanation: `${pageName(page.url)} has ${page.wordCount} words of unique main content and was classified as ${page.status.toLowerCase()}.`,
+      issueKeys: ["website:content:thin"],
+    });
+  }
+
+  for (const group of crawl.duplicateContentGroups ?? []) {
+    for (const url of group.urls) {
+      records.push({
+        id: stableEvidenceId("website", "duplicate-content", url),
+        type: "DUPLICATE_CONTENT",
+        category: ScoreCategory.SEO,
+        source: "website_crawler",
+        sourceUrl: url,
+        sourcePage: pageName(url),
+        sourcePath: `websiteCrawl.duplicateContent.${url}`,
+        observedValue: {
+          urls: group.urls,
+          similarity: group.similarity,
+          reason: group.reason,
+        },
+        interpretedValue: group.reason,
+        confidence: "HIGH",
+        applicability: "APPLICABLE",
+        observedAt,
+        analyzerVersion,
+        explanation: `${pageName(url)} belongs to a ${group.reason === "EXACT_MAIN_CONTENT" ? "matching" : "near-matching"} content group with ${group.urls.length} pages.`,
+        issueKeys: ["website:content:duplicate"],
+      });
+    }
+  }
+
+  for (const issue of crawl.copyQualityFindings ?? []) {
+    records.push({
+      id: stableEvidenceId(
+        "website",
+        "copy-quality",
+        issue.url,
+        issue.issueType,
+        issue.excerpt,
+      ),
+      type: "COPY_QUALITY",
+      category: ScoreCategory.WEBSITE,
+      source: "website_crawler",
+      sourceUrl: issue.url,
+      sourcePage: pageName(issue.url),
+      sourcePath: `websiteCrawl.copyQuality.${issue.url}`,
+      observedValue: {
+        issueType: issue.issueType,
+        excerpt: issue.excerpt,
+        suggestedCorrection: issue.suggestedCorrection,
+      },
+      interpretedValue: issue.issueType,
+      confidence: issue.confidence,
+      applicability: "APPLICABLE",
+      observedAt,
+      analyzerVersion,
+      explanation: `${pageName(issue.url)} contains a ${issue.issueType.toLowerCase().replaceAll("_", " ")} signal in the saved excerpt.`,
+      issueKeys: ["website:copy:professionalism"],
+    });
+  }
+
+  for (const page of crawl.orderingFrictionPages ?? []) {
+    records.push({
+      id: stableEvidenceId("website", "conversion-friction", page.url),
+      type: "CONVERSION_FRICTION",
+      category: ScoreCategory.WEBSITE,
+      source: "website_crawler",
+      sourceUrl: page.url,
+      sourcePage: pageName(page.url),
+      sourcePath: `websiteCrawl.conversionFriction.${page.url}`,
+      observedValue: {
+        frictionLevel: page.frictionLevel,
+        evidence: page.evidence,
+      },
+      interpretedValue: page.frictionLevel,
+      confidence: page.frictionLevel === "HIGH" ? "HIGH" : "MEDIUM",
+      applicability: "APPLICABLE",
+      observedAt,
+      analyzerVersion,
+      explanation: `${pageName(page.url)} has ${page.frictionLevel.toLowerCase()} conversion-process friction. ${page.evidence.join(" ")}`,
+      issueKeys: ["website:ordering-process:friction"],
+    });
+  }
+
+  return records;
+}
+
+function normalizeEvidenceUrl(value: string) {
+  try {
+    const url = new URL(value);
+    url.hash = "";
+    url.hostname = url.hostname.toLowerCase();
+    url.pathname = url.pathname === "/" ? "/" : url.pathname.replace(/\/+$/, "");
+    return url.toString();
+  } catch {
+    return value.trim();
+  }
 }
 
 function confidenceFromNumber(value: number) {

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { loadEnvConfig } from "@next/env";
@@ -14,6 +15,7 @@ import {
   buildCanonicalAuditReport,
   CANONICAL_AUDIT_REPORT_VERSION,
 } from "@/lib/reports/canonical-audit-report";
+import { scopeFindingEvidenceToAffectedPages } from "@/lib/reports/finding-evidence-scope";
 import {
   createJustPieCanonicalReportFixture,
   createJustPieCanonicalSourceFixture,
@@ -182,6 +184,14 @@ test("email and specialist projections select only finalized canonical evidence"
       finding.affectedPages.every((page) => page.evidenceIds.length > 0),
     ),
   );
+});
+
+test("public example reads canonical facts instead of maintaining report claims", async () => {
+  const source = await readFile("src/app/example-report/page.tsx", "utf8");
+
+  assert.match(source, /getPublicExampleAuditReport/);
+  assert.match(source, /canonical\.facts\.pagesMissingMetaDescriptions\.length/);
+  assert.doesNotMatch(source, /5 of 12|const priorities\s*=\s*\[/i);
 });
 
 test("AI Consultant receives the exact canonical counts, classifications, and page identities", async () => {
@@ -397,6 +407,26 @@ test("canonical report URL handling preserves valid complete page identity", () 
     ),
     false,
   );
+});
+
+test("inferred finding evidence stays scoped to the canonical affected page", () => {
+  const source = createJustPieCanonicalSourceFixture();
+  const metadataEvidence = source.evidenceIntegrity.evidence.filter(
+    (item) => item.type === "META_DESCRIPTION_LENGTH",
+  );
+
+  const menuEvidence = scopeFindingEvidenceToAffectedPages(
+    metadataEvidence,
+    ["https://JUSTPIEORLANDO.example:443/menu/#details"],
+  );
+  assert.equal(menuEvidence.length, 1);
+  assert.equal(menuEvidence[0].sourceUrl, "https://justpieorlando.example/menu");
+
+  const unrelatedEvidence = scopeFindingEvidenceToAffectedPages(
+    metadataEvidence,
+    ["https://justpieorlando.example/order-inquiries"],
+  );
+  assert.deepEqual(unrelatedEvidence, []);
 });
 
 test("canonical score trace counts one deduction per root cause", () => {

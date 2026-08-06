@@ -210,7 +210,14 @@ export function canonicalRecommendationIssueKey(
       ? "sitewide:h1:multiple"
       : "sitewide:h1:missing";
   }
-  if (/meta description/.test(text)) {
+  if (
+    /operating[- ]hours|outdated(?: homepage)? metadata|hours.*inconsisten/.test(
+      text,
+    )
+  ) {
+    return "website:content:operating-hours-conflict";
+  }
+  if (/meta (?:description|summary)|\bmetadata\b/.test(text)) {
     return /too long|70 and 170|shorter/.test(text)
       ? "homepage:meta-description:too-long"
       : "sitewide:meta-description:missing";
@@ -231,13 +238,6 @@ export function canonicalRecommendationIssueKey(
     return "homepage:primary-cta:unclear";
   }
   if (
-    /operating[- ]hours|outdated(?: homepage)? metadata|hours.*inconsisten/.test(
-      text,
-    )
-  ) {
-    return "website:content:operating-hours-conflict";
-  }
-  if (
     /customer proof|trust proof|testimonial|feature selected.*review/.test(text)
   ) {
     return "reviews:proof:not-featured";
@@ -255,7 +255,11 @@ export function canonicalRecommendationIssueKey(
   if (/competitor positioning|competitor.*homepage|competitive/.test(text)) {
     return "competitors:positioning:response";
   }
-  if (/contact page|contact option|contact.*find/.test(text)) {
+  if (
+    /contact page|contact option|contact path|way to contact|contact.*find/.test(
+      text,
+    )
+  ) {
     return "website:contact-path:unclear";
   }
   if (/order(?:ing)? (?:process|inquir)|manual order|invoice|pre[- ]?order/.test(text)) {
@@ -267,7 +271,11 @@ export function canonicalRecommendationIssueKey(
   if (/duplicate content|near[- ]duplicate/.test(text)) {
     return "website:content:duplicate";
   }
-  if (/thin page|thin content|empty page|little meaningful content/.test(text)) {
+  if (
+    /thin(?:\s+\w+){0,2}\s+pages?|thin content|empty page|little meaningful content/.test(
+      text,
+    )
+  ) {
     return "website:content:thin";
   }
 

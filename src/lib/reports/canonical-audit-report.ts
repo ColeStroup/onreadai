@@ -243,9 +243,17 @@ export function buildCanonicalAuditReport(
   const evidenceIndex = new Map(
     source.evidenceIntegrity.evidence.map((item) => [item.id, item]),
   );
-  const findings = buildCanonicalFindings({
+  const sourceFindings = buildCanonicalFindings({
     source,
     pages,
+    pageIndex,
+    evidenceIndex,
+    strict,
+    issues,
+  });
+  const findings = addEvidenceBackedRecommendationFindings({
+    source,
+    findings: sourceFindings,
     pageIndex,
     evidenceIndex,
     strict,
@@ -643,12 +651,24 @@ function buildCanonicalFindings({
 }) {
   return source.findings.all.flatMap((finding) => {
     const rootCauseKey =
-      finding.rootCauseKey ?? rootCauseForFinding(finding);
+      finding.rootCauseKey ??
+      (finding.issueKey
+        ? canonicalRecommendationRootCauseKey({
+            title: finding.title,
+            description: finding.description,
+            category: finding.category,
+            evidence: null,
+            issueKey: finding.issueKey,
+          })
+        : rootCauseForFinding(finding));
+    const explicitEvidenceIds = unique(finding.supportingEvidenceIds ?? []);
     const rawEvidenceIds = unique(
-      finding.supportingEvidenceIds ??
-        evidenceForRoot(source.evidenceIntegrity.evidence, rootCauseKey).map(
-          (item) => item.id,
-        ),
+      finding.supportingEvidenceIds !== undefined
+        ? explicitEvidenceIds
+        : evidenceForRoot(
+            source.evidenceIntegrity.evidence,
+            rootCauseKey,
+          ).map((item) => item.id),
     );
     const unknownEvidence = rawEvidenceIds.filter(
       (id) => !evidenceIndex.has(id),
@@ -665,10 +685,39 @@ function buildCanonicalFindings({
     const evidence = rawEvidenceIds
       .map((id) => evidenceIndex.get(id))
       .filter((item): item is AuditEvidenceRecord => Boolean(item));
+    const classification = correctedClassification({
+      finding,
+      rootCauseKey,
+      pages,
+      source,
+    });
+    const publishableIssue =
+      classification === "VERIFIED_TECHNICAL_ISSUE" ||
+      classification === "AI_REVIEWED_OPPORTUNITY";
+    const confidence = confidenceValue(finding.confidence);
+    if (publishableIssue && evidence.length === 0 && confidence === "LOW") {
+      return [];
+    }
+    const technicalSupportOnly =
+      evidence.length > 0 && evidence.every(isTechnicalSupportEvidence);
+    const claimedUrls = technicalSupportOnly
+      ? []
+      : unique(finding.affectedUrls ?? []).filter(
+          (url) => !isTechnicalSupportUrl(url, evidence),
+        );
+    const evidenceUrls = evidence.flatMap((item) =>
+      item.sourceUrl && !isTechnicalSupportEvidence(item)
+        ? [item.sourceUrl]
+        : [],
+    );
     const rawUrls = unique([
-      ...(finding.affectedUrls ?? []),
-      ...(finding.sourceUrl ? [finding.sourceUrl] : []),
-      ...evidence.flatMap((item) => (item.sourceUrl ? [item.sourceUrl] : [])),
+      ...claimedUrls,
+      ...evidenceUrls,
+      ...(claimedUrls.length === 0 && evidenceUrls.length === 0 &&
+      finding.sourceUrl &&
+      !technicalSupportOnly
+        ? [finding.sourceUrl]
+        : []),
     ]);
     const affectedPages = affectedPagesForUrls({
       urls: rawUrls,
@@ -679,17 +728,11 @@ function buildCanonicalFindings({
       strict,
       issues,
     });
-    const classification = correctedClassification({
-      finding,
-      rootCauseKey,
-      pages,
-      source,
-    });
     if (
       strict &&
-      (classification === "VERIFIED_TECHNICAL_ISSUE" ||
-        classification === "AI_REVIEWED_OPPORTUNITY") &&
-      rawEvidenceIds.filter((id) => evidenceIndex.has(id)).length === 0
+      publishableIssue &&
+      rawEvidenceIds.filter((id) => evidenceIndex.has(id)).length === 0 &&
+      confidence !== "LOW"
     ) {
       issues.push({
         code: "MISSING_EVIDENCE",
@@ -707,7 +750,6 @@ function buildCanonicalFindings({
     ) {
       return [];
     }
-    const confidence = confidenceValue(finding.confidence);
     return [
       {
         findingId: finding.id,
@@ -741,6 +783,169 @@ function buildCanonicalFindings({
       } satisfies CanonicalFinding,
     ];
   });
+}
+
+function addEvidenceBackedRecommendationFindings({
+  source,
+  findings,
+  pageIndex,
+  evidenceIndex,
+  strict,
+  issues,
+}: {
+  source: AuditReportViewModel;
+  findings: CanonicalFinding[];
+  pageIndex: Map<string, CanonicalPage>;
+  evidenceIndex: Map<string, AuditEvidenceRecord>;
+  strict: boolean;
+  issues: CanonicalReportIntegrityIssue[];
+}) {
+  const result = [...findings];
+
+  for (const recommendation of source.recommendations.all) {
+    const rootCauseKey =
+      recommendation.rootCauseKey ??
+      canonicalRecommendationRootCauseKey({
+        ...recommendation,
+        evidence: recommendation.canonicalEvidence,
+        issueKey: recommendation.issueKey,
+      });
+    if (result.some((finding) => finding.rootCauseKey === rootCauseKey)) {
+      continue;
+    }
+    const rawEvidenceIds = unique(recommendation.evidenceIds ?? []);
+    if (rawEvidenceIds.length === 0) continue;
+    const unknownEvidenceIds = rawEvidenceIds.filter(
+      (id) => !evidenceIndex.has(id),
+    );
+    if (unknownEvidenceIds.length > 0) {
+      issues.push({
+        code: "UNKNOWN_EVIDENCE_ID",
+        severity: strict ? "ERROR" : "WARNING",
+        sourceId: recommendation.id,
+        message:
+          "An evidence-backed recommendation references evidence that is not in this audit.",
+      });
+      continue;
+    }
+    const evidence = rawEvidenceIds
+      .map((id) => evidenceIndex.get(id))
+      .filter((item): item is AuditEvidenceRecord => Boolean(item));
+    const confidence = confidenceValue(recommendation.confidence);
+    if (evidence.length === 0 || confidence === "LOW") continue;
+    const technicalSupportOnly =
+      evidence.length > 0 && evidence.every(isTechnicalSupportEvidence);
+    const claimedUrls = technicalSupportOnly
+      ? []
+      : unique(recommendation.affectedUrls ?? []).filter(
+          (url) => !isTechnicalSupportUrl(url, evidence),
+        );
+    const evidenceUrls = evidence.flatMap((item) =>
+      item.sourceUrl && !isTechnicalSupportEvidence(item)
+        ? [item.sourceUrl]
+        : [],
+    );
+    const affectedPages = affectedPagesForUrls({
+      urls: unique([...claimedUrls, ...evidenceUrls]),
+      evidence,
+      pageIndex,
+      category: recommendation.category,
+      sourceId: recommendation.id,
+      strict,
+      issues,
+    });
+    if (
+      strict &&
+      (recommendation.category === ScoreCategory.WEBSITE ||
+        recommendation.category === ScoreCategory.SEO) &&
+      evidenceUrls.length > 0 &&
+      affectedPages.length === 0
+    ) {
+      continue;
+    }
+    const classification = correctedRecommendationClassification({
+      recommendation,
+      rootCauseKey,
+      source,
+    });
+    const findingId = stableEvidenceId(
+      "finding",
+      source.audit.id,
+      rootCauseKey,
+    );
+    result.push({
+      findingId,
+      stableKey: findingId,
+      rootCauseKey,
+      category: recommendation.category,
+      classification,
+      severity:
+        classification === "OPTIONAL_REFINEMENT"
+          ? FindingSeverity.LOW
+          : recommendation.priority === RecommendationPriority.HIGH
+            ? FindingSeverity.HIGH
+            : FindingSeverity.MEDIUM,
+      confidence,
+      title: derivedFindingTitle(rootCauseKey, recommendation.title),
+      simpleExplanation: customerCopy(recommendation.evidenceSummary),
+      whyItMatters: customerCopy(recommendation.businessRelevance),
+      recommendedAction: customerCopy(recommendation.description),
+      affectedPages,
+      evidenceIds: rawEvidenceIds,
+      completionCriteria: recommendation.completionCriteria ?? null,
+      verificationMethod: recommendation.verificationMethod ?? null,
+      suggestedSpecialistCategory:
+        recommendation.suggestedSpecialistCategory ?? null,
+      scoreImpact: null,
+    });
+  }
+
+  return result;
+}
+
+function correctedRecommendationClassification({
+  recommendation,
+  rootCauseKey,
+  source,
+}: {
+  recommendation: ReportRecommendation;
+  rootCauseKey: string;
+  source: AuditReportViewModel;
+}) {
+  if (
+    rootCauseKey === "TITLE_QUALITY" &&
+    source.normalizedFacts?.homepage?.title.value
+  ) {
+    return "OPTIONAL_REFINEMENT" as const;
+  }
+  if (
+    rootCauseKey === "HOMEPAGE_PRIMARY_CTA_CLARITY" &&
+    source.website?.actionSummary?.hasDetectedActionLinks
+  ) {
+    return "AI_REVIEWED_OPPORTUNITY" as const;
+  }
+  return classificationFromRecommendation(recommendation);
+}
+
+function derivedFindingTitle(rootCauseKey: string, actionTitle: string) {
+  const titles: Record<string, string> = {
+    SEO_ROBOTS_STATUS: "robots.txt was not found",
+    SEO_SITEMAP_STATUS: "sitemap.xml was not found",
+    TITLE_QUALITY: "The homepage title may need clearer wording",
+    HOMEPAGE_CANONICAL_MISSING: "The homepage is missing a canonical tag",
+    HOMEPAGE_VIEWPORT_MISSING:
+      "The homepage is missing a mobile viewport setting",
+    HOMEPAGE_META_DESCRIPTION_MISSING:
+      "One or more pages are missing a meta description",
+    PAGE_H1_MISSING: "One or more pages are missing a main heading",
+    SITEWIDE_IMAGE_ALT_MISSING:
+      "One or more images are missing alternative text",
+    HOMEPAGE_PRIMARY_CTA_CLARITY:
+      "The homepage action path needs attention",
+  };
+  return customerCopy(
+    titles[rootCauseKey] ?? `Improvement opportunity: ${actionTitle}`,
+  );
 }
 
 function buildCanonicalScores({
@@ -875,16 +1080,31 @@ function buildCanonicalRecommendations({
   return [...groups.entries()]
     .flatMap(([rootCauseKey, group]) => {
       const representative = [...group].sort(reportRecommendationSort)[0];
+      const declaredEvidenceIds = unique(
+        group.flatMap((item) => item.evidenceIds ?? []),
+      );
+      if (
+        confidenceValue(representative.confidence) === "LOW" &&
+        declaredEvidenceIds.length === 0
+      ) {
+        return [];
+      }
       const sourceFindings = unique(
         group.flatMap((item) =>
           item.sourceFindingId ? [item.sourceFindingId] : [],
         ),
       );
-      const linkedFindings = findings.filter(
-        (finding) =>
-          finding.rootCauseKey === rootCauseKey ||
-          sourceFindings.includes(finding.findingId),
-      );
+      const linkedFindings = findings
+        .filter(
+          (finding) =>
+            finding.rootCauseKey === rootCauseKey ||
+            sourceFindings.includes(finding.findingId),
+        )
+        .sort(
+          (left, right) =>
+            Number(right.rootCauseKey === rootCauseKey) -
+            Number(left.rootCauseKey === rootCauseKey),
+        );
       if (sourceFindings.some((id) => !findings.some((item) => item.findingId === id))) {
         issues.push({
           code: "MISSING_REFERENCED_FINDING",
@@ -914,13 +1134,21 @@ function buildCanonicalRecommendations({
       const evidence = evidenceIds
         .map((id) => evidenceIndex.get(id))
         .filter((item): item is AuditEvidenceRecord => Boolean(item));
-      const urls = unique([
-        ...group.flatMap((item) => item.affectedUrls ?? []),
-        ...group.flatMap((item) => (item.sourceUrl ? [item.sourceUrl] : [])),
-        ...linkedFindings.flatMap((finding) =>
-          finding.affectedPages.map((page) => page.url),
-        ),
-      ]);
+      const technicalSupportOnly =
+        evidence.length > 0 && evidence.every(isTechnicalSupportEvidence);
+      const urls = (
+        technicalSupportOnly
+          ? []
+          : unique([
+              ...group.flatMap((item) => item.affectedUrls ?? []),
+              ...group.flatMap((item) =>
+                item.sourceUrl ? [item.sourceUrl] : [],
+              ),
+              ...linkedFindings.flatMap((finding) =>
+                finding.affectedPages.map((page) => page.url),
+              ),
+            ])
+      ).filter((url) => !isTechnicalSupportUrl(url, evidence));
       const affectedPages = affectedPagesForUrls({
         urls,
         evidence,
@@ -1220,6 +1448,27 @@ function affectedPagesForUrls({
   return uniqueBy(result, (page) => page.pageId);
 }
 
+function isTechnicalSupportEvidence(evidence: AuditEvidenceRecord) {
+  return (
+    evidence.type === "ROBOTS_TXT_STATUS" ||
+    evidence.type === "SITEMAP_STATUS"
+  );
+}
+
+function isTechnicalSupportUrl(
+  value: string,
+  evidence: AuditEvidenceRecord[],
+) {
+  const identity = canonicalReportUrl(value)?.identityKey;
+  if (!identity) return false;
+  return evidence.some(
+    (item) =>
+      isTechnicalSupportEvidence(item) &&
+      item.sourceUrl &&
+      canonicalReportUrl(item.sourceUrl)?.identityKey === identity,
+  );
+}
+
 function correctedClassification({
   finding,
   rootCauseKey,
@@ -1233,6 +1482,20 @@ function correctedClassification({
 }): CanonicalFindingClassification {
   const initial = classificationFromFindingType(finding.findingType);
   const text = `${finding.title} ${finding.description}`.toLowerCase();
+  if (
+    /SEO_INDEXABILITY_COVERAGE|SEO_AGGREGATE_COVERAGE/.test(rootCauseKey) ||
+    /indexability checks found issues|homepage seo signals need cleanup|seo metadata needs improvement/.test(
+      text,
+    )
+  ) {
+    return "COVERAGE_NOTE";
+  }
+  if (
+    initial === "VERIFIED_TECHNICAL_ISSUE" &&
+    confidenceValue(finding.confidence) === "LOW"
+  ) {
+    return "LIMITATION";
+  }
   if (
     /TITLE_QUALITY/.test(rootCauseKey) &&
     source.normalizedFacts?.homepage?.title.value
@@ -1440,13 +1703,13 @@ function executiveSummary({
     [
       `${businessName} has a ${score}/100 Website Growth Score based on the pages and signals saved in this audit.`,
       strengths[0]
-        ? `A clear strength is ${lowerFirst(strengths[0].title)}.`
+        ? `What is working: ${sentenceFragment(strengths[0].title)}.`
         : null,
       issues[0]
-        ? `The main opportunity is ${lowerFirst(issues[0].title)}.`
+        ? `Main opportunity: ${sentenceFragment(issues[0].title)}.`
         : "No high-confidence issue was published from the available evidence.",
       priorities[0]
-        ? `Start with ${lowerFirst(priorities[0].title)}.`
+        ? `Start here: ${sentenceFragment(priorities[0].title)}.`
         : null,
     ]
       .filter(Boolean)
@@ -1712,8 +1975,8 @@ function dateString(value: Date | string) {
     : date.toISOString();
 }
 
-function lowerFirst(value: string) {
-  return value ? `${value[0].toLowerCase()}${value.slice(1)}` : value;
+function sentenceFragment(value: string) {
+  return value.trim().replace(/[.!?]+$/, "");
 }
 
 function unique(values: string[]) {

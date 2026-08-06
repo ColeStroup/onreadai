@@ -917,7 +917,7 @@ export function PresentationDeck({ data }: { data: PresentationDeckData }) {
           "flex items-center justify-between gap-3 border-b border-border bg-card/95 px-3 backdrop-blur sm:px-5",
         )}
       >
-        <div className="min-w-0">
+        <div className="w-[clamp(7rem,24vw,18rem)] min-w-0 shrink-0">
           <p className="truncate text-sm font-semibold">{data.businessName}</p>
           <p className="hidden text-xs text-muted sm:block">
             {data.auditDate} | Completed

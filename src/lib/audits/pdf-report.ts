@@ -1230,16 +1230,27 @@ function renderTechnicalAppendix(flow: PdfFlow, report: AuditReportViewModel) {
   }
 
   if (report.seo) {
+    const canonicalHomepage = report.canonicalReport?.pages.find(
+      (page) => page.label === "Homepage",
+    );
     flow.subsectionHeading("Technical SEO checks", "Technical Appendix");
     flow.keyValueRows(
       [
         [
           "Title / meta description",
-          `${formatStatus(report.seo.titleStatus)} / ${formatStatus(report.seo.metaDescriptionStatus)}`,
+          canonicalHomepage
+            ? `${canonicalHomepage.title ? "Present" : "Missing"} / ${canonicalHomepage.metaDescription ? "Present" : "Missing"}`
+            : `${formatStatus(report.seo.titleStatus)} / ${formatStatus(report.seo.metaDescriptionStatus)}`,
         ],
         [
           "H1 / canonical / viewport",
-          `${formatStatus(report.seo.h1Status)} / ${formatStatus(report.seo.canonicalStatus)} / ${formatStatus(report.seo.viewportStatus)}`,
+          `${
+            canonicalHomepage
+              ? canonicalHomepage.h1Count === 1
+                ? "One main heading"
+                : `${canonicalHomepage.h1Count} main headings`
+              : formatStatus(report.seo.h1Status)
+          } / ${formatStatus(report.seo.canonicalStatus)} / ${formatStatus(report.seo.viewportStatus)}`,
         ],
         [
           "robots.txt / sitemap.xml",
@@ -1251,22 +1262,25 @@ function renderTechnicalAppendix(flow: PdfFlow, report: AuditReportViewModel) {
   }
 
   flow.subsectionHeading("Current audit findings", "Technical Appendix", 260);
-  const appendixFindings = report.technicalAppendix.findings.slice(0, 6);
+  const appendixFindings = report.technicalAppendix.findings
+    .filter((finding) => finding.findingType !== "VERIFIED_STRENGTH")
+    .slice(0, 5);
   flow.bulletList(
     appendixFindings.map(
       (finding) =>
-        `${finding.sourceLabel ?? "Observation"} | ${categoryLabel(finding.category)} - ${finding.title}: ${finding.description}${
+        `${finding.sourceLabel ?? "Observation"} | ${categoryLabel(finding.category)} - ${finding.title}. ${finding.evidenceSummary ?? finding.description}${
           finding.affectedPages?.length ? ` | Affected pages: ${finding.affectedPages.map((page) => `${page.label} (${page.path})`).join(", ")}` : ""
         }${
-          finding.source === "ai_reviewed_opportunity" &&
-          finding.evidenceSummary
-            ? ` | Evidence: ${finding.evidenceSummary}`
+          finding.suggestedAction
+            ? ` | What to do: ${finding.suggestedAction}`
             : ""
-        }${finding.suggestedAction ? ` | What to do: ${finding.suggestedAction}` : ""}${
+        }${
           finding.ownerFixability
             ? ` | Owner access: ${finding.ownerFixability}`
             : ""
-        }${finding.whoCanHelp ? ` | Who can help: ${finding.whoCanHelp}` : ""}${
+        }${
+          finding.whoCanHelp ? ` | Who can help: ${finding.whoCanHelp}` : ""
+        }${
           finding.howOnreadWillCheck
             ? ` | Verification: ${finding.howOnreadWillCheck}`
             : ""

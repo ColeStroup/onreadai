@@ -44,6 +44,7 @@ import {
 } from "@/lib/audits/selective-ai/types";
 import {
   readEvidenceIntegrity,
+  type AuditEvidenceRecord,
   type AuditEvidenceIntegritySnapshot,
   type PrimaryCtaAssessment,
   type ProfileCountSummary,
@@ -90,7 +91,10 @@ import {
   aggregateCompetitorProfileCounts,
   aggregateProfileCounts,
 } from "@/lib/profiles/profile-counts";
-import { canonicalRecommendationIssueKey } from "@/lib/recommendations/recommendation-deduplication";
+import {
+  canonicalRecommendationIssueKey,
+  canonicalRecommendationRootCauseKey,
+} from "@/lib/recommendations/recommendation-deduplication";
 import {
   attachCompatibilityCanonicalReport,
   materializeCanonicalReport,
@@ -110,6 +114,7 @@ import {
   type ReportBusinessArchetype,
   type ReportBusinessContext,
 } from "@/lib/reports/content-compatibility";
+import { scopeFindingEvidenceToAffectedPages } from "@/lib/reports/finding-evidence-scope";
 import {
   assessDerivedFreshness,
   buildCompetitorComparisonDependencyFingerprint,
@@ -117,7 +122,6 @@ import {
   COMPETITOR_COMPARISON_VERSION,
   LEGACY_REPORT_VIEW_MODEL_VERSION,
   latestDate,
-  REPORT_VIEW_MODEL_VERSION,
   SEO_ANALYZER_VERSION,
   SOCIAL_STRATEGY_GENERATOR_VERSION,
   WEBSITE_ANALYZER_VERSION,
@@ -216,6 +220,7 @@ export type ReportFinding = {
   materiality?: "HIGH" | "MEDIUM" | "LOW" | null;
   validationState?: string | null;
   supportingEvidenceIds?: string[];
+  issueKey?: string | null;
   stableKey?: string | null;
   rootCauseKey?: string | null;
   affectedUrls?: string[];
@@ -822,6 +827,7 @@ export async function buildAuditReportViewModel({
     currentComparison,
     sourceEvidence,
     context: compatibilityContext,
+    evidenceIntegrity,
   });
   const allFindings = focusedWebsiteSeoReport
     ? builtFindings.filter((finding) => isWebsiteSeoCategory(finding.category))
@@ -1743,6 +1749,7 @@ function buildCurrentFindings({
   currentComparison,
   sourceEvidence,
   context,
+  evidenceIntegrity,
 }: {
   auditFindings: Array<{
     id: string;
@@ -1758,6 +1765,7 @@ function buildCurrentFindings({
   currentComparison: CompetitorComparisonResult | null;
   sourceEvidence: string;
   context: ReportBusinessContext;
+  evidenceIntegrity: AuditEvidenceIntegritySnapshot;
 }) {
   const hasCurrentComparison =
     (currentComparison?.analyzedCompetitorCount ?? 0) > 0;
@@ -1792,6 +1800,10 @@ function buildCurrentFindings({
   }).map<ReportFinding>((finding) => {
     const aiEvidence = readAiReviewedOpportunityEvidence(finding.evidence);
     const validation = readFindingValidationMetadata(finding.evidence);
+    const evidenceHints = findingEvidenceHints({
+      finding,
+      evidenceIntegrity,
+    });
     const findingType = classifyAuditFindingType({
       title: finding.title,
       description: finding.description,
@@ -1820,7 +1832,7 @@ function buildCurrentFindings({
             : "Low"
         : aiEvidence
         ? evidenceConfidenceLabel(aiEvidence.confidence)
-        : "High",
+        : evidenceHints.confidence,
       whyItMatters:
         validation?.plainLanguage.whyItMatters ??
         aiEvidence?.businessImpact ??
@@ -1836,11 +1848,18 @@ function buildCurrentFindings({
         validation?.plainLanguage.howOnreadWillCheck ?? null,
       materiality: validation?.materiality ?? null,
       validationState: validation?.state ?? null,
-      supportingEvidenceIds: validation?.supportingEvidenceIds ?? [],
+      supportingEvidenceIds:
+        validation?.supportingEvidenceIds?.length
+          ? validation.supportingEvidenceIds
+          : evidenceHints.evidenceIds,
+      issueKey: evidenceHints.issueKey,
       stableKey: validation?.stableFindingKey ?? finding.id,
-      rootCauseKey: validation?.rootCauseKey ?? null,
-      affectedUrls: validation?.affectedUrls ??
-        (finding.sourceUrl ? [finding.sourceUrl] : []),
+      rootCauseKey:
+        validation?.rootCauseKey ?? evidenceHints.rootCauseKey,
+      affectedUrls:
+        validation?.affectedUrls?.length
+          ? validation.affectedUrls
+          : evidenceHints.affectedUrls,
       completionCriteria:
         validation?.targetedVerification.requiredOutcome ?? null,
       verificationMethod:
@@ -1902,6 +1921,186 @@ function buildCurrentFindings({
   }
 
   return dedupeFindings(compatible);
+}
+
+function findingEvidenceHints({
+  finding,
+  evidenceIntegrity,
+}: {
+  finding: {
+    title: string;
+    description: string;
+    category: ScoreCategory;
+    sourceUrl: string | null;
+    evidence: unknown;
+  };
+  evidenceIntegrity: AuditEvidenceIntegritySnapshot;
+}) {
+  const stored = isRecord(finding.evidence) ? finding.evidence : {};
+  const text = `${finding.title} ${finding.description}`.toLowerCase();
+  const storedFindingType = stringFromUnknown(stored.findingType);
+  let issueKey = stringFromUnknown(stored.issueKey);
+
+  if (!issueKey && storedFindingType === "VERIFIED_STRENGTH" && stored.h1Count === 1) {
+    issueKey = "homepage:h1:present";
+  } else if (!issueKey && typeof stored.pagesScanned === "number") {
+    issueKey = "website:coverage:pages-scanned";
+  } else if (!issueKey && /indexability checks/.test(text)) {
+    issueKey = "seo:indexability:coverage";
+  } else if (
+    !issueKey &&
+    /homepage seo signals|seo metadata needs improvement/.test(text)
+  ) {
+    issueKey = "seo:aggregate:coverage";
+  } else if (!issueKey && typeof stored.pagesWithNoCTA === "number") {
+    issueKey = "website:action-link:coverage";
+  } else if (!issueKey && /visitor actions?.*clearer|primary cta/.test(text)) {
+    issueKey = "homepage:primary-cta:unclear";
+  } else if (!issueKey && /contact/.test(text)) {
+    issueKey = "website:contact-path:missing";
+  }
+
+  const issueRoot = issueKey
+    ? canonicalRecommendationRootCauseKey({
+        title: finding.title,
+        description: finding.description,
+        category: finding.category,
+        evidence: null,
+        issueKey,
+      })
+    : null;
+  const evidenceTypes = inferredFindingEvidenceTypes(stored, text);
+  const affectedUrls = findingAffectedUrls(stored, finding.sourceUrl);
+  const rootCandidates = evidenceIntegrity.evidence.filter((evidence) => {
+    const sharesRoot =
+      issueRoot !== null &&
+      evidence.issueKeys.some(
+        (candidateIssueKey) =>
+          canonicalRecommendationRootCauseKey({
+            title: "",
+            description: "",
+            category: evidence.category,
+            evidence: null,
+            issueKey: candidateIssueKey,
+          }) === issueRoot,
+      );
+    return sharesRoot;
+  });
+  const typeCandidates = evidenceIntegrity.evidence.filter((evidence) =>
+    evidenceTypes.has(evidence.type),
+  );
+  const candidates = scopeFindingEvidenceToAffectedPages(
+    rootCandidates.length > 0 ? rootCandidates : typeCandidates,
+    affectedUrls,
+  );
+  const evidenceIds = uniqueStrings(candidates.map((item) => item.id));
+
+  return {
+    issueKey,
+    rootCauseKey: issueRoot,
+    evidenceIds,
+    affectedUrls,
+    confidence: evidenceConfidenceFromRecords(candidates),
+  };
+}
+
+function inferredFindingEvidenceTypes(
+  stored: Record<string, unknown>,
+  text: string,
+) {
+  const types = new Set<AuditEvidenceRecord["type"]>();
+  if (typeof stored.h1Count === "number" || /\bh1\b|main headline/.test(text)) {
+    types.add("H1_COUNT");
+  }
+  if (typeof stored.pagesScanned === "number") {
+    types.add("PAGE_FETCH_QUALITY");
+  }
+  if (
+    Array.isArray(stored.pages) ||
+    /thin|little unique content|nearly empty/.test(text)
+  ) {
+    types.add("CONTENT_DEPTH");
+  }
+  if (/duplicate content|near-duplicate/.test(text)) {
+    types.add("DUPLICATE_CONTENT");
+  }
+  if (/copy error|spelling|grammar|placeholder copy/.test(text)) {
+    types.add("COPY_QUALITY");
+  }
+  if (/order inquiry|ordering process|conversion friction/.test(text)) {
+    types.add("CONVERSION_FRICTION");
+  }
+  if (
+    typeof stored.pagesWithNoCTA === "number" ||
+    /customer action|visitor action|primary cta/.test(text)
+  ) {
+    types.add("ACTION_LINK_DETECTED");
+    types.add("PRIMARY_CTA_ASSESSED");
+  }
+  if (/contact/.test(text)) types.add("CONTACT_SIGNAL");
+  if (
+    typeof stored.titleLength === "number" ||
+    /page title|title tag/.test(text)
+  ) {
+    types.add("PAGE_TITLE_LENGTH");
+  }
+  if (
+    typeof stored.metaDescriptionLength === "number" ||
+    /meta description|meta summary|\bmetadata\b/.test(text)
+  ) {
+    types.add("META_DESCRIPTION_LENGTH");
+  }
+  if ("canonicalStatus" in stored || /canonical tag/.test(text)) {
+    types.add("CANONICAL_STATUS");
+  }
+  if ("viewportStatus" in stored || /viewport/.test(text)) {
+    types.add("VIEWPORT_STATUS");
+  }
+  if ("robotsTxtStatus" in stored || /robots\.txt/.test(text)) {
+    types.add("ROBOTS_TXT_STATUS");
+  }
+  if ("sitemapStatus" in stored || /sitemap\.xml/.test(text)) {
+    types.add("SITEMAP_STATUS");
+  }
+  if (/alt text/.test(text)) types.add("IMAGE_ALT_COVERAGE");
+  return types;
+}
+
+function findingAffectedUrls(
+  stored: Record<string, unknown>,
+  sourceUrl: string | null,
+) {
+  const fromValue = (value: unknown): string[] => {
+    if (typeof value === "string") {
+      return /^https?:\/\//i.test(value) ? [value] : [];
+    }
+    if (Array.isArray(value)) return value.flatMap(fromValue);
+    if (!isRecord(value)) return [];
+    return [value.url, value.sourceUrl, value.normalizedUrl]
+      .flatMap(fromValue)
+      .concat(
+        [value.affectedPages, value.affectedUrls, value.pages].flatMap(
+          fromValue,
+        ),
+      );
+  };
+
+  return uniqueStrings([
+    ...fromValue(stored.affectedPages),
+    ...fromValue(stored.affectedUrls),
+    ...fromValue(stored.pages),
+    ...fromValue(stored.normalizedUrl),
+    ...(sourceUrl ? [sourceUrl] : []),
+  ]);
+}
+
+function evidenceConfidenceFromRecords(records: AuditEvidenceRecord[]) {
+  if (records.length === 0) return "Low" as const;
+  if (records.some((item) => item.confidence === "LOW")) return "Low" as const;
+  if (records.some((item) => item.confidence === "MEDIUM")) {
+    return "Medium" as const;
+  }
+  return "High" as const;
 }
 
 function groupFindings(findings: ReportFinding[]) {

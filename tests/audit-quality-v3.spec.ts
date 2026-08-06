@@ -14,10 +14,11 @@ import {
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 import { randomUUID } from "node:crypto";
+import { mkdir } from "node:fs/promises";
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { encode } from "next-auth/jwt";
 
-import { createReportFixture } from "../src/lib/reports/report-fixtures.test-support";
+import { createJustPieCanonicalReportFixture } from "../src/lib/reports/just-pie-report-fixture.test-support";
 
 const databaseUrl = process.env.PRODUCTION_FLOW_TEST_DATABASE_URL;
 if (!databaseUrl)
@@ -27,7 +28,7 @@ const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString: databaseUrl }),
 });
 
-const reportFixture = createReportFixture("cottage_regression");
+const reportFixture = createJustPieCanonicalReportFixture();
 const fixtureCompletedAt =
   reportFixture.audit.completedAt ?? reportFixture.audit.date;
 const runId = randomUUID();
@@ -83,6 +84,7 @@ test.beforeAll(async () => {
 
   const business = await prisma.business.create({
     data: {
+      id: reportFixture.business.id,
       ownerId: userId,
       name: reportFixture.business.name,
       initialInput: reportFixture.business.initialInput,
@@ -123,9 +125,9 @@ test.beforeAll(async () => {
       {
         businessId,
         platform: ProfilePlatform.INSTAGRAM,
-        url: "https://instagram.com/sunrise-pocket-bakery",
-        normalizedUrl: "https://instagram.com/sunrise-pocket-bakery",
-        handle: "@sunrise-pocket-bakery",
+        url: "https://instagram.com/justpieorlando",
+        normalizedUrl: "https://instagram.com/justpieorlando",
+        handle: "@justpieorlando",
         confidenceScore: 100,
         status: BusinessProfileStatus.CONFIRMED,
         source: BusinessProfileSource.SUBMITTED,
@@ -237,10 +239,12 @@ test.beforeAll(async () => {
       ...reportFixture.evidenceIntegrity,
       canonicalRecommendations,
     },
+    canonicalAuditReport: reportFixture.canonicalReport,
   });
 
   const audit = await prisma.audit.create({
     data: {
+      id: reportFixture.audit.id,
       businessId,
       status: AuditStatus.COMPLETED,
       overallScore: reportFixture.audit.overallScore,
@@ -278,6 +282,7 @@ test.beforeAll(async () => {
 
   await prisma.auditFinding.createMany({
     data: reportFixture.findings.all.map((finding) => ({
+      id: finding.id,
       auditId,
       category: finding.category,
       severity: finding.severity,
@@ -294,6 +299,7 @@ test.beforeAll(async () => {
 
   await prisma.recommendation.createMany({
     data: reportFixture.recommendations.all.map((recommendation, index) => ({
+      id: recommendation.id,
       businessId,
       auditId,
       title: recommendation.title,
@@ -334,7 +340,7 @@ test.beforeEach(async ({ context, baseURL }) => {
   ]);
 });
 
-test("cottage-food dashboard and PDF preserve one normalized evidence set", async ({
+test("Just Pie dashboard, Presentation, and PDF preserve one canonical evidence set", async ({
   page,
 }) => {
   await page.goto(`/dashboard/businesses/${businessId}/overview`, {
@@ -347,16 +353,24 @@ test("cottage-food dashboard and PDF preserve one normalized evidence set", asyn
   await expect(
     page.getByRole("heading", { name: "Next two actions" }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("heading", {
-      name: "Make ordering the clear primary action",
-    }),
-  ).toHaveCount(1);
-  await expect(
-    page.getByRole("heading", {
-      name: "Write descriptive metadata for the homepage and menu",
-    }),
-  ).toHaveCount(1);
+  const savedActionTitles = [
+    "Make the homepage title more descriptive",
+    "Write page-specific meta descriptions",
+    "Add a main heading to Menu",
+    "Prioritize the preorder action",
+    "Add alt text to merchandise images",
+  ];
+  const overviewPriorityTitles: string[] = [];
+  for (const title of savedActionTitles) {
+    const count = await page.getByRole("heading", { name: title }).count();
+    expect(
+      count,
+      `${title} should appear at most once on Overview`,
+    ).toBeLessThanOrEqual(1);
+    if (count === 1) overviewPriorityTitles.push(title);
+  }
+  expect(overviewPriorityTitles).toHaveLength(3);
+  expect(new Set(overviewPriorityTitles).size).toBe(3);
 
   await expect(
     page.locator('[aria-label^="Website Growth Score "]'),
@@ -376,7 +390,9 @@ test("cottage-food dashboard and PDF preserve one normalized evidence set", asyn
     waitUntil: "networkidle",
   });
   await page.getByRole("button", { name: /Technical diagnostics/i }).click();
-  await expect(page.getByText(/Homepage H1:\s*PIE POCKETS/)).toBeVisible();
+  await expect(
+    page.getByText(/Homepage H1:\s*Handcrafted pie pockets in Orlando/),
+  ).toBeVisible();
 
   await page.goto(`/dashboard/businesses/${businessId}/action-plan`, {
     waitUntil: "networkidle",
@@ -386,9 +402,9 @@ test("cottage-food dashboard and PDF preserve one normalized evidence set", asyn
   await expect(allActions).toHaveAttribute("aria-expanded", "true");
   await expect(
     page.getByRole("heading", {
-      name: "Add a clear main headline to Menu",
-    }),
-  ).toHaveCount(1);
+      name: "Add a main heading to Menu",
+    }).first(),
+  ).toBeVisible();
   await expect(
     page.getByText(/Add a clear main headline to (?:the )?homepage/i),
   ).toHaveCount(0);
@@ -400,23 +416,12 @@ test("cottage-food dashboard and PDF preserve one normalized evidence set", asyn
       .first(),
   ).toHaveCount(0);
   await expect(
-    page.getByRole("heading", { name: "Resolve the thin FAQ page" }).first(),
-  ).toBeVisible();
-  await expect(
     page
-      .getByRole("heading", {
-        name: "Differentiate near-duplicate product pages",
-      })
+      .getByRole("heading", { name: "Add alt text to merchandise images" })
       .first(),
   ).toBeVisible();
 
-  for (const title of [
-    "Make ordering the clear primary action",
-    "Write descriptive metadata for the homepage and menu",
-    "Add a clear main headline to Menu",
-    "Resolve the thin FAQ page",
-    "Differentiate near-duplicate product pages",
-  ]) {
+  for (const title of savedActionTitles) {
     expect(
       await prisma.recommendation.count({
         where: { businessId, auditId, title },
@@ -445,11 +450,49 @@ test("cottage-food dashboard and PDF preserve one normalized evidence set", asyn
   await page.goto(`/dashboard/businesses/${businessId}/overview`, {
     waitUntil: "networkidle",
   });
+
+  await page.goto(
+    `/dashboard/businesses/${businessId}/audit/${auditId}/present`,
+    { waitUntil: "domcontentloaded" },
+  );
+  const coverSlide = page.getByRole("main", {
+    name: "Audit presentation: Cover",
+  });
+  await expect(coverSlide).toBeVisible();
+  await expect(
+    coverSlide.getByRole("heading", { name: "Just Pie Orlando" }),
+  ).toBeVisible();
+  await expect(
+    page.locator("[data-presentation-canvas] > div"),
+  ).toHaveCSS("opacity", "1");
+  await mkdir(".artifacts/launch-flow", { recursive: true });
+  await page.screenshot({
+    path: ".artifacts/launch-flow/just-pie-presentation-cover.png",
+  });
+  await page
+    .getByRole("button", { name: /Go to slide \d+: Top Priorities/ })
+    .click();
+  await expect(
+    page.getByRole("main", { name: "Audit presentation: Top Priorities" }),
+  ).toBeVisible();
+  for (const title of overviewPriorityTitles) {
+    await expect(page.getByText(title, { exact: true })).toBeVisible();
+  }
+  await expect(
+    page.locator("[data-presentation-canvas] > div"),
+  ).toHaveCSS("opacity", "1");
+  await page.screenshot({
+    path: ".artifacts/launch-flow/just-pie-presentation-priorities.png",
+  });
+
+  await page.goto(`/dashboard/businesses/${businessId}/overview`, {
+    waitUntil: "networkidle",
+  });
   const downloadPromise = page.waitForEvent("download");
   await page.getByRole("link", { name: "Download PDF" }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(
-    /^growth-audit-sunrise-pocket-bakery-\d{4}-\d{2}-\d{2}\.pdf$/,
+    /^growth-audit-just-pie-orlando-\d{4}-\d{2}-\d{2}\.pdf$/,
   );
   const stream = await download.createReadStream();
   const chunks: Buffer[] = [];
@@ -458,10 +501,15 @@ test("cottage-food dashboard and PDF preserve one normalized evidence set", asyn
   }
   const pdfText = await extractPdfText(Buffer.concat(chunks));
 
-  expect(pdfText).toContain('Homepage H1 count: 1. Found H1: "PIE POCKETS".');
   expect(pdfText).toMatch(
-    /Measured H1 count: 0 on https:\/\/\s*sunrise-pocket\.example\/menu\./,
+    /Main headline \(H1\)\s+Handcrafted pie pockets in Orlando/,
   );
+  expect(pdfText).toContain("The analyzed Menu page has an H1 count of 0.");
+  expect(pdfText).toContain("Pages missing meta descriptions   4");
+  expect(pdfText).toContain(
+    "The Merchandise Shop contains 13 images, and 8 are missing alt text. The Order Inquiries page has 0 images missing alt text.",
+  );
+  expect(pdfText).not.toMatch(/five (?:important )?pages are missing meta descriptions/i);
   expect(pdfText).toContain("Website Growth Score");
   expect(pdfText).not.toMatch(/User-confirmed social profiles/i);
   expect(pdfText).not.toMatch(/Publicly detected social profiles/i);
@@ -470,10 +518,9 @@ test("cottage-food dashboard and PDF preserve one normalized evidence set", asyn
   expect(pdfText).not.toContain(
     "Correct visible copy errors across key customer pages",
   );
-  expect(pdfText).toContain("Make ordering the clear primary action");
-  expect(pdfText).toContain(
-    "Write descriptive metadata for the homepage and menu",
-  );
+  for (const title of overviewPriorityTitles) {
+    expect(pdfText).toContain(title);
+  }
   expect(pdfText).not.toMatch(
     /add a clear main headline to (?:the )?homepage/i,
   );

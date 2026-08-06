@@ -323,7 +323,7 @@ export default async function BusinessOverviewPage({
   ]);
   const reportFindings = report.findings.all;
 
-  function evidenceFor(recommendationId: string, category: ScoreCategory) {
+  function evidenceFor(recommendationId: string) {
     const reportRecommendation = reportRecommendationById.get(recommendationId);
     const sourceFinding = reportRecommendation?.sourceFindingId
       ? reportFindings.find(
@@ -509,7 +509,7 @@ export default async function BusinessOverviewPage({
             />
           </div>
           {(() => {
-            const evidence = evidenceFor(firstMove.id, firstMove.category);
+            const evidence = evidenceFor(firstMove.id);
             return (
               <DisclosureSection
                 title="See evidence"
@@ -594,10 +594,7 @@ export default async function BusinessOverviewPage({
                     {recommendation.description}
                   </p>
                   {(() => {
-                    const evidence = evidenceFor(
-                      recommendation.id,
-                      recommendation.category,
-                    );
+                    const evidence = evidenceFor(recommendation.id);
                     return (
                       <DisclosureSection
                         title="See evidence"
