@@ -1853,7 +1853,10 @@ function buildCurrentFindings({
           ? validation.supportingEvidenceIds
           : evidenceHints.evidenceIds,
       issueKey: evidenceHints.issueKey,
-      stableKey: validation?.stableFindingKey ?? finding.id,
+      stableKey:
+        validation?.stableFindingKey ??
+        stableFindingKeyFromEvidence(finding.evidence) ??
+        finding.id,
       rootCauseKey:
         validation?.rootCauseKey ?? evidenceHints.rootCauseKey,
       affectedUrls:
@@ -2805,6 +2808,11 @@ function dateFromUnknown(value: unknown) {
 
 function stringFromUnknown(value: unknown) {
   return typeof value === "string" && value.trim() ? value : null;
+}
+
+function stableFindingKeyFromEvidence(value: unknown) {
+  if (!isRecord(value)) return null;
+  return stringFromUnknown(value.stableFindingKey);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

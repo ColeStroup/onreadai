@@ -33,6 +33,7 @@ import {
 import { generateDeterministicSocialStrategy } from "@/lib/ai/social-strategy-generator";
 import { validateAuditConsistency } from "@/lib/audits/audit-consistency";
 import { generateDeterministicAudit } from "@/lib/audits/deterministic-audit";
+import { scopeAuditFindingIdentities } from "@/lib/audits/audit-finding-identity";
 import { buildAuditEvidenceIntegrity } from "@/lib/audits/evidence-integrity";
 import { buildNormalizedAuditFacts } from "@/lib/audits/normalized-audit-facts";
 import { runAuditValidationPipeline } from "@/lib/audits/quality/candidate-pipeline";
@@ -1472,6 +1473,12 @@ async function buildAuditData({
       websiteCrawl?.fetchQualitySummary?.renderedFallbackFailures ?? 0,
   });
 
+  // Analyzer keys can repeat across audits; database finding IDs cannot.
+  const persistenceFindings = scopeAuditFindingIdentities(
+    auditId,
+    auditResult.findings,
+  );
+
   const evidenceIntegrityResult = buildAuditEvidenceIntegrity({
     website: websiteAnalysis,
     websiteCrawl,
@@ -1502,10 +1509,7 @@ async function buildAuditData({
       })),
     })),
     competitorComparison: comparison,
-    findings: auditResult.findings.map((finding) => ({
-      ...finding,
-      id: finding.id ?? randomUUID(),
-    })),
+    findings: persistenceFindings,
     recommendations: auditResult.recommendations,
     scoreBreakdowns: auditResult.scoreBreakdowns,
     observedAt: new Date(),

@@ -7,6 +7,7 @@ import {
 import {
   evaluationCrawl,
 } from "@/lib/audits/selective-ai/__fixtures__/evaluation-pages";
+import { consolidateAiAuditInsights } from "@/lib/audits/selective-ai/consolidation";
 import {
   readAiReviewedOpportunityEvidence,
   readSelectiveAiAuditSnapshot,
@@ -111,4 +112,50 @@ test("AI-reviewed opportunity evidence retains provenance and confidence", () =>
     businessImpact: "A specific action may reduce uncertainty.",
     suggestedAction: "Name the exact next step.",
   });
+});
+
+test("consolidated AI findings keep a stable analytical key outside the database ID", () => {
+  const result = consolidateAiAuditInsights({
+    selectedPageAnalyses: [
+      {
+        url: "https://example.test/services",
+        canonicalUrl: null,
+        pageType: "service",
+        analysisCacheId: "cache-1",
+        cacheHit: false,
+        contentTruncated: false,
+        analysis: {
+          pageSummary: "A service page.",
+          pagePurpose: "Explain the service.",
+          strengths: [],
+          opportunities: [
+            {
+              id: "opportunity-1",
+              category: "CONVERSION",
+              title: "Clarify the next step",
+              description: "The page leaves the next customer action unclear.",
+              evidence: "The service description has no adjacent action.",
+              businessImpact: "A clearer path can reduce uncertainty.",
+              recommendation: "Add a specific contact action.",
+              priority: "HIGH",
+              confidence: "HIGH",
+            },
+          ],
+          primaryCta: {
+            found: false,
+            text: null,
+            assessment: "No clear action was found.",
+          },
+          limitations: [],
+        },
+      },
+    ],
+    deterministicFindings: [],
+    synthesis: null,
+  });
+  const finding = result.findings[0];
+
+  assert.ok(finding);
+  assert.equal(finding.evidence.stableFindingKey, finding.id);
+  assert.equal(result.recommendations[0]?.sourceReferenceId, finding.id);
 });

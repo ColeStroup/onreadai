@@ -23,7 +23,7 @@
     "test:onboarding": "node --conditions=react-server --import tsx --test src/lib/profiles/profile-url.test.ts src/lib/onboarding/business-setup.test.ts src/lib/onboarding/audit-source-readiness.test.ts src/lib/audits/audit-sources.test.ts src/lib/discovery/submitted-profile-discovery.test.ts",
     "test:onboarding:integration": "node --env-file=.env --conditions=react-server --import tsx --test src/lib/profiles/profile-management.integration.test.ts",
     "test:evidence-integrity": "node --conditions=react-server --import tsx --test src/lib/audits/evidence-integrity.test.ts",
-    "test:audit-quality": "node --conditions=react-server --import tsx --test src/lib/audits/audit-quality-v3.test.ts src/lib/audits/audit-validation-v2.test.ts",
+    "test:audit-quality": "node --conditions=react-server --import tsx --test src/lib/audits/audit-finding-identity.test.ts src/lib/audits/audit-quality-v3.test.ts src/lib/audits/audit-validation-v2.test.ts",
     "test:website-crawler": "node --conditions=react-server --import tsx --test src/lib/analyzers/website-crawler.test.ts",
     "test:selective-ai": "node --env-file=.env --conditions=react-server --import tsx --test src/lib/ai/audit-analysis-provider.test.ts src/lib/audits/selective-ai/page-selection.test.ts src/lib/audits/selective-ai/content-and-schema.test.ts src/lib/audits/selective-ai/cache-and-orchestrator.test.ts src/lib/audits/selective-ai/contracts.test.ts",
     "test:selective-ai:e2e": "playwright test --config playwright.selective-ai.config.ts",

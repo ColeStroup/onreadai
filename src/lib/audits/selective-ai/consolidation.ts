@@ -106,6 +106,7 @@ export function consolidateAiAuditInsights({
     const evidence = {
       contractVersion: "ai-reviewed-opportunity-v1",
       findingType: "AI_REVIEWED_OPPORTUNITY",
+      stableFindingKey: findingId,
       opportunityIds: evidenceItems.map((item) => item.opportunity.id),
       confidence: primary.opportunity.confidence,
       evidence: evidenceItems.map((item) => ({
