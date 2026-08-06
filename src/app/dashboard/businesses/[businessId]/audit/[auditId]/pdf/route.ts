@@ -67,6 +67,12 @@ export async function GET(_request: Request, { params }: AuditPdfRouteContext) {
   if (!report) {
     return new Response("Completed audit not found.", { status: 404 });
   }
+  if (report.reportIntegrity?.status === "NEEDS_REVIEW") {
+    return new Response(
+      "This report is temporarily unavailable while its audit evidence is reviewed.",
+      { status: 409 },
+    );
+  }
 
   const pdf = await generateGrowthAuditPdf(report);
   const fileName = growthAuditPdfFileName({

@@ -13,6 +13,13 @@ import { readFindingValidationMetadata } from "@/lib/audits/quality/candidate-pi
 import { readAiReviewedOpportunityEvidence } from "@/lib/audits/selective-ai/types";
 import { businessGoalLabels } from "@/lib/goals";
 import { prisma } from "@/lib/prisma";
+import {
+  readCanonicalAuditReport,
+  type CanonicalAuditReport,
+  type CanonicalFinding,
+} from "@/lib/reports/canonical-audit-report";
+import { buildCanonicalImplementationScope } from "@/lib/reports/canonical-report-projections";
+import { isReportHomepagePath } from "@/lib/reports/report-urls";
 import { parseSocialStrategy } from "@/lib/social-strategy";
 
 export const implementationTaskTypes = [
@@ -177,6 +184,9 @@ export async function buildImplementationContext({
   if (!business) return null;
 
   const latestAudit = business.audits.at(0) ?? null;
+  let sourceAuditSnapshot = latestAudit?.analysisSnapshot;
+  let sourceCanonicalReport: CanonicalAuditReport | null =
+    readCanonicalAuditReport(sourceAuditSnapshot);
   let recommendationId: string | null = null;
   let auditId = latestAudit?.id ?? null;
   let auditCreatedAt = latestAudit?.createdAt ?? null;
@@ -199,6 +209,7 @@ export async function buildImplementationContext({
             id: true,
             businessId: true,
             createdAt: true,
+            analysisSnapshot: true,
             findings: {
               orderBy: { createdAt: "asc" },
               select: {
@@ -221,30 +232,59 @@ export async function buildImplementationContext({
     recommendationId = record.id;
     auditId = record.audit?.id ?? auditId;
     auditCreatedAt = record.audit?.createdAt ?? auditCreatedAt;
-    type = classifyImplementationTask(record);
+    sourceAuditSnapshot = record.audit?.analysisSnapshot ?? sourceAuditSnapshot;
+    sourceCanonicalReport = readCanonicalAuditReport(sourceAuditSnapshot);
+    if (sourceCanonicalReport?.integrity.status === "NEEDS_REVIEW") {
+      return null;
+    }
+    const canonicalScope = sourceCanonicalReport
+      ? buildCanonicalImplementationScope(sourceCanonicalReport, record.id)
+      : null;
+    const canonicalRecommendation = canonicalScope?.recommendation;
+    if (sourceCanonicalReport && !canonicalScope) return null;
+    const implementationRecommendation = canonicalRecommendation
+      ? {
+          title: canonicalRecommendation.title,
+          description: canonicalRecommendation.description,
+          category: canonicalRecommendation.category,
+        }
+      : record;
+    type = classifyImplementationTask(implementationRecommendation);
     sourceKey = `recommendation:${record.id}`;
     recommendation = {
-      title: record.title,
-      description: record.description,
-      category: record.category,
-      priority: record.priority,
-      impact: record.expectedImpact ?? record.impact,
-      effort: record.estimatedEffort ?? record.effort,
+      title: canonicalRecommendation?.title ?? record.title,
+      description: canonicalRecommendation?.description ?? record.description,
+      category: canonicalRecommendation?.category ?? record.category,
+      priority: canonicalRecommendation?.priority ?? record.priority,
+      impact:
+        canonicalRecommendation?.expectedImpact ??
+        record.expectedImpact ??
+        record.impact,
+      effort:
+        canonicalRecommendation?.estimatedEffort ??
+        record.estimatedEffort ??
+        record.effort,
     };
-    const validationKey = recommendationValidationKey(record.evidence);
-    const matchingFindings = validationKey
-      ? (record.audit?.findings.filter(
-          (finding) =>
-            readFindingValidationMetadata(finding.evidence)
-              ?.stableFindingKey === validationKey,
-        ) ?? [])
-      : (record.audit?.findings.filter(
-          (finding) => finding.category === record.category,
-        ) ?? []);
-    sourceFindings = [
-      ...recommendationEvidence(record.evidence, record.sourceUrl),
-      ...matchingFindings.slice(0, 3).map(implementationFindingEvidence),
-    ].slice(0, 3);
+    if (canonicalScope) {
+      sourceFindings = canonicalScope.findings
+        .slice(0, 3)
+        .map(canonicalImplementationFindingEvidence);
+    } else {
+      const validationKey = recommendationValidationKey(record.evidence);
+      const matchingFindings = validationKey
+        ? (record.audit?.findings.filter(
+            (finding) =>
+              readFindingValidationMetadata(finding.evidence)
+                ?.stableFindingKey === validationKey,
+          ) ?? [])
+        : (record.audit?.findings.filter(
+            (finding) => finding.category === record.category,
+          ) ?? []);
+      sourceFindings = [
+        ...recommendationEvidence(record.evidence, record.sourceUrl),
+        ...matchingFindings.slice(0, 3).map(implementationFindingEvidence),
+      ].slice(0, 3);
+    }
     competitorReferenceId =
       record.sourceType === "competitor_comparison"
         ? record.sourceReferenceId
@@ -283,9 +323,12 @@ export async function buildImplementationContext({
     };
   }
 
-  const snapshot = asRecord(latestAudit?.analysisSnapshot);
-  const normalizedFacts = readNormalizedAuditFacts(
-    latestAudit?.analysisSnapshot,
+  if (sourceCanonicalReport?.integrity.status === "NEEDS_REVIEW") return null;
+  const snapshot = asRecord(sourceAuditSnapshot);
+  const normalizedFacts = readNormalizedAuditFacts(sourceAuditSnapshot);
+  const canonicalHomepage = sourceCanonicalReport?.pages.find(
+    (page) =>
+      page.analysisStatus === "ANALYZED" && isReportHomepagePath(page.url),
   );
   const website = asRecord(snapshot.website);
   const crawl = asRecord(snapshot.websiteCrawl);
@@ -322,10 +365,15 @@ export async function buildImplementationContext({
   );
   const relatedFindings = sourceFindings.length
     ? sourceFindings
-    : latestAudit?.findings
-        .filter((finding) => finding.category === recommendation.category)
-        .slice(0, 3)
-        .map(implementationFindingEvidence) ?? [];
+    : sourceCanonicalReport
+      ? sourceCanonicalReport.findings
+          .filter((finding) => finding.category === recommendation.category)
+          .slice(0, 3)
+          .map(canonicalImplementationFindingEvidence)
+      : latestAudit?.findings
+          .filter((finding) => finding.category === recommendation.category)
+          .slice(0, 3)
+          .map(implementationFindingEvidence) ?? [];
   const currentCompetitorContext = competitorReferenceId
     ? await buildCompetitorConsultantContext({
         userId,
@@ -372,23 +420,36 @@ export async function buildImplementationContext({
     evidence: relatedFindings,
     website: {
       url:
+        canonicalHomepage?.url ??
         normalizedFacts?.homepage?.url ??
         stringValue(website.normalizedUrl) ??
         business.websiteUrl,
       pageTitle:
+        canonicalHomepage?.title ??
         normalizedFacts?.homepage?.title.value ??
         stringValue(website.pageTitle),
       metaDescription:
+        canonicalHomepage?.metaDescription ??
         normalizedFacts?.homepage?.metaDescription.value ??
         stringValue(website.metaDescription),
       h1Text:
+        canonicalHomepage?.h1Text.slice(0, 3) ??
         normalizedFacts?.homepage?.h1.values.slice(0, 3) ??
         stringArray(website.h1Text).slice(0, 3),
-      ctaCandidates: stringArray(website.ctaCandidates).slice(0, 6),
-      pagesScanned: numberValue(crawl.pagesScanned),
-      pagesMissingMetaDescription: numberValue(crawl.pagesMissingMetaDescription),
+      ctaCandidates: sourceCanonicalReport
+        ? []
+        : stringArray(website.ctaCandidates).slice(0, 6),
+      pagesScanned:
+        sourceCanonicalReport?.facts.pagesScanned ??
+        numberValue(crawl.pagesScanned),
+      pagesMissingMetaDescription:
+        sourceCanonicalReport?.facts.pagesMissingMetaDescriptions.length ??
+        numberValue(crawl.pagesMissingMetaDescription),
       pagesWithH1Issues:
-        normalizedFacts
+        sourceCanonicalReport
+          ? sourceCanonicalReport.facts.pagesWithNoH1.length +
+            sourceCanonicalReport.facts.pagesWithMultipleH1.length
+          : normalizedFacts
           ? normalizedFacts.siteWide.pagesMissingH1.length +
             normalizedFacts.siteWide.pagesWithMultipleH1.length
           : numberValue(crawl.pagesWithNoH1) !== null ||
@@ -398,18 +459,34 @@ export async function buildImplementationContext({
           : null,
     },
     auditFacts: {
-      homepageUrl: normalizedFacts?.homepage?.url ?? null,
-      homepageTitleLength: normalizedFacts?.homepage?.title.length ?? null,
+      homepageUrl:
+        canonicalHomepage?.url ?? normalizedFacts?.homepage?.url ?? null,
+      homepageTitleLength:
+        canonicalHomepage?.title?.length ??
+        normalizedFacts?.homepage?.title.length ??
+        null,
       homepageMetaDescriptionLength:
-        normalizedFacts?.homepage?.metaDescription.length ?? null,
-      homepageH1Count: normalizedFacts?.homepage?.h1.count ?? null,
+        canonicalHomepage?.metaDescription?.length ??
+        normalizedFacts?.homepage?.metaDescription.length ??
+        null,
+      homepageH1Count:
+        canonicalHomepage?.h1Count ?? normalizedFacts?.homepage?.h1.count ?? null,
       pagesMissingH1:
-        normalizedFacts?.siteWide.pagesMissingH1.map((item) => item.url) ?? [],
+        sourceCanonicalReport?.facts.pagesWithNoH1.map((item) => item.url) ??
+        normalizedFacts?.siteWide.pagesMissingH1.map((item) => item.url) ??
+        [],
       pagesMissingMetaDescription:
+        sourceCanonicalReport?.facts.pagesMissingMetaDescriptions.map(
+          (item) => item.url,
+        ) ??
         normalizedFacts?.siteWide.pagesMissingMetaDescriptions.map(
           (item) => item.url,
-        ) ?? [],
-      coverageNote: normalizedFacts?.coverage.crawl.explanation ?? null,
+        ) ??
+        [],
+      coverageNote:
+        sourceCanonicalReport?.view.coverage?.crawl.explanation ??
+        normalizedFacts?.coverage.crawl.explanation ??
+        null,
     },
     googleBusiness: {
       status: primaryGoogle
@@ -520,6 +597,23 @@ function implementationFindingEvidence(finding: {
       validation?.specialistReadiness.requiredCompletionCriteria ?? [],
     verificationMethod:
       validation?.plainLanguage.howOnreadWillCheck ?? null,
+  };
+}
+
+function canonicalImplementationFindingEvidence(
+  finding: CanonicalFinding,
+): ImplementationContext["evidence"][number] {
+  return {
+    title: finding.title,
+    description: finding.simpleExplanation,
+    sourceUrl: finding.affectedPages.at(0)?.url ?? null,
+    whatToDo: finding.recommendedAction,
+    ownerFixability: null,
+    specialist: finding.suggestedSpecialistCategory,
+    completionCriteria: finding.completionCriteria
+      ? [finding.completionCriteria]
+      : [],
+    verificationMethod: finding.verificationMethod,
   };
 }
 

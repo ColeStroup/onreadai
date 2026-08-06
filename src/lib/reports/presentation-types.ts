@@ -73,6 +73,9 @@ export type PresentationDeckData = {
     score: number | null;
     pagesScanned: string;
     h1Status: string;
+    missingMetaDescriptions: number | null;
+    totalImagesMissingAlt: number | null;
+    pageEvidence: string[];
     primaryCtaClarity: string;
     assessmentNote: string;
     detectedActionTypes: string[];

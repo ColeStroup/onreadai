@@ -12,6 +12,7 @@ import { ContextualHelpCard } from "@/components/dashboard/contextual-help-card"
 import { DisclosureSection } from "@/components/dashboard/disclosure-section";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { FloatingScrollControls } from "@/components/dashboard/floating-scroll-controls";
+import { ReportQualityNotice } from "@/components/reports/report-quality-notice";
 import {
   CompactIssueRow,
   CompactMetricCard,
@@ -21,17 +22,9 @@ import {
   SummaryStrip,
 } from "@/components/dashboard/report-ui";
 import { buttonVariants } from "@/components/ui/button";
-import type { SeoAnalysis } from "@/lib/analyzers/seo-analyzer";
-import type {
-  CrawledPageResult,
-  WebsiteCrawlResult,
-} from "@/lib/analyzers/website-crawler";
-import {
-  categoryScore,
-  getAuditAssessment,
-} from "@/lib/audits/audit-applicability";
 import { contextualHelp } from "@/lib/education/help-content";
 import { prisma } from "@/lib/prisma";
+import { buildAuditReportViewModel } from "@/lib/reports/audit-report-view-model";
 import { requireUser } from "@/lib/session";
 import { cn } from "@/lib/utils";
 
@@ -52,24 +45,6 @@ const qualityStyles: Record<string, string> = {
   unknown: "border-border bg-background text-muted",
 };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function getSeoAnalysis(snapshot: unknown): SeoAnalysis | null {
-  if (!isRecord(snapshot) || !isRecord(snapshot.seo)) return null;
-  return typeof snapshot.seo.score === "number"
-    ? (snapshot.seo as SeoAnalysis)
-    : null;
-}
-
-function getWebsiteCrawl(snapshot: unknown): WebsiteCrawlResult | null {
-  if (!isRecord(snapshot) || !isRecord(snapshot.websiteCrawl)) return null;
-  return Array.isArray(snapshot.websiteCrawl.pageResults)
-    ? (snapshot.websiteCrawl as WebsiteCrawlResult)
-    : null;
-}
-
 function displayPagePath(url: string) {
   try {
     return new URL(url).pathname || "/";
@@ -89,17 +64,6 @@ function SeoStatus({ status }: { status: string }) {
       {status.replaceAll("_", " ")}
     </span>
   );
-}
-
-function affectedPages(
-  pages: CrawledPageResult[],
-  type: "title" | "meta" | "h1",
-) {
-  return pages.filter((page) => {
-    if (type === "title") return !page.title;
-    if (type === "meta") return !page.metaDescription;
-    return page.h1Count !== 1;
-  });
 }
 
 export default async function BusinessSeoPage({ params }: BusinessSeoPageProps) {
@@ -132,8 +96,6 @@ export default async function BusinessSeoPage({ params }: BusinessSeoPageProps) 
   if (!business) notFound();
 
   const audit = business.audits.at(0);
-  const seo = audit ? getSeoAnalysis(audit.analysisSnapshot) : null;
-  const crawl = audit ? getWebsiteCrawl(audit.analysisSnapshot) : null;
 
   if (!audit) {
     return (
@@ -164,7 +126,18 @@ export default async function BusinessSeoPage({ params }: BusinessSeoPageProps) 
     );
   }
 
-  const assessment = getAuditAssessment(audit.analysisSnapshot);
+  const report = await buildAuditReportViewModel({
+    businessId: business.id,
+    auditId: audit.id,
+    ownerId: user.id,
+  });
+  if (!report) notFound();
+  if (report.reportIntegrity?.status === "NEEDS_REVIEW") {
+    return <ReportQualityNotice businessId={business.id} />;
+  }
+  const seo = report.seo;
+  const crawl = report.websiteCrawl;
+  const assessment = report.assessment;
 
   if (!seo || !assessment.hasWebsite) {
     return (
@@ -193,90 +166,26 @@ export default async function BusinessSeoPage({ params }: BusinessSeoPageProps) 
     );
   }
 
-  const seoScore = categoryScore(audit.scores, ScoreCategory.SEO) ?? seo.score;
-  const pages = crawl?.pageResults ?? [];
-  const titlePages = affectedPages(pages, "title");
-  const metaPages = affectedPages(pages, "meta");
-  const h1Pages = affectedPages(pages, "h1");
-  const issues: Array<{
-    key: string;
-    title: string;
-    detail: string;
-    why: string;
-    affected: CrawledPageResult[];
-    impact: "danger" | "warning" | "info";
-    prompt: string;
-  }> = [];
-
-  if (seo.h1Status !== "good") {
-    issues.push({
-      key: "h1",
-      title:
-        seo.h1Status === "missing"
-          ? "The homepage needs a clear main headline"
-          : "Some pages have headline structure issues",
-      detail: `Homepage H1 status: ${seo.h1Status.replaceAll("_", " ")}. ${h1Pages.length} crawled page${h1Pages.length === 1 ? "" : "s"} need attention.`,
-      why: "A clear page headline helps visitors and search engines understand the page topic quickly.",
-      affected: h1Pages,
-      impact: "danger",
-      prompt: "Help me create a clear homepage headline based on my business context.",
-    });
-  }
-  if (seo.metaDescriptionStatus !== "good") {
-    issues.push({
-      key: "meta",
-      title:
-        seo.metaDescriptionStatus === "missing"
-          ? "Add a homepage search description"
-          : `Shorten the homepage search description`,
-      detail: `Current length: ${seo.metaDescriptionLength} characters. ${metaPages.length} crawled page${metaPages.length === 1 ? "" : "s"} are missing a description.`,
-      why: "A concise description helps potential customers understand the page before they click from search results.",
-      affected: metaPages,
-      impact: "warning",
-      prompt: "Draft a shorter meta description for my homepage using the saved business context.",
-    });
-  }
-  if (seo.titleStatus !== "good") {
-    issues.push({
-      key: "title",
-      title: seo.titleStatus === "missing" ? "Add a search title" : "Refine the homepage search title",
-      detail: `Current length: ${seo.titleLength} characters. ${titlePages.length} crawled page${titlePages.length === 1 ? "" : "s"} are missing titles.`,
-      why: "Search titles are a primary signal for page topic and often become the clickable headline in search results.",
-      affected: titlePages,
-      impact: "warning",
-      prompt: "Help me draft a concise SEO title for my homepage.",
-    });
-  }
-  if (seo.robotsTxtStatus !== "found" || seo.sitemapStatus !== "found") {
-    issues.push({
-      key: "indexability",
-      title: "Complete the site discovery setup",
-      detail: `robots.txt: ${seo.robotsTxtStatus.replaceAll("_", " ")}; sitemap.xml: ${seo.sitemapStatus.replaceAll("_", " ")}.`,
-      why: "These files help search engines discover pages and understand crawl guidance.",
-      affected: [],
-      impact: "warning",
-      prompt: "Explain how I should fix my robots.txt or sitemap setup.",
-    });
-  }
-  if (seo.canonicalStatus !== "good") {
-    issues.push({
-      key: "canonical",
-      title: "Add a canonical tag as technical cleanup",
-      detail: `Canonical status: ${seo.canonicalStatus.replaceAll("_", " ")}.`,
-      why: "A canonical tag helps search engines understand which URL is the preferred version of a page.",
-      affected: [],
-      impact: "info",
-      prompt: "Explain how to add the correct canonical tag to my homepage.",
-    });
-  }
-  const displayedIssues = issues.slice(0, 5);
-  const affectedPageList = [...new Map(
-    [...h1Pages, ...metaPages, ...titlePages].map((page) => [page.url, page]),
-  ).values()].sort((a, b) => {
-    const issueCount = (page: CrawledPageResult) =>
-      Number(!page.title) + Number(!page.metaDescription) + Number(page.h1Count !== 1);
-    return issueCount(b) - issueCount(a);
-  });
+  const seoScore =
+    report.scores.find((item) => item.category === ScoreCategory.SEO)?.score ??
+    seo.score;
+  const displayedIssues = report.findings.all
+    .filter(
+      (finding) =>
+        finding.category === ScoreCategory.SEO &&
+        (finding.findingType === "VERIFIED_TECHNICAL_ISSUE" ||
+          finding.findingType === "AI_REVIEWED_OPPORTUNITY"),
+    )
+    .slice(0, 5);
+  const affectedPageList = (report.canonicalReport?.pages ?? []).filter(
+    (page) => !page.title || !page.metaDescription || page.h1Count !== 1,
+  );
+  const seoStrengths = report.findings.strengths.filter(
+    (finding) => finding.category === ScoreCategory.SEO,
+  );
+  const seoActions = report.recommendations.all.filter(
+    (recommendation) => recommendation.category === ScoreCategory.SEO,
+  );
   const statusChecks = [
     ["Search title", seo.titleStatus, `${seo.titleLength} characters`],
     ["Search description", seo.metaDescriptionStatus, `${seo.metaDescriptionLength} characters`],
@@ -309,7 +218,7 @@ export default async function BusinessSeoPage({ params }: BusinessSeoPageProps) 
       <section className="grid gap-3 sm:grid-cols-3">
         <CompactMetricCard label="Overall SEO score" value={`${seoScore}/100`} />
         <CompactMetricCard label="Issues to fix" value={displayedIssues.length} tone={displayedIssues.length ? "warning" : "good"} />
-        <CompactMetricCard label="Pages scanned" value={crawl?.pagesScanned ?? 1} />
+        <CompactMetricCard label="Pages scanned" value={report.canonicalFacts?.successfulPages ?? crawl?.successfulPages ?? 1} />
       </section>
 
       {crawl?.duplicateUrlsSkipped ? (
@@ -324,24 +233,20 @@ export default async function BusinessSeoPage({ params }: BusinessSeoPageProps) 
         description="Diagnosis and next action are combined so the same issue is not repeated under separate warning and fix lists."
       >
         {displayedIssues.length > 0 ? displayedIssues.map((issue) => {
-          const patterns: Record<string, RegExp> = {
-            h1: /h1|headline/i,
-            meta: /meta|search description/i,
-            title: /search title|title tag/i,
-            indexability: /robots|sitemap|index/i,
-            canonical: /canonical/i,
-          };
           const recommendation =
-            audit.recommendations.find((item) => patterns[issue.key]?.test(item.title)) ??
-            audit.recommendations.at(0);
+            report.recommendations.all.find(
+              (item) =>
+                item.sourceFindingId === issue.id ||
+                (issue.rootCauseKey && item.rootCauseKey === issue.rootCauseKey),
+            );
 
           return (
             <CompactIssueRow
-              key={issue.key}
+              key={issue.id}
               title={issue.title}
-              detail={`${issue.detail} ${issue.why}`}
-              tone={issue.impact}
-              meta={issue.affected.length > 0 ? `Affected pages: ${issue.affected.slice(0, 3).map((page) => displayPagePath(page.url)).join(", ")}` : "Site-wide technical setup"}
+              detail={`${issue.description} ${issue.whyItMatters ?? ""}`.trim()}
+              tone={issue.findingType === "VERIFIED_TECHNICAL_ISSUE" ? "danger" : "warning"}
+              meta={issue.affectedPages?.length ? `Affected pages: ${issue.affectedPages.slice(0, 3).map((page) => `${page.label} (${page.path})`).join(", ")}` : "Site-wide evidence"}
               action={
                 <Link
                   href={`/dashboard/businesses/${business.id}/action-plan?category=SEO${recommendation ? `&q=${encodeURIComponent(recommendation.title)}` : ""}`}
@@ -373,9 +278,9 @@ export default async function BusinessSeoPage({ params }: BusinessSeoPageProps) 
       {crawl ? (
         <ReportSection title="Multi-page SEO coverage" description="Counts reflect only the controlled set of pages scanned in this audit.">
           <div className="grid gap-3 sm:grid-cols-3">
-            <CompactMetricCard label="Missing titles" value={crawl.pagesMissingTitle} tone={crawl.pagesMissingTitle ? "warning" : "good"} />
-            <CompactMetricCard label="Missing descriptions" value={crawl.pagesMissingMetaDescription} tone={crawl.pagesMissingMetaDescription ? "warning" : "good"} />
-            <CompactMetricCard label="Headline issue pages" value={crawl.pagesWithNoH1 + crawl.pagesWithMultipleH1} tone={crawl.pagesWithNoH1 + crawl.pagesWithMultipleH1 ? "warning" : "good"} />
+            <CompactMetricCard label="Missing titles" value={report.canonicalFacts?.pagesMissingTitles.length ?? 0} tone={report.canonicalFacts?.pagesMissingTitles.length ? "warning" : "good"} />
+            <CompactMetricCard label="Missing descriptions" value={report.canonicalFacts?.pagesMissingMetaDescriptions.length ?? 0} tone={report.canonicalFacts?.pagesMissingMetaDescriptions.length ? "warning" : "good"} />
+            <CompactMetricCard label="Headline issue pages" value={(report.canonicalFacts?.pagesWithNoH1.length ?? 0) + (report.canonicalFacts?.pagesWithMultipleH1.length ?? 0)} tone={(report.canonicalFacts?.pagesWithNoH1.length ?? 0) + (report.canonicalFacts?.pagesWithMultipleH1.length ?? 0) ? "warning" : "good"} />
           </div>
 
           <div className="mt-5">
@@ -417,33 +322,33 @@ export default async function BusinessSeoPage({ params }: BusinessSeoPageProps) 
       ) : null}
 
       <ReportSection title="SEO strengths" description="Positive signals worth preserving while fixes are made.">
-        {seo.seoStrengths.length > 0 ? (
+        {seoStrengths.length > 0 ? (
           <div className="flex flex-wrap gap-2">
-            {seo.seoStrengths.slice(0, 6).map((strength) => (
-              <span key={strength} className="inline-flex items-center gap-2 rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-sm text-teal-900 dark:border-teal-900 dark:bg-teal-950/30 dark:text-teal-100">
+            {seoStrengths.slice(0, 6).map((strength) => (
+              <span key={strength.id} className="inline-flex items-center gap-2 rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-sm text-teal-900 dark:border-teal-900 dark:bg-teal-950/30 dark:text-teal-100">
                 <CheckCircle2 className="size-4 shrink-0" />
-                {strength}
+                {strength.title}
               </span>
             ))}
           </div>
         ) : <p className="text-sm text-muted">No strengths were recorded in this snapshot.</p>}
       </ReportSection>
 
-      <DisclosureSection title="Technical SEO details" description="Analyzer score, raw warnings, exact crawl counts, and saved recommended-fix text.">
+      <DisclosureSection title="Technical SEO details" description="Saved checks and the same verified actions used throughout this audit.">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <CompactMetricCard label="Technical SEO check score" value={`${seo.score}/100`} detail="This raw rules score may differ from the overall SEO score because the audit also considers multi-page evidence and business context." />
+          <CompactMetricCard label="SEO score" value={`${seoScore}/100`} detail="This is the finalized score used throughout the report." />
           <CompactMetricCard label="Duplicate variants skipped" value={crawl?.duplicateUrlsSkipped ?? 0} />
           <CompactMetricCard label="Crawl limit" value={crawl?.crawlLimitUsed ?? 1} />
           <CompactMetricCard label="Limit reached" value={crawl?.crawlLimitReached ? "Yes" : "No"} />
         </div>
         <div className="mt-4 grid gap-4 lg:grid-cols-2">
           <div>
-            <p className="mb-2 flex items-center gap-2 text-sm font-semibold"><HelpCircle className="size-4" /> Saved warnings</p>
-            {[...seo.seoWarnings, ...seo.indexabilityWarnings].map((warning) => <p key={warning} className="border-b border-border py-2 text-sm leading-6 text-muted last:border-b-0">{warning}</p>)}
+            <p className="mb-2 flex items-center gap-2 text-sm font-semibold"><HelpCircle className="size-4" /> Verified findings</p>
+            {displayedIssues.map((finding) => <p key={finding.id} className="border-b border-border py-2 text-sm leading-6 text-muted last:border-b-0">{finding.description}</p>)}
           </div>
           <div>
-            <p className="mb-2 text-sm font-semibold">Saved fixes</p>
-            {seo.recommendedFixes.map((fix) => <p key={fix} className="border-b border-border py-2 text-sm leading-6 text-muted last:border-b-0">{fix}</p>)}
+            <p className="mb-2 text-sm font-semibold">Recommended actions</p>
+            {seoActions.map((action) => <p key={action.id} className="border-b border-border py-2 text-sm leading-6 text-muted last:border-b-0">{action.description}</p>)}
           </div>
         </div>
       </DisclosureSection>

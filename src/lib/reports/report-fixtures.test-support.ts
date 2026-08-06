@@ -45,6 +45,7 @@ import {
 export type ReportFixtureKind =
   | "hospitality"
   | "saas"
+  | "ecommerce"
   | "local_service"
   | "social_only"
   | "cottage_regression"
@@ -108,6 +109,24 @@ const fixtureConfigs: Record<ReportFixtureKind, FixtureConfig> = {
     goal: BusinessGoal.MORE_LEADS,
     hasWebsite: true,
     socialPlatforms: [ProfilePlatform.LINKEDIN, ProfilePlatform.YOUTUBE],
+    googleBusiness: false,
+    competitor: false,
+  },
+  ecommerce: {
+    name: "Northline Goods",
+    initialInput: "https://northline-goods.example/",
+    archetype: "ecommerce",
+    description:
+      "A direct-to-consumer online store selling practical travel accessories through a product catalog and checkout.",
+    targetAudience: "Frequent travelers looking for durable everyday gear.",
+    mainOffer: "Travel accessories sold through an online store.",
+    industry: "Ecommerce",
+    businessType: "Direct-to-consumer ecommerce store",
+    conversionGoal: "Browse products and complete checkout.",
+    brandTone: "Practical, confident, and concise.",
+    goal: BusinessGoal.INCREASE_SALES,
+    hasWebsite: true,
+    socialPlatforms: [ProfilePlatform.INSTAGRAM, ProfilePlatform.TIKTOK],
     googleBusiness: false,
     competitor: false,
   },
@@ -957,8 +976,10 @@ function createCrawl(
         ? "restaurant"
         : config.archetype === "saas_software"
           ? "saas"
-          : config.archetype === "local_service"
+        : config.archetype === "local_service"
             ? "local_service"
+            : config.archetype === "ecommerce"
+              ? "ecommerce"
             : "general",
     pageResults: pages,
     warnings: [],

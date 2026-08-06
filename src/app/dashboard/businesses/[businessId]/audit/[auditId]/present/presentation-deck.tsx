@@ -294,7 +294,7 @@ export function PresentationDeck({ data }: { data: PresentationDeckData }) {
               />
             ) : (
               <div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] gap-2 sm:gap-3">
-                <SlideMetricGrid columns={2}>
+                <SlideMetricGrid columns={3}>
                   <SlideMetric
                     label="Website score"
                     value={`${data.website.score}/100`}
@@ -309,6 +309,16 @@ export function PresentationDeck({ data }: { data: PresentationDeckData }) {
                     tone="warning"
                   />
                   <SlideMetric
+                    label="Missing descriptions"
+                    value={String(data.website.missingMetaDescriptions ?? "Not checked")}
+                    tone={data.website.missingMetaDescriptions ? "warning" : "positive"}
+                  />
+                  <SlideMetric
+                    label="Images missing alt"
+                    value={String(data.website.totalImagesMissingAlt ?? "Not checked")}
+                    tone={data.website.totalImagesMissingAlt ? "warning" : "positive"}
+                  />
+                  <SlideMetric
                     label="Primary CTA clarity"
                     value={data.website.primaryCtaClarity}
                     tone={
@@ -320,9 +330,9 @@ export function PresentationDeck({ data }: { data: PresentationDeckData }) {
                 </SlideMetricGrid>
                 <div className="grid min-h-0 gap-2 sm:grid-cols-2 sm:gap-3">
                   <ChipPanel
-                    label="Detected action links"
-                    items={data.website.detectedActionTypes}
-                    empty="No action links detected"
+                    label="Saved page evidence"
+                    items={data.website.pageEvidence}
+                    empty="No page-level evidence saved"
                   />
                   <ChipPanel
                     label="Important pages found"

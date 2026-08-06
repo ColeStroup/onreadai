@@ -8,6 +8,7 @@ import {
   createReportFixture,
   type ReportFixtureKind,
 } from "@/lib/reports/report-fixtures.test-support";
+import { createJustPieCanonicalReportFixture } from "@/lib/reports/just-pie-report-fixture.test-support";
 import { buildPresentationViewModel } from "@/lib/reports/presentation-view-model";
 
 const requiredSections = [
@@ -27,6 +28,7 @@ const requiredSections = [
 const standardFixtures: ReportFixtureKind[] = [
   "hospitality",
   "saas",
+  "ecommerce",
   "local_service",
   "social_only",
   "cottage_regression",
@@ -293,6 +295,43 @@ test("PDF and Presentation consume the same canonical priority set", async () =>
   assert.match(pdf.text, /Validated shared priority marker/i);
 });
 
+test("Just Pie PDF uses canonical counts, page bindings, classifications, and complete links", async () => {
+  const report = createJustPieCanonicalReportFixture();
+  const pdf = await inspectPdf(await generateGrowthAuditPdf(report));
+  const links = pdf.pages.flatMap((page) => page.links);
+
+  assert.match(pdf.text, /Pages missing meta descriptions 4/i);
+  assert.match(pdf.text, /4 missing meta descriptions/i);
+  assert.doesNotMatch(pdf.text, /5 (?:measured )?pages? (?:are )?missing (?:a )?meta description/i);
+  assert.match(
+    pdf.text,
+    /Merchandise Shop \/merch-shop[\s\S]{0,90}8/i,
+  );
+  assert.match(
+    pdf.text,
+    /Order Inquiries \/order-inquiries[\s\S]{0,90}0/i,
+  );
+  assert.match(
+    pdf.text,
+    /AI-reviewed opportunity \| SEO - The homepage title could describe the offer more clearly/i,
+  );
+  assert.match(
+    pdf.text,
+    /AI-reviewed opportunity \| Website - The homepage order path could be easier to prioritize/i,
+  );
+  assert.doesNotMatch(pdf.text, /Report ID:/i);
+  assert.doesNotMatch(pdf.text, /NEEDS IMPRO\s+VEMENT/i);
+  assert.equal(links.length >= 6, true);
+  assert(
+    links.every(
+      (url) =>
+        /^https:\/\//.test(url) &&
+        !/\s/.test(url) &&
+        !url.endsWith("https://www."),
+    ),
+  );
+});
+
 type InspectedPdf = {
   text: string;
   pages: Array<{
@@ -305,6 +344,7 @@ type InspectedPdf = {
       right: number;
       top: number;
     }>;
+    links: string[];
   }>;
 };
 
@@ -335,6 +375,7 @@ async function inspectPdf(buffer: Buffer): Promise<InspectedPdf> {
   for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
     const page = await document.getPage(pageNumber);
     const content = await page.getTextContent();
+    const annotations = await page.getAnnotations();
     const items = content.items.flatMap((item) => {
       if (!("str" in item) || !item.str.trim()) return [];
       const transform = item.transform;
@@ -354,6 +395,9 @@ async function inspectPdf(buffer: Buffer): Promise<InspectedPdf> {
       number: pageNumber,
       characters: pageText.length,
       items,
+      links: annotations.flatMap((annotation) =>
+        typeof annotation.url === "string" ? [annotation.url] : [],
+      ),
     });
   }
 

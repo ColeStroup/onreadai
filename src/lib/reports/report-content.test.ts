@@ -69,6 +69,30 @@ test("local-service report prioritizes calls, estimates, service area, and trust
   );
 });
 
+test("ecommerce report uses product and checkout language without local-service leakage", () => {
+  const report = createReportFixture("ecommerce");
+  const text = normalizedReportText(report);
+
+  assert.equal(report.business.archetype, "ecommerce");
+  assert.match(text, /product|catalog|checkout|online store/i);
+  assert.doesNotMatch(
+    text,
+    /roof inspection|service area|table reservation|restaurant|free trial/i,
+  );
+});
+
+test("professional-services report uses consultation language without retail leakage", () => {
+  const report = createReportFixture("no_competitor");
+  const text = normalizedReportText(report);
+
+  assert.equal(report.business.archetype, "professional_service");
+  assert.match(text, /consultancy|advisory|consultation|service firms/i);
+  assert.doesNotMatch(
+    text,
+    /checkout|menu specials|table reservation|roof replacement|free trial/i,
+  );
+});
+
 test("social-only report excludes unavailable website categories from scoring", () => {
   const report = createReportFixture("social_only");
   const websiteScore = report.scores.find(

@@ -56,6 +56,11 @@ import {
   isWebsiteSeoReportCategory,
   WEBSITE_GROWTH_SCORE_LABEL,
 } from "@/lib/product/website-seo-scope";
+import {
+  readCanonicalAuditReport,
+  type CanonicalAuditReport,
+  type CanonicalFindingClassification,
+} from "@/lib/reports/canonical-audit-report";
 
 type ConsultantContextBusiness = {
   id?: string;
@@ -90,15 +95,25 @@ type ConsultantContextScore = {
 };
 
 type ConsultantContextFinding = {
+  id?: string;
   category: ScoreCategory;
   severity: FindingSeverity;
   title: string;
   description: string;
   sourceUrl?: string | null;
   evidence?: unknown;
+  classification?: CanonicalFindingClassification;
+  confidence?: "HIGH" | "MEDIUM" | "LOW" | "High" | "Medium" | "Low";
+  whyItMatters?: string | null;
+  recommendedAction?: string | null;
+  specialist?: string | null;
+  verification?: string | null;
+  evidenceIds?: string[];
+  affectedPages?: Array<{ pageId: string; label: string; path: string; url: string }>;
 };
 
 type ConsultantContextRecommendation = {
+  id?: string;
   title: string;
   description: string;
   category: ScoreCategory;
@@ -111,6 +126,10 @@ type ConsultantContextRecommendation = {
   sourceType?: string | null;
   sourceUrl?: string | null;
   evidence?: unknown;
+  rootCauseKey?: string;
+  classification?: CanonicalFindingClassification;
+  evidenceIds?: string[];
+  affectedPages?: Array<{ pageId: string; label: string; path: string; url: string }>;
 };
 
 type ConsultantContextProfile = {
@@ -213,6 +232,26 @@ const statusWeight: Record<RecommendationStatus, number> = {
 export async function buildConsultantContext(
   input: BuildConsultantContextInput,
 ) {
+  const canonicalReport = readCanonicalAuditReport(
+    input.latestAudit.analysisSnapshot,
+  );
+  if (canonicalReport?.integrity.status === "NEEDS_REVIEW") {
+    return JSON.stringify(
+      {
+        sourceOfTruth: "The latest audit is under an internal quality review.",
+        limitation:
+          "Do not quote scores, findings, page evidence, or recommendations from this audit until the review is complete.",
+        safeResponse:
+          "Tell the user the report is temporarily unavailable because Onread detected an evidence mismatch. Suggest running a new audit or contacting support.",
+        currentQuestion: input.question,
+      },
+      null,
+      2,
+    );
+  }
+  if (canonicalReport) {
+    input = applyCanonicalConsultantReport(input, canonicalReport);
+  }
   const assessment = getAuditAssessment(input.latestAudit.analysisSnapshot);
   const evidenceIntegrity = readEvidenceIntegrity(
     input.latestAudit.analysisSnapshot,
@@ -256,6 +295,7 @@ export async function buildConsultantContext(
   ) {
     return buildWebsiteSeoConsultantContext({
       input,
+      canonicalReport,
       website,
       websiteCrawl,
       seo,
@@ -485,15 +525,25 @@ export async function buildConsultantContext(
                 reason: claim.reasons.join(" "),
                 safeFallback: claim.correctedClaim,
               })),
-            canonicalRecommendations: evidenceIntegrity.canonicalRecommendations
-              .slice(0, 8)
-              .map((recommendation) => ({
-                issueKey: recommendation.issueKey,
-                title: recommendation.title,
-                category: categoryLabels[recommendation.category],
-                evidence: recommendation.reportEvidence,
-                confidence: recommendation.evidenceConfidence,
-              })),
+            canonicalRecommendations: canonicalReport
+              ? input.recommendations.slice(0, 8).map((recommendation) => ({
+                  issueKey: recommendation.rootCauseKey,
+                  title: recommendation.title,
+                  category: categoryLabels[recommendation.category],
+                  evidence: recommendation.affectedPages?.map(
+                    (page) => `${page.label} (${page.path})`,
+                  ),
+                  confidence: recommendation.classification,
+                }))
+              : evidenceIntegrity.canonicalRecommendations
+                  .slice(0, 8)
+                  .map((recommendation) => ({
+                    issueKey: recommendation.issueKey,
+                    title: recommendation.title,
+                    category: categoryLabels[recommendation.category],
+                    evidence: recommendation.reportEvidence,
+                    confidence: recommendation.evidenceConfidence,
+                  })),
             scoreComponents: evidenceIntegrity.scoreBreakdowns.map(
               (breakdown) => ({
                 category: categoryLabels[breakdown.category],
@@ -538,6 +588,71 @@ export async function buildConsultantContext(
         : "This audit does not contain a selective AI coverage snapshot.",
       relevantAiPageEvidence,
     },
+    canonicalAuditEvidence: canonicalReport
+      ? {
+          rule:
+            "Use these finalized values for every objective count, page association, classification, score, and priority. Do not recount or reinterpret them.",
+          facts: {
+            pagesScanned: canonicalReport.facts.pagesScanned,
+            successfulPages: canonicalReport.facts.successfulPages,
+            missingTitles: canonicalReport.facts.pagesMissingTitles.length,
+            missingMetaDescriptions:
+              canonicalReport.facts.pagesMissingMetaDescriptions.length,
+            pagesWithNoH1: canonicalReport.facts.pagesWithNoH1.length,
+            pagesWithMultipleH1:
+              canonicalReport.facts.pagesWithMultipleH1.length,
+            totalImages: canonicalReport.facts.totalImages,
+            totalImagesMissingAlt:
+              canonicalReport.facts.totalImagesMissingAlt,
+          },
+          pages: canonicalReport.pages.map((page) => ({
+            pageId: page.pageId,
+            label: page.label,
+            path: page.path,
+            status: page.analysisStatus,
+            titlePresent: Boolean(page.title),
+            metaDescriptionPresent: Boolean(page.metaDescription),
+            h1Count: page.h1Count,
+            imageCount: page.imageCount,
+            imagesMissingAltCount: page.imagesMissingAltCount,
+            detectedActionLinkCount: page.detectedActionLinkCount,
+            primaryCtaClarity: page.primaryCtaClarity,
+          })),
+          findings: canonicalReport.findings.map((finding) => ({
+            findingId: finding.findingId,
+            rootCauseKey: finding.rootCauseKey,
+            classification: finding.classification,
+            confidence: finding.confidence,
+            title: finding.title,
+            affectedPages: finding.affectedPages.map((page) => ({
+              pageId: page.pageId,
+              label: page.label,
+              path: page.path,
+            })),
+            evidenceIds: finding.evidenceIds,
+            specialist: finding.suggestedSpecialistCategory,
+            verification: finding.verificationMethod,
+          })),
+          priorities: canonicalReport.priorities.map((recommendation) => ({
+            recommendationId: recommendation.recommendationId,
+            rootCauseKey: recommendation.rootCauseKey,
+            title: recommendation.title,
+            classification: recommendation.classification,
+            affectedPages: recommendation.affectedPages.map((page) => ({
+              pageId: page.pageId,
+              label: page.label,
+              path: page.path,
+            })),
+            completionCriteria: recommendation.completionCriteria,
+            verificationMethod: recommendation.verificationMethod,
+          })),
+          pagePurposes: canonicalReport.pagePurposes.map((purpose) => ({
+            purpose: purpose.purpose,
+            status: purpose.status,
+            explanation: purpose.explanation,
+          })),
+        }
+      : "No finalized canonical report is available for this historical audit.",
     actionProgress: {
       completed: completedRecommendations.length,
       total: activeRecommendations.length,
@@ -548,11 +663,16 @@ export async function buildConsultantContext(
     },
     topFindings: topFindings.map(
       (finding) =>
-        `${categoryLabels[finding.category]} | ${finding.severity}: ${
+        `${categoryLabels[finding.category]} | ${finding.classification ?? finding.severity}: ${
           finding.title
-        } - ${completeEvidenceSummary(finding.description, 260)}`,
+        } - ${completeEvidenceSummary(finding.description, 260)}${finding.affectedPages?.length ? ` Affected pages: ${finding.affectedPages.map((page) => `${page.label} (${page.path})`).join(", ")}.` : ""}`,
     ),
-    topRecommendations: evidenceIntegrity
+    topRecommendations: canonicalReport
+      ? sortedRecommendations.slice(0, 10).map(
+          (recommendation) =>
+            `${recommendation.priority} | ${recommendation.status} | ${categoryLabels[recommendation.category]} | ${recommendation.classification ?? "AI_REVIEWED_OPPORTUNITY"}: ${recommendation.title} - ${completeEvidenceSummary(recommendation.description, 220)} Affected pages: ${recommendation.affectedPages?.map((page) => `${page.label} (${page.path})`).join(", ") || "business-wide"}.`,
+        )
+      : evidenceIntegrity
       ? [
           ...evidenceIntegrity.canonicalRecommendations
             .slice(0, 8)
@@ -983,6 +1103,7 @@ export async function buildConsultantContext(
 
 function buildWebsiteSeoConsultantContext({
   input,
+  canonicalReport,
   website,
   websiteCrawl,
   seo,
@@ -990,6 +1111,7 @@ function buildWebsiteSeoConsultantContext({
   relevantAiPageEvidence,
 }: {
   input: BuildConsultantContextInput;
+  canonicalReport: CanonicalAuditReport | null;
   website: WebsiteAnalysis | null;
   websiteCrawl: WebsiteCrawlResult | null;
   seo: SeoAnalysis | null;
@@ -1024,19 +1146,29 @@ function buildWebsiteSeoConsultantContext({
         category: categoryLabels[finding.category],
         severity: finding.severity,
         title: finding.title,
-        classification: validation?.classification ?? "LEGACY_FINDING",
-        confidence: validation?.confidence ?? null,
+        classification:
+          finding.classification ?? validation?.classification ?? "LEGACY_FINDING",
+        confidence: finding.confidence ?? validation?.confidence ?? null,
         whatThisMeans:
+          (finding.classification ? finding.description : null) ??
           validation?.plainLanguage.whatThisMeans ??
           completeEvidenceSummary(finding.description, 320),
-        whyItMatters: validation?.plainLanguage.whyItMatters ?? null,
-        recommendedAction: validation?.plainLanguage.whatToDo ?? null,
+        whyItMatters:
+          finding.whyItMatters ?? validation?.plainLanguage.whyItMatters ?? null,
+        recommendedAction:
+          finding.recommendedAction ?? validation?.plainLanguage.whatToDo ?? null,
         ownerFixability:
           validation?.plainLanguage.ownerFixabilityLabel ?? null,
-        specialist: validation?.plainLanguage.whoCanHelpLabel ?? null,
-        verification: validation?.plainLanguage.howOnreadWillCheck ?? null,
-        evidenceIds: validation?.supportingEvidenceIds.slice(0, 12) ?? [],
+        specialist:
+          finding.specialist ?? validation?.plainLanguage.whoCanHelpLabel ?? null,
+        verification:
+          finding.verification ?? validation?.plainLanguage.howOnreadWillCheck ?? null,
+        evidenceIds:
+          finding.evidenceIds ??
+          validation?.supportingEvidenceIds.slice(0, 12) ??
+          [],
         affectedUrl: finding.sourceUrl ?? null,
+        affectedPages: finding.affectedPages ?? [],
       };
     });
   const relevantRecommendations = input.recommendations
@@ -1056,6 +1188,9 @@ function buildWebsiteSeoConsultantContext({
       effort: recommendation.estimatedEffort ?? recommendation.effort,
       impact: recommendation.expectedImpact ?? recommendation.impact,
       affectedUrl: recommendation.sourceUrl ?? null,
+      affectedPages: recommendation.affectedPages ?? [],
+      rootCauseKey: recommendation.rootCauseKey ?? null,
+      classification: recommendation.classification ?? null,
     }));
   const comparison = input.auditComparison;
   const comparableProgress = comparison?.previousAuditId
@@ -1172,12 +1307,17 @@ function buildWebsiteSeoConsultantContext({
             0,
             10,
           ),
-          recommendedFixes: seo.recommendedFixes.slice(0, 8),
+          recommendedFixes: relevantRecommendations
+            .map((item) => item.description)
+            .slice(0, 8),
         }
       : { status: "No saved SEO analysis." },
     relevantPageReview: relevantAiPageEvidence.slice(0, 4),
     findings: relevantFindings,
     recommendations: relevantRecommendations,
+    canonicalAuditEvidence: canonicalReport
+      ? compactCanonicalAuditEvidence(canonicalReport)
+      : "No finalized canonical report is available for this historical audit.",
     actionProgress: {
       completed: relevantRecommendations.filter(
         (recommendation) =>
@@ -1193,6 +1333,197 @@ function buildWebsiteSeoConsultantContext({
   };
 
   return JSON.stringify(context, null, 2);
+}
+
+function compactCanonicalAuditEvidence(report: CanonicalAuditReport) {
+  return {
+    rule:
+      "Use these finalized values for every objective count, page association, classification, score, and priority. Do not recount or reinterpret them.",
+    facts: {
+      pagesScanned: report.facts.pagesScanned,
+      successfulPages: report.facts.successfulPages,
+      missingTitles: report.facts.pagesMissingTitles.length,
+      missingMetaDescriptions: report.facts.pagesMissingMetaDescriptions.length,
+      pagesWithNoH1: report.facts.pagesWithNoH1.length,
+      pagesWithMultipleH1: report.facts.pagesWithMultipleH1.length,
+      totalImages: report.facts.totalImages,
+      totalImagesMissingAlt: report.facts.totalImagesMissingAlt,
+    },
+    pages: report.pages.map((page) => ({
+      pageId: page.pageId,
+      label: page.label,
+      path: page.path,
+      status: page.analysisStatus,
+      titlePresent: Boolean(page.title),
+      metaDescriptionPresent: Boolean(page.metaDescription),
+      h1Count: page.h1Count,
+      imageCount: page.imageCount,
+      imagesMissingAltCount: page.imagesMissingAltCount,
+      detectedActionLinkCount: page.detectedActionLinkCount,
+      primaryCtaClarity: page.primaryCtaClarity,
+    })),
+    findings: report.findings.map((finding) => ({
+      findingId: finding.findingId,
+      rootCauseKey: finding.rootCauseKey,
+      classification: finding.classification,
+      confidence: finding.confidence,
+      title: finding.title,
+      affectedPages: finding.affectedPages.map((page) => ({
+        pageId: page.pageId,
+        label: page.label,
+        path: page.path,
+      })),
+      evidenceIds: finding.evidenceIds,
+      specialist: finding.suggestedSpecialistCategory,
+      verification: finding.verificationMethod,
+    })),
+    priorities: report.priorities.map((recommendation) => ({
+      recommendationId: recommendation.recommendationId,
+      rootCauseKey: recommendation.rootCauseKey,
+      title: recommendation.title,
+      classification: recommendation.classification,
+      affectedPages: recommendation.affectedPages.map((page) => ({
+        pageId: page.pageId,
+        label: page.label,
+        path: page.path,
+      })),
+      completionCriteria: recommendation.completionCriteria,
+      verificationMethod: recommendation.verificationMethod,
+    })),
+    pagePurposes: report.pagePurposes.map((purpose) => ({
+      purpose: purpose.purpose,
+      status: purpose.status,
+      explanation: purpose.explanation,
+    })),
+  };
+}
+
+function applyCanonicalConsultantReport(
+  input: BuildConsultantContextInput,
+  report: CanonicalAuditReport,
+): BuildConsultantContextInput {
+  const snapshot =
+    input.latestAudit.analysisSnapshot &&
+    typeof input.latestAudit.analysisSnapshot === "object" &&
+    !Array.isArray(input.latestAudit.analysisSnapshot)
+      ? (input.latestAudit.analysisSnapshot as Record<string, unknown>)
+      : {};
+  const currentStatusById = new Map(
+    input.recommendations.flatMap((item) =>
+      item.id ? [[item.id, item.status] as const] : [],
+    ),
+  );
+  const currentStatusByTitle = new Map(
+    input.recommendations.map((item) => [
+      `${item.category}:${item.title.trim().toLowerCase()}`,
+      item.status,
+    ]),
+  );
+  const includedPurposes = report.pagePurposes
+    .filter((item) =>
+      [
+        "DEDICATED_PAGE",
+        "EQUIVALENT_SECTION",
+        "EQUIVALENT_CONVERSION_PATH",
+      ].includes(item.status),
+    )
+    .map((item) => item.purpose);
+  const missingPurposes = report.pagePurposes
+    .filter((item) => item.status === "NOT_DETECTED")
+    .map((item) => item.purpose);
+  const canonicalCrawl = report.view.websiteCrawl
+    ? {
+        ...report.view.websiteCrawl,
+        importantPagesFound: includedPurposes,
+        importantPagesMissing: missingPurposes,
+        missingImportantPageTypes: missingPurposes,
+      }
+    : null;
+
+  return {
+    ...input,
+    business: {
+      ...input.business,
+      name: report.business.name,
+    },
+    latestAudit: {
+      ...input.latestAudit,
+      overallScore: report.view.audit.overallScore,
+      summary: report.view.audit.executiveSummary,
+      analysisSnapshot: {
+        ...snapshot,
+        website: report.view.website,
+        websiteCrawl: canonicalCrawl,
+        seo: report.view.seo,
+        social: report.view.social,
+        reviews: report.view.reviews,
+        normalizedFacts: report.view.normalizedFacts,
+        canonicalAuditReport: report,
+      },
+    },
+    scores: report.scores.flatMap((score) =>
+      score.score === null
+        ? []
+        : [
+            {
+              category: score.category,
+              platform: null,
+              label: score.label,
+              score: score.score,
+            },
+          ],
+    ),
+    findings: report.findings.map((finding) => ({
+      id: finding.findingId,
+      category: finding.category,
+      severity: finding.severity ?? FindingSeverity.INFO,
+      title: finding.title,
+      description: finding.simpleExplanation,
+      sourceUrl: finding.affectedPages.at(0)?.url ?? null,
+      classification: finding.classification,
+      confidence: finding.confidence,
+      whyItMatters: finding.whyItMatters,
+      recommendedAction: finding.recommendedAction,
+      specialist: finding.suggestedSpecialistCategory,
+      verification: finding.verificationMethod,
+      evidenceIds: finding.evidenceIds,
+      affectedPages: finding.affectedPages,
+      evidence: {
+        canonical: true,
+        classification: finding.classification,
+        confidence: finding.confidence,
+        evidenceIds: finding.evidenceIds,
+      },
+    })),
+    recommendations: report.recommendations.map((recommendation) => ({
+      id: recommendation.recommendationId,
+      title: recommendation.title,
+      description: recommendation.description,
+      category: recommendation.category,
+      priority: recommendation.priority,
+      status:
+        currentStatusById.get(recommendation.recommendationId) ??
+        currentStatusByTitle.get(
+          `${recommendation.category}:${recommendation.title.trim().toLowerCase()}`,
+        ) ??
+        recommendation.status,
+      expectedImpact: recommendation.expectedImpact,
+      estimatedEffort: recommendation.estimatedEffort,
+      impact: recommendation.expectedImpact,
+      effort: recommendation.estimatedEffort,
+      sourceType: "canonical_audit_report",
+      sourceUrl: recommendation.affectedPages.at(0)?.url ?? null,
+      rootCauseKey: recommendation.rootCauseKey,
+      classification: recommendation.classification,
+      evidenceIds: recommendation.evidenceIds,
+      affectedPages: recommendation.affectedPages,
+      evidence: {
+        canonical: true,
+        evidenceIds: recommendation.evidenceIds,
+      },
+    })),
+    auditComparison: report.progress.comparison,
+  };
 }
 
 function scoreFor(scores: ConsultantContextScore[], category: ScoreCategory) {

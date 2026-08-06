@@ -6,10 +6,12 @@ import {
   createReportFixture,
   type ReportFixtureKind,
 } from "@/lib/reports/report-fixtures.test-support";
+import { createJustPieCanonicalReportFixture } from "@/lib/reports/just-pie-report-fixture.test-support";
 
 const fixtures: ReportFixtureKind[] = [
   "hospitality",
   "saas",
+  "ecommerce",
   "local_service",
   "social_only",
   "cottage_regression",
@@ -32,6 +34,16 @@ async function main() {
     await writeFile(outputPath, buffer);
     outputs.push({ fixture, outputPath, bytes: buffer.length });
   }
+
+  const justPieReport = createJustPieCanonicalReportFixture();
+  const justPieBuffer = await generateGrowthAuditPdf(justPieReport);
+  const justPieOutputPath = path.join(outputDirectory, "just-pie-orlando.pdf");
+  await writeFile(justPieOutputPath, justPieBuffer);
+  outputs.push({
+    fixture: "just_pie_orlando",
+    outputPath: justPieOutputPath,
+    bytes: justPieBuffer.length,
+  });
 
   console.log(JSON.stringify({ outputDirectory, outputs }, null, 2));
 }

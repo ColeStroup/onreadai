@@ -13,6 +13,7 @@ import { ContextualHelpCard } from "@/components/dashboard/contextual-help-card"
 import { DisclosureSection } from "@/components/dashboard/disclosure-section";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { FloatingScrollControls } from "@/components/dashboard/floating-scroll-controls";
+import { ReportQualityNotice } from "@/components/reports/report-quality-notice";
 import {
   CompactIssueRow,
   CompactMetricCard,
@@ -24,18 +25,16 @@ import {
 import { buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { classifyWebsiteActions } from "@/lib/analyzers/action-classifier";
-import { normalizeImportantPageCoverage } from "@/lib/analyzers/important-page-coverage";
 import type {
   CrawledPageResult,
-  WebsiteCrawlResult,
 } from "@/lib/analyzers/website-crawler";
-import type { WebsiteAnalysis } from "@/lib/analyzers/website-analyzer";
-import {
-  categoryScore,
-  getAuditAssessment,
-} from "@/lib/audits/audit-applicability";
 import { contextualHelp } from "@/lib/education/help-content";
 import { prisma } from "@/lib/prisma";
+import {
+  buildAuditReportViewModel,
+  type ReportFinding,
+  type ReportRecommendation,
+} from "@/lib/reports/audit-report-view-model";
 import { requireUser } from "@/lib/session";
 import { cn } from "@/lib/utils";
 
@@ -68,24 +67,6 @@ const severityRank: Record<FindingSeverity, number> = {
   INFO: 1,
 };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function getWebsiteAnalysis(snapshot: unknown): WebsiteAnalysis | null {
-  if (!isRecord(snapshot) || !isRecord(snapshot.website)) return null;
-  return typeof snapshot.website.score === "number"
-    ? (snapshot.website as WebsiteAnalysis)
-    : null;
-}
-
-function getWebsiteCrawl(snapshot: unknown): WebsiteCrawlResult | null {
-  if (!isRecord(snapshot) || !isRecord(snapshot.websiteCrawl)) return null;
-  return Array.isArray(snapshot.websiteCrawl.pageResults)
-    ? (snapshot.websiteCrawl as WebsiteCrawlResult)
-    : null;
-}
-
 function displayPagePath(url: string) {
   try {
     return new URL(url).pathname || "/";
@@ -109,25 +90,14 @@ function primaryActionCount(page: CrawledPageResult) {
   return page.actionSummary?.primaryActions?.length ?? page.ctaCandidates.length;
 }
 
-function recommendationForFinding<
-  T extends { title: string; category: ScoreCategory },
->(findingTitle: string, recommendations: T[]) {
-  const patterns = [
-    /h1|headline/i,
-    /call.to.action|\bcta\b/i,
-    /meta description|search description/i,
-    /alt text|image alt/i,
-    /contact/i,
-    /proof|trust|testimonial|review/i,
-    /pricing/i,
-  ];
-  const pattern = patterns.find((candidate) => candidate.test(findingTitle));
-
-  return (
-    (pattern
-      ? recommendations.find((item) => pattern.test(item.title))
-      : undefined) ??
-    recommendations.find((item) => item.category === ScoreCategory.WEBSITE)
+function recommendationForFinding(
+  finding: ReportFinding,
+  recommendations: ReportRecommendation[],
+) {
+  return recommendations.find(
+    (item) =>
+      item.sourceFindingId === finding.id ||
+      (finding.rootCauseKey && item.rootCauseKey === finding.rootCauseKey),
   );
 }
 
@@ -139,28 +109,6 @@ function pageMatchesIssue(page: CrawledPageResult, issue?: string) {
   if (issue === "cta") return primaryActionCount(page) === 0;
   if (issue === "alt") return page.imagesMissingAltCount > 0;
   return true;
-}
-
-function affectedPagesForFinding(
-  title: string,
-  pages: CrawledPageResult[],
-) {
-  const lower = title.toLowerCase();
-  let matches = pages;
-
-  if (/meta|description/.test(lower)) {
-    matches = pages.filter((page) => !page.metaDescription);
-  } else if (/h1|headline/.test(lower)) {
-    matches = pages.filter((page) => page.h1Count !== 1);
-  } else if (/cta|call.to.action|next step|action/.test(lower)) {
-    matches = pages.filter((page) => primaryActionCount(page) === 0);
-  } else if (/alt|image/.test(lower)) {
-    matches = pages.filter((page) => page.imagesMissingAltCount > 0);
-  } else {
-    matches = pages.filter((page) => page.pageTypes.includes("Homepage"));
-  }
-
-  return matches.slice(0, 3).map((page) => displayPagePath(page.url));
 }
 
 function ActionGroup({
@@ -283,8 +231,6 @@ export default async function BusinessWebsitePage({
   if (!business) notFound();
 
   const audit = business.audits.at(0);
-  const analysis = audit ? getWebsiteAnalysis(audit.analysisSnapshot) : null;
-  const crawl = audit ? getWebsiteCrawl(audit.analysisSnapshot) : null;
 
   if (!audit) {
     return (
@@ -315,7 +261,18 @@ export default async function BusinessWebsitePage({
     );
   }
 
-  const assessment = getAuditAssessment(audit.analysisSnapshot);
+  const report = await buildAuditReportViewModel({
+    businessId: business.id,
+    auditId: audit.id,
+    ownerId: user.id,
+  });
+  if (!report) notFound();
+  if (report.reportIntegrity?.status === "NEEDS_REVIEW") {
+    return <ReportQualityNotice businessId={business.id} />;
+  }
+  const analysis = report.website;
+  const crawl = report.websiteCrawl;
+  const assessment = report.assessment;
 
   if (!analysis || !assessment.hasWebsite) {
     return (
@@ -345,7 +302,8 @@ export default async function BusinessWebsitePage({
   }
 
   const websiteScore =
-    categoryScore(audit.scores, ScoreCategory.WEBSITE) ?? analysis.score;
+    report.scores.find((item) => item.category === ScoreCategory.WEBSITE)
+      ?.score ?? analysis.score;
   const pages = crawl?.pageResults ?? [];
   const actionSummary =
     analysis.actionSummary ??
@@ -364,32 +322,17 @@ export default async function BusinessWebsitePage({
         primaryConversionGoal: business.primaryConversionGoal,
       },
     });
-  const criticalFindings = audit.findings
-    .filter((finding) => finding.severity !== FindingSeverity.INFO)
-    .sort((a, b) => severityRank[b.severity] - severityRank[a.severity])
+  const criticalFindings = report.findings.all
     .filter(
-      (finding, index, findings) =>
-        findings.findIndex((item) => item.title === finding.title) === index,
+      (finding) =>
+        finding.category === ScoreCategory.WEBSITE &&
+        finding.severity !== FindingSeverity.INFO &&
+        (finding.findingType === "VERIFIED_TECHNICAL_ISSUE" ||
+          finding.findingType === "AI_REVIEWED_OPPORTUNITY"),
     )
+    .sort((a, b) => severityRank[b.severity] - severityRank[a.severity])
     .slice(0, 5);
-  const normalizedCoverage = crawl
-    ? normalizeImportantPageCoverage(crawl)
-    : null;
-  const scannedTypes = new Set(
-    normalizedCoverage?.scannedImportantPages.map((page) => page.type) ?? [
-      "Homepage",
-    ],
-  );
-  const skippedTypes = new Set(
-    normalizedCoverage?.skippedImportantPages.map((page) => page.type) ?? [],
-  );
-  const relevantCoverage = importantPageOrder.filter(
-    (type) =>
-      scannedTypes.has(type) ||
-      skippedTypes.has(type) ||
-      crawl?.missingImportantPageTypes?.includes(type) ||
-      type === "Homepage",
-  );
+  const relevantCoverage = report.pagePurposes ?? [];
   const q = query.q?.trim().toLowerCase() ?? "";
   const filteredPages = pages
     .filter(
@@ -440,7 +383,7 @@ export default async function BusinessWebsitePage({
 
       <section className="grid gap-3 sm:grid-cols-3">
         <CompactMetricCard label="Website score" value={`${websiteScore}/100`} />
-        <CompactMetricCard label="Pages scanned" value={crawl?.pagesScanned ?? 1} />
+        <CompactMetricCard label="Pages scanned" value={report.canonicalFacts?.successfulPages ?? crawl?.successfulPages ?? 1} />
         <CompactMetricCard label="Critical issues" value={criticalFindings.length} tone={criticalFindings.length ? "warning" : "good"} />
       </section>
 
@@ -457,10 +400,10 @@ export default async function BusinessWebsitePage({
       >
         {criticalFindings.length > 0 ? (
           criticalFindings.map((finding) => {
-            const affected = affectedPagesForFinding(finding.title, pages);
+            const affected = finding.affectedPages ?? [];
             const recommendation = recommendationForFinding(
-              finding.title,
-              audit.recommendations,
+              finding,
+              report.recommendations.all,
             );
             return (
               <CompactIssueRow
@@ -468,7 +411,7 @@ export default async function BusinessWebsitePage({
                 title={finding.title}
                 detail={finding.description}
                 tone={finding.severity === FindingSeverity.CRITICAL || finding.severity === FindingSeverity.HIGH ? "danger" : "warning"}
-                meta={affected.length > 0 ? `Affected key pages: ${affected.join(", ")}` : "Homepage evidence"}
+                meta={affected.length > 0 ? `Affected pages: ${affected.map((page) => `${page.label} (${page.path})`).join(", ")}` : "Business-wide evidence"}
                 action={
                   <Link
                     href={`/dashboard/businesses/${business.id}/action-plan?category=${finding.category}${recommendation ? `&q=${encodeURIComponent(recommendation.title)}` : ""}`}
@@ -486,20 +429,27 @@ export default async function BusinessWebsitePage({
         )}
       </ReportSection>
 
-      <ReportSection title="Important page coverage" description="Scanned means analyzed. Discovered but skipped means the page was found beyond the crawl limit. Not detected means no matching page was found.">
+      <ReportSection title="Important page coverage" description="This recognizes both dedicated pages and equivalent sections or customer paths. Some pages are not expected for every business model.">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {relevantCoverage.map((type) => {
-            const state = scannedTypes.has(type)
-              ? "Scanned"
-              : skippedTypes.has(type)
-                ? "Discovered but skipped"
-                : "Not detected";
+          {relevantCoverage.map((item) => {
+            const state = {
+              DEDICATED_PAGE: "Dedicated page",
+              EQUIVALENT_SECTION: "Equivalent section",
+              EQUIVALENT_CONVERSION_PATH: "Equivalent path",
+              DISCOVERED_BUT_SKIPPED: "Discovered, not scanned",
+              NOT_DETECTED: "Not detected",
+              NOT_EXPECTED: "Not expected",
+              UNABLE_TO_DETERMINE: "Unable to determine",
+            }[item.status];
             return (
-              <div key={type} className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-3">
-                <span className="text-sm font-medium">{type}</span>
-                <span className={cn("rounded-full border px-2 py-0.5 text-xs font-semibold", state === "Scanned" ? "border-teal-200 bg-teal-50 text-teal-800 dark:border-teal-900 dark:bg-teal-950/30 dark:text-teal-100" : state === "Discovered but skipped" ? "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100" : "border-border bg-card text-muted")}>
-                  {state}
-                </span>
+              <div key={item.purpose} className="rounded-lg border border-border bg-background px-3 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-sm font-medium">{item.purpose}</span>
+                  <span className={cn("rounded-full border px-2 py-0.5 text-xs font-semibold", ["DEDICATED_PAGE", "EQUIVALENT_SECTION", "EQUIVALENT_CONVERSION_PATH"].includes(item.status) ? "border-teal-200 bg-teal-50 text-teal-800 dark:border-teal-900 dark:bg-teal-950/30 dark:text-teal-100" : item.status === "DISCOVERED_BUT_SKIPPED" ? "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100" : "border-border bg-card text-muted")}>
+                    {state}
+                  </span>
+                </div>
+                <p className="mt-2 text-xs leading-5 text-muted">{item.explanation}</p>
               </div>
             );
           })}

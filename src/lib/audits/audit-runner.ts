@@ -66,6 +66,11 @@ import { discoverGoogleBusinessProfiles } from "@/lib/google/google-business-dis
 import { websiteSeoBusinessGoals } from "@/lib/goals";
 import { prisma } from "@/lib/prisma";
 import { logError, logInfo, logWarn } from "@/lib/observability/log";
+import { buildAuditReportViewModel } from "@/lib/reports/audit-report-view-model";
+import {
+  buildCanonicalAuditReport,
+  CANONICAL_AUDIT_REPORT_VERSION,
+} from "@/lib/reports/canonical-audit-report";
 import {
   COMPETITOR_COMPARISON_VERSION,
   buildCompetitorComparisonDependencyFingerprint,
@@ -333,6 +338,14 @@ export async function runAuditGeneration({
       });
     });
 
+    const canonicalReport = await finalizeCanonicalAuditReport({
+      auditId,
+      businessId,
+      ownerId: auditData.ownerId,
+      analysisSnapshot: auditData.analysisSnapshot,
+      completedAt,
+    });
+
     if (revalidate) {
       try {
         revalidateAuditPaths(businessId);
@@ -348,9 +361,10 @@ export async function runAuditGeneration({
     logInfo("audit_completed", {
       businessId,
       auditId,
-      overallScore: auditData.auditResult.overallScore,
-      findingCount: auditData.auditResult.findings.length,
-      recommendationCount: auditData.auditResult.recommendations.length,
+      overallScore: canonicalReport.view.audit.overallScore,
+      findingCount: canonicalReport.findings.length,
+      recommendationCount: canonicalReport.recommendations.length,
+      reportIntegrity: canonicalReport.integrity.status,
     });
 
     return {
@@ -414,6 +428,87 @@ export function revalidateAuditPaths(businessId: string) {
 
 function toJsonValue(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value ?? null)) as Prisma.InputJsonValue;
+}
+
+async function finalizeCanonicalAuditReport({
+  auditId,
+  businessId,
+  ownerId,
+  analysisSnapshot,
+  completedAt,
+}: {
+  auditId: string;
+  businessId: string;
+  ownerId: string;
+  analysisSnapshot: Prisma.InputJsonValue;
+  completedAt: Date;
+}) {
+  const report = await buildAuditReportViewModel({
+    auditId,
+    businessId,
+    ownerId,
+    attachCanonicalReport: false,
+  });
+  if (!report) {
+    throw new Error("The completed audit could not be prepared for reporting.");
+  }
+
+  const canonicalReport = buildCanonicalAuditReport(report, {
+    strict: true,
+    reportVersion: CANONICAL_AUDIT_REPORT_VERSION,
+    generatedAt: completedAt,
+  });
+  const snapshot = JSON.parse(
+    JSON.stringify(analysisSnapshot),
+  ) as Record<string, unknown>;
+  const scoringMetadata =
+    snapshot.scoringMetadata &&
+    typeof snapshot.scoringMetadata === "object" &&
+    !Array.isArray(snapshot.scoringMetadata)
+      ? (snapshot.scoringMetadata as Record<string, unknown>)
+      : {};
+
+  await prisma.$transaction(async (tx) => {
+    await tx.audit.update({
+      where: { id: auditId },
+      data: {
+        overallScore: canonicalReport.view.audit.overallScore,
+        summary: canonicalReport.view.audit.executiveSummary,
+        analysisSnapshot: toJsonValue({
+          ...snapshot,
+          scoringMetadata: {
+            ...scoringMetadata,
+            reportViewModelVersion: CANONICAL_AUDIT_REPORT_VERSION,
+          },
+          canonicalAuditReport: canonicalReport,
+        }),
+      },
+    });
+    for (const score of canonicalReport.scores) {
+      if (score.score === null) continue;
+      await tx.auditScore.updateMany({
+        where: {
+          auditId,
+          category: score.category,
+          platform: null,
+        },
+        data: { score: score.score },
+      });
+    }
+  });
+
+  if (canonicalReport.integrity.status === "NEEDS_REVIEW") {
+    logWarn("canonical_audit_report_needs_review", {
+      auditId,
+      businessId,
+      issueCodes: canonicalReport.integrity.issues
+        .map((issue) => issue.code)
+        .join(","),
+      issueCount: canonicalReport.integrity.issues.length,
+    });
+  }
+
+  return canonicalReport;
 }
 
 async function buildAuditData({
@@ -1463,6 +1558,7 @@ async function buildAuditData({
 
   return {
     auditResult,
+    ownerId: business.ownerId,
     businessContextDraft,
     analysisSnapshot: toJsonValue({
       ...(websiteAnalysis

@@ -20,6 +20,7 @@ import { RecommendationLearnWhy } from "@/components/dashboard/recommendation-le
 import { RecommendationPrimaryAction } from "@/components/dashboard/recommendation-primary-action";
 import { RecommendationStatusControls } from "@/components/dashboard/recommendation-status-controls";
 import { ImplementationHelpDrawer } from "@/components/implementation/implementation-help-drawer";
+import { ReportQualityNotice } from "@/components/reports/report-quality-notice";
 import {
   CompactMetricCard,
   PageIntro,
@@ -391,7 +392,7 @@ function FreePreview({
       </ReportSection>
       <LockedFeature
         title="Unlock the full Action Plan"
-        description="Track status, focus the backlog, and use a deterministic 30-day plan between audits."
+        description="Track status, focus the backlog, and use a practical 30-day plan between audits."
         requiredPlan={PlanType.ONE_TIME_AUDIT}
         preview={[
           "Focus This Week and one-week-at-a-time roadmap",
@@ -475,7 +476,17 @@ export default async function BusinessActionPlanPage({
     auditId: audit.id,
     ownerId: user.id,
   });
-  const canonicalRecommendations = report?.recommendations.all.flatMap(
+  if (!report) notFound();
+  if (report.reportIntegrity?.status === "NEEDS_REVIEW") {
+    return <ReportQualityNotice businessId={business.id} />;
+  }
+  const reportRecommendationById = new Map(
+    report.recommendations.all.map((recommendation) => [
+      recommendation.id,
+      recommendation,
+    ]),
+  );
+  const canonicalRecommendations = report.recommendations.all.flatMap(
     (recommendation) => {
       const stored = audit.recommendations.find(
         (item) => item.id === recommendation.id,
@@ -583,12 +594,16 @@ export default async function BusinessActionPlanPage({
                 businessName={business.name}
                 recommendation={recommendation}
                 evidence={
+                  reportRecommendationById.get(recommendation.id)
+                    ?.evidenceSummary ??
                   storedEvidenceSummary(recommendation.evidence) ??
-                  audit.findings.find(
-                    (finding) => finding.category === recommendation.category,
-                  )?.description
+                  undefined
                 }
-                sourceUrl={recommendation.sourceUrl}
+                sourceUrl={
+                  reportRecommendationById.get(recommendation.id)?.sourceUrl ??
+                  recommendation.sourceUrl ??
+                  undefined
+                }
                 embedded
               />
             ))}
@@ -864,12 +879,16 @@ export default async function BusinessActionPlanPage({
                   businessName={business.name}
                   recommendation={recommendation}
                   evidence={
+                    reportRecommendationById.get(recommendation.id)
+                      ?.evidenceSummary ??
                     storedEvidenceSummary(recommendation.evidence) ??
-                    audit.findings.find(
-                      (finding) => finding.category === recommendation.category,
-                    )?.description
+                    undefined
                   }
-                  sourceUrl={recommendation.sourceUrl}
+                  sourceUrl={
+                    reportRecommendationById.get(recommendation.id)?.sourceUrl ??
+                    recommendation.sourceUrl ??
+                    undefined
+                  }
                 />
               ))
             ) : (

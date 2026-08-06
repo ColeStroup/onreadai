@@ -239,6 +239,7 @@ function buildWebsiteSlide(
 ): PresentationDeckData["website"] {
   const website = report.website;
   const crawl = report.websiteCrawl;
+  const facts = report.canonicalFacts;
   const clarity =
     report.technicalAppendix.homepagePrimaryCtaAssessment?.clarity ??
     "NOT_ASSESSED";
@@ -252,6 +253,9 @@ function buildWebsiteSlide(
       score: null,
       pagesScanned: "Not applicable",
       h1Status: "Not applicable",
+      missingMetaDescriptions: null,
+      totalImagesMissingAlt: null,
+      pageEvidence: [],
       primaryCtaClarity: "Not applicable",
       assessmentNote:
         "No website was supplied, so website and technical CTA checks were excluded from this audit.",
@@ -264,20 +268,44 @@ function buildWebsiteSlide(
   return {
     available: true,
     score: scoreFor(report, ScoreCategory.WEBSITE),
-    pagesScanned: crawl ? `${crawl.pagesScanned} pages` : "Homepage only",
+    pagesScanned: facts
+      ? `${facts.successfulPages} pages`
+      : crawl
+        ? `${crawl.successfulPages} pages`
+        : "Homepage only",
     h1Status:
       website.h1Count === 0
-        ? `Missing on homepage${crawl ? `; ${crawl.pagesWithNoH1} pages affected` : ""}`
+        ? `Missing on homepage${facts ? `; ${facts.pagesWithNoH1.length} pages affected` : ""}`
         : website.h1Count === 1
           ? "One homepage H1"
           : `${website.h1Count} homepage H1 headings`,
+    missingMetaDescriptions:
+      facts?.pagesMissingMetaDescriptions.length ??
+      crawl?.pagesMissingMetaDescription ??
+      null,
+    totalImagesMissingAlt:
+      facts?.totalImagesMissingAlt ?? crawl?.totalImagesMissingAlt ?? null,
+    pageEvidence:
+      report.canonicalReport?.pages.map(
+        (page) =>
+          `${page.label}: ${page.imagesMissingAltCount} missing alt / ${page.metaDescription ? "description present" : "description missing"} / H1 ${page.h1Count}`,
+      ) ?? [],
     primaryCtaClarity: titleCase(clarity),
     assessmentNote:
       clarity === "CLEAR"
         ? "Static page structure and link wording support one structurally dominant primary action."
         : "Based on static page structure and link wording, no single primary action was clearly dominant.",
     detectedActionTypes: website.actionSummary.detectedActionTypes.slice(0, 6),
-    importantPagesFound: (crawl?.importantPagesFound ?? []).slice(0, 6),
+    importantPagesFound: (report.pagePurposes ?? [])
+      .filter((item) =>
+        [
+          "DEDICATED_PAGE",
+          "EQUIVALENT_SECTION",
+          "EQUIVALENT_CONVERSION_PATH",
+        ].includes(item.status),
+      )
+      .map((item) => item.purpose)
+      .slice(0, 6),
     keyAction:
       websiteRecommendation?.title ??
       `Review the ${presentationEvidence.website.primaryCtaClarity} primary CTA assessment.`,
@@ -288,7 +316,14 @@ function buildSeoSlide(
   report: AuditReportViewModel,
 ): PresentationDeckData["seo"] {
   const seo = report.seo;
+  const facts = report.canonicalFacts;
   const crawl = report.websiteCrawl;
+  const missingMetaDescriptionCount =
+    facts?.pagesMissingMetaDescriptions.length ??
+    crawl?.pagesMissingMetaDescription ??
+    0;
+  const missingH1Count =
+    facts?.pagesWithNoH1.length ?? crawl?.pagesWithNoH1 ?? 0;
 
   if (!report.assessment.hasWebsite || !seo) {
     return {
@@ -313,17 +348,16 @@ function buildSeoSlide(
       seo.metaDescriptionStatus,
       `${seo.metaDescriptionLength} characters${
         seo.metaDescriptionStatus !== "good" &&
-        crawl &&
-        crawl.pagesMissingMetaDescription > 0
-          ? `; ${crawl.pagesMissingMetaDescription} scanned page missing one`
+        missingMetaDescriptionCount > 0
+          ? `; ${missingMetaDescriptionCount} scanned page${missingMetaDescriptionCount === 1 ? "" : "s"} missing one`
           : ""
       }`,
     ),
     statusFromSeo(
       "Homepage H1",
       seo.h1Status,
-      seo.h1Status !== "good" && crawl && crawl.pagesWithNoH1 > 0
-        ? `${crawl.pagesWithNoH1} scanned pages have no H1`
+      seo.h1Status !== "good" && missingH1Count > 0
+        ? `${missingH1Count} scanned page${missingH1Count === 1 ? " has" : "s have"} no H1`
         : undefined,
     ),
     statusFromSeo("Canonical", seo.canonicalStatus),
@@ -333,22 +367,21 @@ function buildSeoSlide(
   ];
   if (
     seo.metaDescriptionStatus === "good" &&
-    crawl &&
-    crawl.pagesMissingMetaDescription > 0
+    missingMetaDescriptionCount > 0
   ) {
     checks.push({
       label: "Page descriptions",
       value: "Needs improvement",
       tone: "warning",
-      detail: `${crawl.pagesMissingMetaDescription} scanned page missing a description`,
+      detail: `${missingMetaDescriptionCount} scanned page${missingMetaDescriptionCount === 1 ? "" : "s"} missing a description`,
     });
   }
-  if (seo.h1Status === "good" && crawl && crawl.pagesWithNoH1 > 0) {
+  if (seo.h1Status === "good" && missingH1Count > 0) {
     checks.push({
       label: "Page H1 coverage",
       value: "Needs improvement",
       tone: "warning",
-      detail: `${crawl.pagesWithNoH1} scanned pages have no H1`,
+      detail: `${missingH1Count} scanned page${missingH1Count === 1 ? " has" : "s have"} no H1`,
     });
   }
   if (
@@ -371,9 +404,10 @@ function buildSeoSlide(
     warningCount: checks.filter(
       (item) => item.tone === "warning" || item.tone === "critical",
     ).length,
-    recommendedFixes: seo.recommendedFixes
+    recommendedFixes: report.recommendations.all
+      .filter((item) => item.category === ScoreCategory.SEO)
       .slice(0, 2)
-      .map((item) => conciseText(item, 150)),
+      .map((item) => conciseText(item.description, 150)),
   };
 }
 

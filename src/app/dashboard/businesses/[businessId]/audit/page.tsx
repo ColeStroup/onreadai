@@ -1,7 +1,6 @@
 import {
   AuditStatus,
   FindingSeverity,
-  RecommendationStatus,
   ScoreCategory,
 } from "@prisma/client";
 import {
@@ -22,6 +21,7 @@ import { EmptyState } from "@/components/dashboard/empty-state";
 import { FloatingScrollControls } from "@/components/dashboard/floating-scroll-controls";
 import { FindingFeedbackForm } from "@/components/dashboard/finding-feedback-form";
 import { RecommendationPrimaryAction } from "@/components/dashboard/recommendation-primary-action";
+import { ReportQualityNotice } from "@/components/reports/report-quality-notice";
 import {
   PageIntro,
   ReportSection,
@@ -265,6 +265,9 @@ export default async function AuditFindingsPage({
     ownerId: user.id,
   });
   if (!report) notFound();
+  if (report.reportIntegrity?.status === "NEEDS_REVIEW") {
+    return <ReportQualityNotice businessId={business.id} />;
+  }
 
   const availableFindingCategories = report.legacyScoring
     ? findingCategories
@@ -302,15 +305,9 @@ export default async function AuditFindingsPage({
       )
     : null;
   const firstRecommendation = firstImportantFinding
-    ? (audit.recommendations.find(
+    ? audit.recommendations.find(
         (recommendation) => recommendation.id === firstReportRecommendation?.id,
-      ) ??
-      audit.recommendations.find(
-        (recommendation) =>
-          recommendation.category === firstImportantFinding.category &&
-          recommendation.status !== RecommendationStatus.COMPLETED &&
-          recommendation.status !== RecommendationStatus.DISMISSED,
-      ))
+      )
     : null;
   const usedRecommendationIds = new Set(
     firstRecommendation ? [firstRecommendation.id] : [],

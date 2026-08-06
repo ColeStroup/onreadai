@@ -92,6 +92,17 @@ import {
 } from "@/lib/profiles/profile-counts";
 import { canonicalRecommendationIssueKey } from "@/lib/recommendations/recommendation-deduplication";
 import {
+  attachCompatibilityCanonicalReport,
+  materializeCanonicalReport,
+  readCanonicalAuditReport,
+  type CanonicalAffectedPage,
+  type CanonicalAuditReport,
+  type CanonicalFactsSummary,
+  type CanonicalReportIntegrityIssue,
+  type CanonicalScoreImpact,
+} from "@/lib/reports/canonical-audit-report";
+import type { CanonicalPagePurpose } from "@/lib/reports/page-purpose";
+import {
   classifyReportBusiness,
   filterBusinessCompatibleContent,
   publicCompetitorMonitoringCopy,
@@ -104,6 +115,7 @@ import {
   buildCompetitorComparisonDependencyFingerprint,
   buildSocialStrategyDependencyFingerprint,
   COMPETITOR_COMPARISON_VERSION,
+  LEGACY_REPORT_VIEW_MODEL_VERSION,
   latestDate,
   REPORT_VIEW_MODEL_VERSION,
   SEO_ANALYZER_VERSION,
@@ -158,6 +170,15 @@ export type ReportRecommendation = {
   technical: boolean;
   sourceLabel?: (typeof findingTypeLabels)[AuditFindingType];
   sourceUrl?: string | null;
+  issueKey?: string | null;
+  rootCauseKey?: string | null;
+  affectedUrls?: string[];
+  affectedPages?: CanonicalAffectedPage[];
+  evidenceIds?: string[];
+  completionCriteria?: string | null;
+  verificationMethod?: string | null;
+  suggestedSpecialistCategory?: string | null;
+  canonicalEvidence?: unknown;
 };
 
 export type ReportNextMove = {
@@ -195,6 +216,14 @@ export type ReportFinding = {
   materiality?: "HIGH" | "MEDIUM" | "LOW" | null;
   validationState?: string | null;
   supportingEvidenceIds?: string[];
+  stableKey?: string | null;
+  rootCauseKey?: string | null;
+  affectedUrls?: string[];
+  affectedPages?: CanonicalAffectedPage[];
+  completionCriteria?: string | null;
+  verificationMethod?: string | null;
+  suggestedSpecialistCategory?: string | null;
+  scoreImpact?: CanonicalScoreImpact | null;
 };
 
 export type ReportScoringMetadata = {
@@ -344,6 +373,13 @@ export type AuditReportViewModel = {
     pageSelection: CrawledPageSelection;
     findings: ReportFinding[];
   };
+  canonicalReport?: CanonicalAuditReport;
+  reportIntegrity?: {
+    status: "READY" | "NEEDS_REVIEW";
+    issues: CanonicalReportIntegrityIssue[];
+  };
+  canonicalFacts?: CanonicalFactsSummary;
+  pagePurposes?: CanonicalPagePurpose[];
 };
 
 type ReportBusinessRecord = Prisma.BusinessGetPayload<{
@@ -439,10 +475,12 @@ export async function buildAuditReportViewModel({
   businessId,
   auditId,
   ownerId,
+  attachCanonicalReport = true,
 }: {
   businessId: string;
   auditId: string;
   ownerId: string;
+  attachCanonicalReport?: boolean;
 }): Promise<AuditReportViewModel | null> {
   const audit = await prisma.audit.findFirst({
     where: {
@@ -493,6 +531,19 @@ export async function buildAuditReportViewModel({
   });
 
   if (!audit) return null;
+
+  const storedCanonicalReport = readCanonicalAuditReport(
+    audit.analysisSnapshot,
+  );
+  if (storedCanonicalReport) {
+    return materializeCanonicalReport(
+      storedCanonicalReport,
+      audit.recommendations.map((recommendation) => ({
+        id: recommendation.id,
+        status: recommendation.status,
+      })),
+    );
+  }
 
   const previousAudit = await prisma.audit.findFirst({
     where: {
@@ -837,7 +888,7 @@ export async function buildAuditReportViewModel({
     business.primaryGoal && reportGoals.includes(business.primaryGoal)
       ? business.primaryGoal
       : null;
-  return {
+  const baseReport: AuditReportViewModel = {
     productScope: focusedWebsiteSeoReport ? "website_seo" : "legacy_presence",
     scoreLabel: focusedWebsiteSeoReport
       ? WEBSITE_GROWTH_SCORE_LABEL
@@ -1088,6 +1139,10 @@ export async function buildAuditReportViewModel({
       findings: allFindings,
     },
   };
+
+  return attachCanonicalReport
+    ? attachCompatibilityCanonicalReport(baseReport)
+    : baseReport;
 }
 
 function focusedRecommendationSet(
@@ -1551,10 +1606,20 @@ function buildCurrentRecommendations({
               ? ("Verified technical issue" as const)
               : undefined,
         sourceUrl:
-          recommendation.sourceUrl ??
           canonicalEvidence?.affectedUrls?.at(0) ??
+          recommendation.sourceUrl ??
           aiEvidence?.sourceUrl ??
           null,
+        issueKey: canonicalEvidence?.issueKey ??
+          recommendationIssueKey(recommendation),
+        rootCauseKey: canonicalEvidence?.rootCauseKey ?? null,
+        affectedUrls: canonicalEvidence?.affectedUrls ??
+          (recommendation.sourceUrl ? [recommendation.sourceUrl] : []),
+        evidenceIds: canonicalEvidence?.sourceEvidenceIds ?? [],
+        completionCriteria: null,
+        verificationMethod: null,
+        suggestedSpecialistCategory: null,
+        canonicalEvidence,
       };
     },
   );
@@ -1772,6 +1837,18 @@ function buildCurrentFindings({
       materiality: validation?.materiality ?? null,
       validationState: validation?.state ?? null,
       supportingEvidenceIds: validation?.supportingEvidenceIds ?? [],
+      stableKey: validation?.stableFindingKey ?? finding.id,
+      rootCauseKey: validation?.rootCauseKey ?? null,
+      affectedUrls: validation?.affectedUrls ??
+        (finding.sourceUrl ? [finding.sourceUrl] : []),
+      completionCriteria:
+        validation?.targetedVerification.requiredOutcome ?? null,
+      verificationMethod:
+        validation?.specialistReadiness.verificationMethod ??
+        validation?.plainLanguage.howOnreadWillCheck ??
+        null,
+      suggestedSpecialistCategory:
+        validation?.specialistReadiness.suggestedSpecialist ?? null,
     };
   });
 
@@ -1993,7 +2070,9 @@ function buildScoringMetadata({
   return {
     scoringEngineVersion:
       stringFromUnknown(saved?.scoringEngineVersion) ?? "legacy-growth-score",
-    reportViewModelVersion: REPORT_VIEW_MODEL_VERSION,
+    reportViewModelVersion:
+      stringFromUnknown(saved?.reportViewModelVersion) ??
+      LEGACY_REPORT_VIEW_MODEL_VERSION,
     analyzerVersions: {
       website:
         stringFromUnknown(savedAnalyzers.website) ?? WEBSITE_ANALYZER_VERSION,

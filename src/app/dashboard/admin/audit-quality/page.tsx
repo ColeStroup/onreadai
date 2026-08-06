@@ -8,6 +8,7 @@ import { Activity, Bot, Flag, MonitorCheck, ShieldCheck } from "lucide-react";
 
 import { Card } from "@/components/ui/card";
 import { prisma } from "@/lib/prisma";
+import { readCanonicalAuditReport } from "@/lib/reports/canonical-audit-report";
 
 type ValidationDecision = {
   stableFindingKey: string;
@@ -76,6 +77,15 @@ export default async function AuditQualityAdminPage() {
         ]
       : [];
   });
+  const canonicalReports = audits.flatMap((audit) => {
+    const report = readCanonicalAuditReport(audit.analysisSnapshot);
+    return report
+      ? [{ report, businessName: audit.business.name }]
+      : [];
+  });
+  const reportsNeedingReview = canonicalReports.filter(
+    ({ report }) => report.integrity.status === "NEEDS_REVIEW",
+  ).length;
   const decisions = validationRuns.flatMap((run) =>
     run.decisions.slice(0, 30).map((decision) => ({ ...decision, run })),
   );
@@ -113,12 +123,13 @@ export default async function AuditQualityAdminPage() {
         </p>
       </header>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
         <Metric icon={Activity} label="Recent validation runs" value={validationRuns.length} />
         <Metric icon={ShieldCheck} label="Suppressed candidates" value={suppressed} />
         <Metric icon={MonitorCheck} label="Contradictions found" value={contradictions} />
         <Metric icon={Bot} label="AI review failures" value={failedAiReviews} />
         <Metric icon={Flag} label="Feedback awaiting review" value={pendingFeedback} />
+        <Metric icon={Flag} label="Reports needing review" value={reportsNeedingReview} />
       </div>
 
       <Card className="p-4">
@@ -135,6 +146,72 @@ export default async function AuditQualityAdminPage() {
           />
         </dl>
       </Card>
+
+      <section aria-labelledby="score-trace-title">
+        <h2 id="score-trace-title" className="text-xl font-semibold">
+          Canonical score trace
+        </h2>
+        <p className="mt-1 text-sm text-muted">
+          Each deduction is tied to one validated root cause and its saved evidence.
+        </p>
+        <div className="mt-3 space-y-3">
+          {canonicalReports.slice(0, 12).map(({ report, businessName }) => (
+            <Card key={report.auditId} className="p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="font-semibold">{businessName}</p>
+                  <p className="mt-1 text-xs text-muted">
+                    {report.auditId} / {report.reportVersion}
+                  </p>
+                </div>
+                <span className="rounded-full border border-border px-2.5 py-1 text-xs font-semibold">
+                  {label(report.integrity.status)}
+                </span>
+              </div>
+              {report.integrity.issues.length > 0 ? (
+                <p className="mt-3 text-xs text-muted">
+                  Integrity diagnostics: {report.integrity.issues.map((issue) => `${issue.code}: ${issue.message}`).join(" | ")}
+                </p>
+              ) : null}
+              <div className="mt-4 overflow-x-auto">
+                <table className="min-w-full text-left text-xs">
+                  <thead className="border-b border-border uppercase text-muted">
+                    <tr>
+                      <th className="px-2 py-2">Finding</th>
+                      <th className="px-2 py-2">Root cause</th>
+                      <th className="px-2 py-2">Classification</th>
+                      <th className="px-2 py-2">Deduction / cap</th>
+                      <th className="px-2 py-2">Final category result</th>
+                      <th className="px-2 py-2">Evidence</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {report.appendix.scoreTrace.map((trace) => (
+                      <tr key={`${trace.category}:${trace.rootCauseKey}`}>
+                        <td className="px-2 py-2">{trace.findingId ?? "Unlinked"}</td>
+                        <td className="px-2 py-2">{trace.rootCauseKey}</td>
+                        <td className="px-2 py-2">{label(trace.classification ?? "Unclassified")}</td>
+                        <td className="px-2 py-2">-{trace.deduction} / {trace.cap}</td>
+                        <td className="px-2 py-2">
+                          {report.scores.find(
+                            (score) => score.category === trace.category,
+                          )?.score ?? "Not scored"}
+                        </td>
+                        <td className="px-2 py-2">{trace.evidenceIds.join(", ") || "None"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          ))}
+          {canonicalReports.length === 0 ? (
+            <Card className="p-8 text-center text-muted">
+              No canonical v4 reports have been generated yet.
+            </Card>
+          ) : null}
+        </div>
+      </section>
 
       <section aria-labelledby="feedback-title">
         <h2 id="feedback-title" className="text-xl font-semibold">

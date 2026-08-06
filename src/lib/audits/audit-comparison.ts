@@ -7,6 +7,7 @@ import {
 
 import { readNormalizedAuditFacts } from "@/lib/audits/normalized-audit-facts";
 import { readFindingValidationMetadata } from "@/lib/audits/quality/candidate-pipeline";
+import { readCanonicalAuditReport } from "@/lib/reports/canonical-audit-report";
 
 export type AuditComparisonScore = {
   category: ScoreCategory;
@@ -31,6 +32,8 @@ export type AuditComparisonFinding = {
   category: ScoreCategory;
   severity: FindingSeverity;
   evidence?: unknown;
+  stableKey?: string | null;
+  rootCauseKey?: string | null;
 };
 
 export type AuditComparisonRecommendation = {
@@ -40,6 +43,7 @@ export type AuditComparisonRecommendation = {
   category: ScoreCategory;
   status: RecommendationStatus;
   completedAt: Date | null;
+  rootCauseKey?: string | null;
 };
 
 export type AuditComparisonInput = {
@@ -99,6 +103,10 @@ export function compareAudits({
   currentAudit: AuditComparisonInput;
   previousAudit?: AuditComparisonInput | null;
 }): AuditComparison {
+  currentAudit = canonicalComparisonInput(currentAudit);
+  previousAudit = previousAudit
+    ? canonicalComparisonInput(previousAudit)
+    : previousAudit;
   if (!previousAudit) {
     return {
       previousAuditId: null,
@@ -266,6 +274,8 @@ function scoreFor(audit: AuditComparisonInput, category: ScoreCategory) {
 }
 
 function findingKey(finding: AuditComparisonFinding) {
+  if (finding.rootCauseKey) return finding.rootCauseKey;
+  if (finding.stableKey) return finding.stableKey;
   const stableFindingKey = readFindingValidationMetadata(
     finding.evidence,
   )?.stableFindingKey;
@@ -276,7 +286,9 @@ function findingKey(finding: AuditComparisonFinding) {
 function recommendationKey(recommendation: {
   title: string;
   category: ScoreCategory;
+  rootCauseKey?: string | null;
 }) {
+  if (recommendation.rootCauseKey) return recommendation.rootCauseKey;
   return `${recommendation.category}:${normalizeText(recommendation.title)}`;
 }
 
@@ -307,15 +319,15 @@ function buildSummary({
     overallScoreChange === null
       ? "The overall scores could not be compared because one audit is missing an overall score."
       : overallScoreChange > 0
-        ? `The overall score improved by ${overallScoreChange} point${overallScoreChange === 1 ? "" : "s"}.`
+        ? `The overall score increased by ${overallScoreChange} point${overallScoreChange === 1 ? "" : "s"}.`
         : overallScoreChange < 0
-          ? `The overall score declined by ${Math.abs(overallScoreChange)} point${overallScoreChange === -1 ? "" : "s"}.`
+          ? `The overall score decreased by ${Math.abs(overallScoreChange)} point${overallScoreChange === -1 ? "" : "s"}.`
           : "No overall score change was detected.";
   const improvementText = strongestImprovement
-    ? ` Strongest improvement: ${categoryLabels[strongestImprovement.category]} (+${strongestImprovement.delta}).`
+    ? ` Largest score increase: ${categoryLabels[strongestImprovement.category]} (+${strongestImprovement.delta}).`
     : "";
   const declineText = biggestDecline
-    ? ` Biggest decline: ${categoryLabels[biggestDecline.category]} (${biggestDecline.delta}).`
+    ? ` Largest score decrease: ${categoryLabels[biggestDecline.category]} (${biggestDecline.delta}).`
     : "";
   const completedText =
     completedRecommendationsSincePrevious.length > 0
@@ -383,7 +395,8 @@ function explainCategoryScoreChange({
 > {
   if (methodologyChanged) {
     return {
-      reason: `The scoring engine changed from ${previousMetadata.scoringEngineVersion} to ${currentMetadata.scoringEngineVersion}.`,
+      reason:
+        "The scoring method changed between these audits, so the score movement does not prove the website changed.",
       changeType: "scoring_method_change",
       underlyingBusinessChanged: null,
       confidence: "high",
@@ -504,25 +517,83 @@ function explainCategoryScoreChange({
     [...previousKeys].some((key) => !currentKeys.has(key));
 
   if (evidenceChanged) {
+    const newlyPresent = [...currentKeys].filter(
+      (key) => !previousKeys.has(key),
+    ).length;
+    const noLongerPresent = [...previousKeys].filter(
+      (key) => !currentKeys.has(key),
+    ).length;
     return {
-      reason:
-        "The analyzer found a different set of saved findings in this category. Review the new and resolved findings for the observable evidence.",
-      changeType: "observable_business_change",
-      underlyingBusinessChanged: true,
-      confidence: "medium",
-      directlyComparable: true,
+      reason: `${newlyPresent} finding${newlyPresent === 1 ? " is" : "s are"} newly present and ${noLongerPresent} finding${noLongerPresent === 1 ? " is" : "s are"} no longer present in the saved evidence. This may reflect a website change or a difference in audit coverage.`,
+      changeType: "unknown",
+      underlyingBusinessChanged: null,
+      confidence: "low",
+      directlyComparable: false,
     };
   }
 
   return {
-    reason:
-      delta === 0
-        ? "No category score change was detected."
-        : "No reliable cause was identified from the saved analyzer and coverage metadata.",
+      reason:
+        delta === 0
+          ? "No category score change was detected."
+        : "No reliable cause was identified from the saved evidence and coverage details.",
     changeType: "unknown",
     underlyingBusinessChanged: null,
     confidence: "low",
     directlyComparable: true,
+  };
+}
+
+function canonicalComparisonInput(
+  input: AuditComparisonInput,
+): AuditComparisonInput {
+  const report = readCanonicalAuditReport(input.analysisSnapshot);
+  if (!report || report.integrity.status !== "READY") return input;
+  const operationalRecommendations = new Map(
+    input.recommendations.map((item) => [item.id, item]),
+  );
+
+  return {
+    ...input,
+    overallScore: report.view.audit.overallScore,
+    scores: report.scores.flatMap((score) =>
+      score.score === null
+        ? []
+        : [
+            {
+              category: score.category,
+              platform: null,
+              score: score.score,
+            },
+          ],
+    ),
+    findings: report.findings.map((finding) => ({
+      title: finding.title,
+      description: finding.simpleExplanation,
+      category: finding.category,
+      severity: finding.severity ?? FindingSeverity.INFO,
+      stableKey: finding.stableKey,
+      rootCauseKey: finding.rootCauseKey,
+      evidence: {
+        canonical: true,
+        evidenceIds: finding.evidenceIds,
+        affectedPageIds: finding.affectedPages.map((page) => page.pageId),
+      },
+    })),
+    recommendations: report.recommendations.map((recommendation) => {
+      const operational = operationalRecommendations.get(
+        recommendation.recommendationId,
+      );
+      return {
+        id: recommendation.recommendationId,
+        title: recommendation.title,
+        description: recommendation.description,
+        category: recommendation.category,
+        status: operational?.status ?? recommendation.status,
+        completedAt: operational?.completedAt ?? null,
+        rootCauseKey: recommendation.rootCauseKey,
+      };
+    }),
   };
 }
 

@@ -276,6 +276,15 @@ export function canonicalRecommendationIssueKey(
   )}`;
 }
 
+export function canonicalRecommendationRootCauseKey(
+  recommendation: Pick<
+    RecommendationCandidate,
+    "title" | "description" | "category" | "evidence" | "issueKey"
+  >,
+) {
+  return rootCauseKey(canonicalRecommendationIssueKey(recommendation));
+}
+
 function canonicalRecommendationCopy({
   issueKey,
   representative,

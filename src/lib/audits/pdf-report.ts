@@ -5,7 +5,6 @@ import { RecommendationStatus, ScoreCategory } from "@prisma/client";
 
 import { formatDelta } from "@/lib/audits/audit-comparison";
 import { completeEvidenceSummary } from "@/lib/audits/finding-copy";
-import { getPrimaryCtaAssessment } from "@/lib/analyzers/action-classifier";
 import { PdfFlow, type PdfLayoutDiagnostics } from "@/lib/pdf/flow-layout";
 import { sanitizePdfText } from "@/lib/pdf/text-sanitize";
 import {
@@ -17,6 +16,10 @@ import type {
   ReportRecommendation,
   ReportScoreItem,
 } from "@/lib/reports/audit-report-view-model";
+import {
+  assertCanonicalReportReady,
+  customerReportCopy,
+} from "@/lib/reports/canonical-audit-report";
 
 const colors = {
   ink: "#17202a",
@@ -33,6 +36,7 @@ const colors = {
 };
 
 export async function generateGrowthAuditPdf(report: AuditReportViewModel) {
+  assertCanonicalReportReady(report);
   const result = await generateGrowthAuditPdfWithDiagnostics(report);
   return result.buffer;
 }
@@ -40,6 +44,7 @@ export async function generateGrowthAuditPdf(report: AuditReportViewModel) {
 export async function generateGrowthAuditPdfWithDiagnostics(
   report: AuditReportViewModel,
 ): Promise<{ buffer: Buffer; diagnostics: PdfLayoutDiagnostics }> {
+  assertCanonicalReportReady(report);
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({
       size: "LETTER",
@@ -115,6 +120,7 @@ function renderReport(flow: PdfFlow, report: AuditReportViewModel) {
   renderProgress(flow, report);
   renderConfidence(flow, report);
   renderTechnicalAppendix(flow, report);
+  renderBestNextStep(flow, report);
 }
 
 function renderCover(flow: PdfFlow, report: AuditReportViewModel) {
@@ -233,16 +239,6 @@ function renderCover(flow: PdfFlow, report: AuditReportViewModel) {
       440,
       { width: 430, lineGap: 4 },
     );
-  doc
-    .fillColor(colors.muted)
-    .font("Helvetica")
-    .fontSize(8.5)
-    .text(
-      sanitizePdfText(`Report ID: ${report.audit.id}`),
-      bounds.left,
-      doc.page.height - 82,
-      { width: bounds.width },
-    );
 }
 
 function renderExecutiveSummary(flow: PdfFlow, report: AuditReportViewModel) {
@@ -320,12 +316,15 @@ function renderBusinessContext(flow: PdfFlow, report: AuditReportViewModel) {
 }
 
 function renderNextMoves(flow: PdfFlow, report: AuditReportViewModel) {
-  flow.sectionHeading("Your Next 3 Moves", { minContentHeight: 130 });
+  const sectionTitle = report.nextMoves.length
+    ? `Your Next ${report.nextMoves.length} Move${report.nextMoves.length === 1 ? "" : "s"}`
+    : "Your Next Moves";
+  flow.sectionHeading(sectionTitle, { minContentHeight: 130 });
   flow.paragraph(
     report.productScope === "website_seo"
       ? "These are the highest-confidence Website and SEO actions after considering evidence, affected pages, impact, effort, goals, and verification needs."
       : "These are the highest-confidence actions after considering business impact, effort, goals, current evidence, and publicly observable competitor signals.",
-    "Your Next 3 Moves",
+    sectionTitle,
   );
   report.nextMoves.forEach((move, index) => {
     flow.card({
@@ -335,7 +334,7 @@ function renderNextMoves(flow: PdfFlow, report: AuditReportViewModel) {
       body: `Why it matters: ${move.whyItMatters}\n\nImplementation: ${move.implementationAction}`,
       evidence: move.evidence,
       fill: index === 0 ? colors.softAccent : colors.white,
-      continuationTitle: "Your Next 3 Moves",
+      continuationTitle: sectionTitle,
     });
   });
 }
@@ -370,7 +369,7 @@ function renderAnalysisCoverage(flow: PdfFlow, report: AuditReportViewModel) {
   const rows = [
     [
       "Crawl coverage",
-      `${coverage.crawl.successfulPages} of ${coverage.crawl.eligiblePages} eligible pages in scope`,
+      `${report.canonicalFacts?.successfulPages ?? coverage.crawl.successfulPages} pages analyzed`,
     ],
     [
       "Technical coverage",
@@ -398,8 +397,12 @@ function renderAnalysisCoverage(flow: PdfFlow, report: AuditReportViewModel) {
   });
   flow.note(
     report.productScope === "website_seo"
-      ? `${coverage.crawl.explanation} ${coverage.technical.explanation} ${coverage.aiContent.explanation}`
-      : `${coverage.crawl.explanation} ${coverage.aiContent.explanation} ${coverage.socialProfiles.explanation}`,
+      ? customerReportCopy(
+          `${coverage.crawl.explanation} ${coverage.technical.explanation} ${coverage.aiContent.explanation}`,
+        )
+      : customerReportCopy(
+          `${coverage.crawl.explanation} ${coverage.aiContent.explanation} ${coverage.socialProfiles.explanation}`,
+        ),
     "Analysis Coverage",
   );
 }
@@ -431,6 +434,10 @@ function renderWebsite(flow: PdfFlow, report: AuditReportViewModel) {
   const website = report.website;
   const normalizedHomepage = report.normalizedFacts?.homepage;
   const crawl = report.websiteCrawl;
+  const facts = report.canonicalFacts;
+  const canonicalHomepage = report.canonicalReport?.pages.find(
+    (page) => page.label === "Homepage",
+  );
   const primaryActions =
     website.actionSummary?.detectedActionTypes ??
     website.actionSummary?.primaryActions ??
@@ -439,22 +446,35 @@ function renderWebsite(flow: PdfFlow, report: AuditReportViewModel) {
   flow.keyValueRows(
     [
       ["Website score", scoreValue(report.scores, ScoreCategory.WEBSITE)],
-      ["Page title", normalizedHomepage?.title.value || "Missing"],
+      [
+        "Page title",
+        canonicalHomepage?.title ?? normalizedHomepage?.title.value ?? "Missing",
+      ],
       [
         "Meta description",
-        normalizedHomepage?.metaDescription.status === "MISSING"
+        canonicalHomepage
+          ? canonicalHomepage.metaDescription
+            ? `Present (${canonicalHomepage.metaDescription.length} characters)`
+            : "Missing (0 characters)"
+          : normalizedHomepage?.metaDescription.status === "MISSING"
           ? "Missing (0 characters)"
           : `Present (${normalizedHomepage?.metaDescription.length ?? website.metaDescription?.length ?? 0} characters)`,
       ],
       [
         "Main headline (H1)",
-        normalizedHomepage?.h1.count === 1
+        canonicalHomepage?.h1Count === 1
+          ? canonicalHomepage.h1Text.at(0) || "One detected"
+          : canonicalHomepage
+            ? `${canonicalHomepage.h1Count} detected`
+            : normalizedHomepage?.h1.count === 1
           ? normalizedHomepage.h1.values.at(0) || "One detected"
           : `${normalizedHomepage?.h1.count ?? website.h1Count} detected`,
       ],
       [
         "Images missing alt text",
-        `${website.imagesMissingAltCount} of ${website.imageCount}`,
+        canonicalHomepage
+          ? `${canonicalHomepage.imagesMissingAltCount} of ${canonicalHomepage.imageCount}`
+          : `${website.imagesMissingAltCount} of ${website.imageCount}`,
       ],
       ["Detected action types", primaryActions.join(", ") || "None detected"],
       [
@@ -465,29 +485,33 @@ function renderWebsite(flow: PdfFlow, report: AuditReportViewModel) {
       ],
       [
         "Pages with detected action links",
-        report.technicalAppendix.pagesWithDetectedActionLinks === null
-          ? "Not evaluated"
-          : `${report.technicalAppendix.pagesWithDetectedActionLinks} of ${crawl?.successfulPages ?? 1}`,
+        facts
+          ? `${facts.pagesWithDetectedActionLinks.length} of ${facts.successfulPages}`
+          : report.technicalAppendix.pagesWithDetectedActionLinks === null
+            ? "Not evaluated"
+            : `${report.technicalAppendix.pagesWithDetectedActionLinks} of ${crawl?.successfulPages ?? report.technicalAppendix.pagesWithDetectedActionLinks}`,
       ],
       [
         "Pages with CTA clarity assessed",
-        report.technicalAppendix.pagesWithAssessedPrimaryCta === null
-          ? "Not evaluated"
-          : `${report.technicalAppendix.pagesWithAssessedPrimaryCta} of ${crawl?.successfulPages ?? 1}`,
+        facts
+          ? `${facts.pagesWithAssessedPrimaryCta.length} of ${facts.successfulPages}`
+          : report.technicalAppendix.pagesWithAssessedPrimaryCta === null
+            ? "Not evaluated"
+            : `${report.technicalAppendix.pagesWithAssessedPrimaryCta} of ${crawl?.successfulPages ?? report.technicalAppendix.pagesWithAssessedPrimaryCta}`,
       ],
       [
         "Pages scanned",
-        crawl
-          ? `${crawl.pagesScanned} (crawl limit: ${crawl.crawlLimitUsed})`
-          : "Homepage only",
+        facts
+          ? `${facts.successfulPages} analyzed (crawl limit: ${crawl?.crawlLimitUsed ?? facts.pagesScanned})`
+          : crawl
+            ? `${crawl.successfulPages} analyzed (crawl limit: ${crawl.crawlLimitUsed})`
+            : "Homepage only",
       ],
       [
-        "Important pages found",
-        crawl?.importantPagesFound.join(", ") || "None identified",
-      ],
-      [
-        "Important pages not detected",
-        crawl?.missingImportantPageTypes.join(", ") || "None",
+        "Important page coverage",
+        report.pagePurposes
+          ?.map((item) => `${item.purpose}: ${pagePurposeLabel(item.status)}`)
+          .join("; ") || "Not determined",
       ],
     ],
     { continuationTitle: "Website and Conversion", compact: true },
@@ -513,23 +537,34 @@ function renderSeo(flow: PdfFlow, report: AuditReportViewModel) {
   }
 
   const seo = report.seo;
-  const crawl = report.websiteCrawl;
+  const facts = report.canonicalFacts;
+  const canonicalHomepage = report.canonicalReport?.pages.find(
+    (page) => page.label === "Homepage",
+  );
   flow.keyValueRows(
     [
       ["SEO score", scoreValue(report.scores, ScoreCategory.SEO)],
       [
         "Title status / length",
-        `${formatStatus(report.normalizedFacts?.homepage?.title.status ?? seo.titleStatus)} / ${report.normalizedFacts?.homepage?.title.length ?? seo.titleLength}`,
+        canonicalHomepage
+          ? `${canonicalHomepage.title ? "Present" : "Missing"} / ${canonicalHomepage.title?.length ?? 0}`
+          : `${formatStatus(report.normalizedFacts?.homepage?.title.status ?? seo.titleStatus)} / ${report.normalizedFacts?.homepage?.title.length ?? seo.titleLength}`,
       ],
       [
         "Meta description status / length",
-        `${formatStatus(report.normalizedFacts?.homepage?.metaDescription.status ?? seo.metaDescriptionStatus)} / ${report.normalizedFacts?.homepage?.metaDescription.length ?? seo.metaDescriptionLength}`,
+        canonicalHomepage
+          ? `${canonicalHomepage.metaDescription ? "Present" : "Missing"} / ${canonicalHomepage.metaDescription?.length ?? 0}`
+          : `${formatStatus(report.normalizedFacts?.homepage?.metaDescription.status ?? seo.metaDescriptionStatus)} / ${report.normalizedFacts?.homepage?.metaDescription.length ?? seo.metaDescriptionLength}`,
       ],
       [
         "Homepage H1 status",
-        formatStatus(
-          report.normalizedFacts?.homepage?.h1.status ?? seo.h1Status,
-        ),
+        canonicalHomepage
+          ? canonicalHomepage.h1Count === 1
+            ? "One main heading"
+            : `${canonicalHomepage.h1Count} main headings`
+          : formatStatus(
+              report.normalizedFacts?.homepage?.h1.status ?? seo.h1Status,
+            ),
       ],
       ["Canonical status", formatStatus(seo.canonicalStatus)],
       ["Viewport status", formatStatus(seo.viewportStatus)],
@@ -537,16 +572,16 @@ function renderSeo(flow: PdfFlow, report: AuditReportViewModel) {
       ["sitemap.xml", formatStatus(seo.sitemapStatus)],
       [
         "Pages missing titles",
-        crawl ? String(crawl.pagesMissingTitle) : "Homepage only",
+        facts ? String(facts.pagesMissingTitles.length) : "Homepage only",
       ],
       [
         "Pages missing meta descriptions",
-        crawl ? String(crawl.pagesMissingMetaDescription) : "Homepage only",
+        facts ? String(facts.pagesMissingMetaDescriptions.length) : "Homepage only",
       ],
       [
         "Pages with H1 issues",
-        crawl
-          ? String(crawl.pagesWithNoH1 + crawl.pagesWithMultipleH1)
+        facts
+          ? String(facts.pagesWithNoH1.length + facts.pagesWithMultipleH1.length)
           : report.website?.h1Count === 1
             ? "0"
             : "1",
@@ -554,13 +589,25 @@ function renderSeo(flow: PdfFlow, report: AuditReportViewModel) {
     ],
     { continuationTitle: "SEO", compact: true },
   );
-  if (seo.seoWarnings.length > 0) {
-    flow.subsectionHeading("Key SEO warnings", "SEO");
-    flow.bulletList(seo.seoWarnings.slice(0, 3), "SEO");
+  const seoFindings = report.findings.all.filter(
+    (finding) => finding.category === ScoreCategory.SEO,
+  );
+  if (seoFindings.length > 0) {
+    flow.subsectionHeading("Key SEO findings", "SEO");
+    flow.bulletList(
+      seoFindings.slice(0, 3).map((finding) => finding.description),
+      "SEO",
+    );
   }
-  if (seo.recommendedFixes.length > 0) {
-    flow.subsectionHeading("Recommended fixes", "SEO");
-    flow.bulletList(seo.recommendedFixes.slice(0, 3), "SEO");
+  const seoRecommendations = report.recommendations.all.filter(
+    (recommendation) => recommendation.category === ScoreCategory.SEO,
+  );
+  if (seoRecommendations.length > 0) {
+    flow.subsectionHeading("Recommended actions", "SEO");
+    flow.bulletList(
+      seoRecommendations.slice(0, 3).map((item) => item.description),
+      "SEO",
+    );
   }
 }
 
@@ -903,16 +950,13 @@ function renderActionPlan(flow: PdfFlow, report: AuditReportViewModel) {
       "Recommended Action Plan",
     );
   }
-  recommendations.primary.forEach((item, index) => {
-    renderRecommendationCard(
-      flow,
-      item,
-      index + 1,
-      "Recommended Action Plan",
-      expectedResultFor(item, report),
-      true,
-    );
-  });
+  flow.bulletList(
+    recommendations.primary.map(
+      (item, index) =>
+        `${index + 1}. ${formatStatus(item.status)} - ${item.title}. Done when: ${item.completionCriteria ?? "the recommended change is complete and ready to verify"}. Check: ${item.verificationMethod ?? "run a new audit and review the affected page"}.`,
+    ),
+    "Recommended Action Plan",
+  );
   if (recommendations.technical.length > 0) {
     flow.subsectionHeading(
       "B. Supporting technical fixes",
@@ -955,7 +999,7 @@ function renderProgress(flow: PdfFlow, report: AuditReportViewModel) {
         "Comparison status",
         comparison.methodologyChanged
           ? "Limited historical comparison"
-          : "Comparable with disclosed coverage differences",
+          : "Compared using the available evidence from both audits",
       ],
       [
         "Completed recommendations since previous audit",
@@ -1004,13 +1048,9 @@ function renderConfidence(flow: PdfFlow, report: AuditReportViewModel) {
   const rows: Array<readonly [string, string]> = [
     [
       "Website coverage",
-      `${confidence.pagesScanned} of ${confidence.crawlLimit} page slots used / ${titleCase(confidence.crawlStatus)} / Important pages: ${confidence.importantPagesIncluded.join(", ") || "none identified"}`,
+      `${report.canonicalFacts?.successfulPages ?? confidence.pagesScanned} pages analyzed / ${titleCase(confidence.crawlStatus)}`,
     ],
     ["Business Context", confidence.businessContextStatus],
-    [
-      "Versions",
-      `Scoring: ${report.scoringMetadata.scoringEngineVersion} / Report: ${report.scoringMetadata.reportViewModelVersion}`,
-    ],
   ];
   if (report.productScope === "legacy_presence") {
     rows.splice(
@@ -1096,6 +1136,7 @@ function renderTechnicalAppendix(flow: PdfFlow, report: AuditReportViewModel) {
   }
 
   const crawl = report.websiteCrawl;
+  const facts = report.canonicalFacts;
   if (crawl) {
     flow.subsectionHeading(
       "Multi-page crawl diagnostics",
@@ -1105,7 +1146,7 @@ function renderTechnicalAppendix(flow: PdfFlow, report: AuditReportViewModel) {
       [
         [
           "Crawl result",
-          `${crawl.pagesScanned} scanned / ${crawl.successfulPages} successful / ${crawl.failedPages} failed`,
+          `${facts?.pagesScanned ?? crawl.pagesScanned} attempted / ${facts?.successfulPages ?? crawl.successfulPages} analyzed / ${facts?.failedPages ?? crawl.failedPages} failed`,
         ],
         [
           "Coverage",
@@ -1114,15 +1155,15 @@ function renderTechnicalAppendix(flow: PdfFlow, report: AuditReportViewModel) {
         ["Duplicate URL variants skipped", crawl.duplicateUrlsSkipped],
         [
           "Metadata gaps",
-          `${crawl.pagesMissingTitle} missing titles / ${crawl.pagesMissingMetaDescription} missing meta descriptions`,
+          `${facts?.pagesMissingTitles.length ?? crawl.pagesMissingTitle} missing titles / ${facts?.pagesMissingMetaDescriptions.length ?? crawl.pagesMissingMetaDescription} missing meta descriptions`,
         ],
         [
           "H1 structure",
-          `${crawl.pagesWithNoH1} pages with no H1 / ${crawl.pagesWithMultipleH1} with multiple H1s`,
+          `${facts?.pagesWithNoH1.length ?? crawl.pagesWithNoH1} pages with no H1 / ${facts?.pagesWithMultipleH1.length ?? crawl.pagesWithMultipleH1} with multiple H1s`,
         ],
         [
           "Action-link and CTA checks",
-          `${report.technicalAppendix.pagesWithDetectedActionLinks ?? "Not evaluated"} pages with detected action links / ${report.technicalAppendix.pagesWithAssessedPrimaryCta ?? "Not evaluated"} pages with CTA clarity assessed / ${report.technicalAppendix.pagesWithStructurallyClearPrimaryCta ?? "Not evaluated"} structurally assessed as clear`,
+          `${facts?.pagesWithDetectedActionLinks.length ?? report.technicalAppendix.pagesWithDetectedActionLinks ?? "Not evaluated"} pages with detected action links / ${facts?.pagesWithAssessedPrimaryCta.length ?? report.technicalAppendix.pagesWithAssessedPrimaryCta ?? "Not evaluated"} pages with CTA clarity assessed / ${report.technicalAppendix.pagesWithStructurallyClearPrimaryCta ?? "Not evaluated"} structurally assessed as clear`,
         ],
       ],
       { continuationTitle: "Technical Appendix", compact: true },
@@ -1142,34 +1183,50 @@ function renderTechnicalAppendix(flow: PdfFlow, report: AuditReportViewModel) {
     flow.table({
       continuationTitle: "Technical Appendix",
       columns: [
-        { key: "page", label: "Page", width: 166 },
-        { key: "status", label: "Status", width: 42, align: "center" },
-        { key: "title", label: "Title", width: 48, align: "center" },
-        { key: "meta", label: "Meta", width: 48, align: "center" },
-        { key: "h1", label: "H1", width: 42, align: "center" },
-        { key: "actions", label: "Actions", width: 48, align: "center" },
-        { key: "cta", label: "CTA clarity", width: 66, align: "center" },
-        { key: "alt", label: "Missing alt", width: 44, align: "center" },
+        { key: "page", label: "Page", width: 170 },
+        { key: "status", label: "Status", width: 54, align: "center" },
+        { key: "title", label: "Title", width: 54, align: "center" },
+        { key: "meta", label: "Meta", width: 54, align: "center" },
+        { key: "h1", label: "H1", width: 50, align: "center" },
+        { key: "actions", label: "Action links", width: 64, align: "center" },
+        { key: "alt", label: "Missing alt", width: 58, align: "center" },
       ],
-      rows: report.technicalAppendix.pageSelection.pages.map((page) => ({
+      rows: report.canonicalReport?.pages.map((page) => ({
+        page: `${page.label}\n${page.path}`,
+        status:
+          page.analysisStatus === "FAILED"
+            ? "Not checked"
+            : !page.title || !page.metaDescription || page.h1Count !== 1
+              ? "Review"
+              : "Clear",
+        title: page.title ? "Clear" : "Missing",
+        meta: page.metaDescription ? "Clear" : "Missing",
+        h1: page.h1Count === 1 ? "Clear" : page.h1Count === 0 ? "Missing" : "Review",
+        actions: page.detectedActionLinkCount,
+        alt: page.imagesMissingAltCount,
+      })) ?? report.technicalAppendix.pageSelection.pages.map((page) => ({
         page: safePageLabel(page.url),
-        status: page.statusCode ?? "Failed",
-        title: page.title ? "Present" : "Missing",
-        meta: page.metaDescription ? "Present" : "Missing",
-        h1:
-          page.h1Count === 1
-            ? "Good"
-            : page.h1Count === 0
-              ? "None"
-              : String(page.h1Count),
-        actions:
-          page.actionSummary?.detectedActionLinkCount ??
-          page.actionSummary?.primaryActions?.length ??
-          0,
-        cta: formatStatus(getPrimaryCtaAssessment(page.actionSummary).clarity),
+        status: page.statusCode && page.statusCode < 400 ? "Review" : "Not checked",
+        title: page.title ? "Clear" : "Missing",
+        meta: page.metaDescription ? "Clear" : "Missing",
+        h1: page.h1Count === 1 ? "Clear" : page.h1Count === 0 ? "Missing" : "Review",
+        actions: page.actionSummary?.detectedActionLinkCount ?? page.actionSummary?.primaryActions?.length ?? 0,
         alt: page.imagesMissingAltCount,
       })),
     });
+    if (report.canonicalReport?.pages.length) {
+      flow.subsectionHeading("Audited page links", "Technical Appendix");
+      report.canonicalReport.pages.forEach((page) => {
+        flow.drawWrappedText(`${page.label} (${page.path})`, {
+          fontSize: 8.5,
+          color: colors.accentDark,
+          link: page.url,
+          underline: true,
+          after: 3,
+          continuationTitle: "Technical Appendix",
+        });
+      });
+    }
   }
 
   if (report.seo) {
@@ -1199,7 +1256,7 @@ function renderTechnicalAppendix(flow: PdfFlow, report: AuditReportViewModel) {
     appendixFindings.map(
       (finding) =>
         `${finding.sourceLabel ?? "Observation"} | ${categoryLabel(finding.category)} - ${finding.title}: ${finding.description}${
-          finding.sourceUrl ? ` | Affected page: ${finding.sourceUrl}` : ""
+          finding.affectedPages?.length ? ` | Affected pages: ${finding.affectedPages.map((page) => `${page.label} (${page.path})`).join(", ")}` : ""
         }${
           finding.source === "ai_reviewed_opportunity" &&
           finding.evidenceSummary
@@ -1216,6 +1273,43 @@ function renderTechnicalAppendix(flow: PdfFlow, report: AuditReportViewModel) {
         }`,
     ),
     "Technical Appendix",
+  );
+  flow.drawWrappedText(
+    `Technical note: scoring ${report.scoringMetadata.scoringEngineVersion}; report ${report.scoringMetadata.reportViewModelVersion}.`,
+    {
+      fontSize: 7.5,
+      color: colors.muted,
+      continuationTitle: "Technical Appendix",
+    },
+  );
+}
+
+function renderBestNextStep(flow: PdfFlow, report: AuditReportViewModel) {
+  flow.addPage();
+  flow.sectionHeading("Your Best Next Step", { minContentHeight: 180 });
+  const first = report.recommendations.primary.at(0);
+  flow.paragraph(
+    first
+      ? `Start with “${first.title}.” This is the highest-priority distinct action supported by the evidence in this audit.`
+      : "Review the saved findings and run another audit after the website changes.",
+    "Your Best Next Step",
+  );
+  if (first) {
+    flow.card({
+      eyebrow: `${categoryLabel(first.category)} | ${first.estimatedEffort} effort | ${first.expectedImpact} impact`,
+      title: first.title,
+      body: first.description,
+      meta: first.completionCriteria
+        ? `Complete when: ${first.completionCriteria}`
+        : "Complete the action, then run a new audit to check the result.",
+      evidence: first.evidenceSummary,
+      fill: colors.softAccent,
+      continuationTitle: "Your Best Next Step",
+    });
+  }
+  flow.note(
+    "Open the Action Plan to track the work, or ask the AI Consultant to explain the change and help draft the content. Run a new audit after implementation to verify what changed.",
+    "Your Best Next Step",
   );
 }
 
@@ -1307,6 +1401,19 @@ function changeTypeLabel(
 function formatStatus(value?: string | null) {
   if (!value) return "Unavailable";
   return titleCase(value.replaceAll("_", " "));
+}
+
+function pagePurposeLabel(value: string) {
+  const labels: Record<string, string> = {
+    DEDICATED_PAGE: "dedicated page found",
+    EQUIVALENT_SECTION: "equivalent section found",
+    EQUIVALENT_CONVERSION_PATH: "equivalent customer path found",
+    DISCOVERED_BUT_SKIPPED: "discovered but not scanned",
+    NOT_DETECTED: "not detected",
+    NOT_EXPECTED: "not expected for this business",
+    UNABLE_TO_DETERMINE: "unable to determine",
+  };
+  return labels[value] ?? "unable to determine";
 }
 
 function titleCase(value: string) {

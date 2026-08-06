@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 
 import { PresentationDeck } from "@/app/dashboard/businesses/[businessId]/audit/[auditId]/present/presentation-deck";
 import { LockedFeature } from "@/components/billing/locked-feature";
+import { ReportQualityNotice } from "@/components/reports/report-quality-notice";
 import { canUsePresentationMode } from "@/lib/billing/entitlements";
 import { buildAuditReportViewModel } from "@/lib/reports/audit-report-view-model";
 import { buildPresentationViewModel } from "@/lib/reports/presentation-view-model";
@@ -27,6 +28,13 @@ export default async function AuditPresentationPage({
   });
 
   if (!report) notFound();
+  if (report.reportIntegrity?.status === "NEEDS_REVIEW") {
+    return (
+      <main className="min-h-screen bg-background px-6 py-16">
+        <ReportQualityNotice businessId={businessId} />
+      </main>
+    );
+  }
 
   const presentationCheck = await canUsePresentationMode(user.id);
   if (!presentationCheck.allowed) {

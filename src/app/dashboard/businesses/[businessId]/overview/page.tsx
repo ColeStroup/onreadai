@@ -35,6 +35,7 @@ import {
   SummaryStrip,
 } from "@/components/dashboard/report-ui";
 import { SetupChecklist } from "@/components/onboarding/setup-checklist";
+import { ReportQualityNotice } from "@/components/reports/report-quality-notice";
 import { buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { categoryLabel, formatDelta } from "@/lib/audits/audit-comparison";
@@ -235,6 +236,9 @@ export default async function BusinessOverviewPage({
     ownerId: user.id,
   });
   if (!report) notFound();
+  if (report.reportIntegrity?.status === "NEEDS_REVIEW") {
+    return <ReportQualityNotice businessId={business.id} />;
+  }
 
   const canonicalRecommendations = report.recommendations.all.flatMap(
     (recommendation) => {
@@ -258,14 +262,12 @@ export default async function BusinessOverviewPage({
     canonicalRecommendations.length > 0
       ? canonicalRecommendations
       : sortRecommendations(audit.recommendations);
-  const activeRecommendations = recommendations.filter(
-    (recommendation) =>
-      recommendation.status !== RecommendationStatus.COMPLETED &&
-      recommendation.status !== RecommendationStatus.DISMISSED,
+  const priorityIds = new Set(
+    report.recommendations.primary.map((recommendation) => recommendation.id),
   );
-  const nextMoves = (
-    activeRecommendations.length >= 3 ? activeRecommendations : recommendations
-  ).slice(0, 3);
+  const nextMoves = recommendations.filter((recommendation) =>
+    priorityIds.has(recommendation.id),
+  );
   const firstMove = nextMoves.at(0);
   const followUpMoves = nextMoves.slice(1, 3);
   const reportRecommendationById = new Map(
@@ -274,7 +276,7 @@ export default async function BusinessOverviewPage({
       recommendation,
     ]),
   );
-  const progress = progressForRecommendations(audit.recommendations);
+  const progress = progressForRecommendations(recommendations);
   const currentAction = recommendations.find(
     (recommendation) =>
       recommendation.status === RecommendationStatus.IN_PROGRESS,
@@ -327,7 +329,7 @@ export default async function BusinessOverviewPage({
       ? reportFindings.find(
           (finding) => finding.id === reportRecommendation.sourceFindingId,
         )
-      : reportFindings.find((finding) => finding.category === category);
+      : undefined;
 
     return {
       summary:

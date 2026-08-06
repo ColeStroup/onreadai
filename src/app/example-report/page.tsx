@@ -15,6 +15,7 @@ import Link from "next/link";
 import { MarketingShell } from "@/components/marketing/marketing-shell";
 import { PublicPageCta } from "@/components/marketing/public-page-cta";
 import { createMarketingMetadata } from "@/lib/brand";
+import { getPublicExampleAuditReport } from "@/lib/reports/public-example-report";
 
 export const metadata: Metadata = createMarketingMetadata({
   title: "Example Website and SEO Audit Report | Onread AI",
@@ -23,43 +24,23 @@ export const metadata: Metadata = createMarketingMetadata({
   pathname: "/example-report",
 });
 
-const scores = [
-  ["Website", 75, "Fair"],
-  ["SEO", 68, "Needs attention"],
-] as const;
-
-const priorities = [
-  {
-    title: "Clarify the homepage offer and primary action",
-    description:
-      "Use one descriptive H1 and one prominent action that matches the main storefront conversion path.",
-    evidence:
-      "No clear homepage H1 was observed, and the primary action competes with several secondary links.",
-    category: "Website",
-    effort: "Low",
-    impact: "High",
-  },
-  {
-    title: "Complete high-value page metadata",
-    description:
-      "Write useful descriptions for the homepage and the most important product or collection pages first.",
-    evidence:
-      "Five of twelve scanned pages were missing a useful meta description.",
-    category: "SEO",
-    effort: "Medium",
-    impact: "High",
-  },
-  {
-    title: "Strengthen internal links to important collections",
-    description:
-      "Add descriptive links from the homepage and related pages to the collections customers are most likely to need.",
-    evidence:
-      "Two important collection pages received no contextual internal links from the scanned homepage content.",
-    category: "SEO",
-    effort: "Low",
-    impact: "Medium",
-  },
-] as const;
+const exampleReport = getPublicExampleAuditReport();
+const canonical = exampleReport.canonicalReport;
+const scores = exampleReport.scores.filter(
+  (item): item is typeof item & { score: number } => item.score !== null,
+);
+const priorities = canonical.priorities;
+const firstPriority = priorities.at(0);
+const homepage = canonical.pages.find((page) => page.label === "Homepage");
+const coveredPurposes = canonical.pagePurposes
+  .filter((item) =>
+    [
+      "DEDICATED_PAGE",
+      "EQUIVALENT_SECTION",
+      "EQUIVALENT_CONVERSION_PATH",
+    ].includes(item.status),
+  )
+  .map((item) => item.purpose);
 
 export default function ExampleReportPage() {
   return (
@@ -79,10 +60,10 @@ export default function ExampleReportPage() {
                 Website &amp; SEO Growth Report
               </p>
               <h1 className="mt-3 text-4xl font-semibold text-white sm:text-5xl lg:text-6xl">
-                Harbor &amp; Pine
+                {canonical.business.name}
               </h1>
               <p className="mt-5 max-w-3xl text-base leading-7 text-slate-300">
-                A fictional coastal retail brand used to demonstrate report
+                A fictional cottage-food business used to demonstrate report
                 structure. No values on this page represent a real customer or a
                 promised result.
               </p>
@@ -94,13 +75,13 @@ export default function ExampleReportPage() {
                   Website supplied
                 </span>
                 <span className="rounded-md border border-white/10 px-2.5 py-1.5">
-                  12 public pages scanned
+                  {canonical.facts.pagesScanned} public pages scanned
                 </span>
               </div>
             </div>
             <div className="flex size-36 flex-col items-center justify-center rounded-full border-[10px] border-teal-300 border-r-slate-700 bg-[#0d1718] text-center">
               <span className="text-5xl font-semibold leading-none text-white">
-                72
+                {exampleReport.audit.overallScore}
               </span>
               <span className="mt-1 text-center text-xs text-slate-400">
                 Website Growth Score
@@ -123,14 +104,10 @@ export default function ExampleReportPage() {
                   id="summary-heading"
                   className="mt-3 text-2xl font-semibold text-white"
                 >
-                  A credible foundation with a clearer conversion path still to
-                  build.
+                  A clear view of what to improve first.
                 </h2>
                 <p className="mt-4 text-sm leading-7 text-slate-400">
-                  Harbor &amp; Pine has a functional website foundation and
-                  accessible important pages. The strongest opportunity is to
-                  make the homepage offer and primary action clearer, then
-                  improve metadata and internal links across high-value pages.
+                  {exampleReport.audit.executiveSummary}
                 </p>
               </article>
               <article className="rounded-lg border border-amber-300/25 bg-amber-300/[0.06] p-6 sm:p-7">
@@ -139,11 +116,11 @@ export default function ExampleReportPage() {
                   What matters most
                 </p>
                 <p className="mt-3 text-lg font-semibold text-white">
-                  Make the main offer and visitor action unmistakable.
+                  {firstPriority?.title ?? "No priority action was published."}
                 </p>
                 <p className="mt-3 text-sm leading-6 text-slate-400">
-                  This recommendation connects the observed heading gap and
-                  several competing homepage actions.
+                  {firstPriority?.whyItMatters ??
+                    "The available evidence did not support a high-confidence priority."}
                 </p>
               </article>
             </div>
@@ -165,20 +142,22 @@ export default function ExampleReportPage() {
               </h2>
             </div>
             <div className="mt-7 grid max-w-2xl gap-3 sm:grid-cols-2">
-              {scores.map(([label, score, status]) => (
+              {scores.map((score) => (
                 <article
-                  key={label}
+                  key={score.category}
                   className="rounded-lg border border-white/10 bg-[#0d1718] p-4"
                 >
-                  <p className="text-xs leading-5 text-slate-400">{label}</p>
+                  <p className="text-xs leading-5 text-slate-400">
+                    {score.label}
+                  </p>
                   <p className="mt-4 text-3xl font-semibold text-white">
-                    {score}
+                    {score.score}
                     <span className="text-sm text-slate-400">/100</span>
                   </p>
                   <p
-                    className={`mt-2 text-xs ${score >= 80 ? "text-teal-200" : score >= 70 ? "text-slate-300" : "text-amber-200"}`}
+                    className={`mt-2 text-xs ${score.score >= 80 ? "text-teal-200" : score.score >= 70 ? "text-slate-300" : "text-amber-200"}`}
                   >
-                    {status}
+                    {healthLabelForScore(score.score)}
                   </p>
                 </article>
               ))}
@@ -211,7 +190,7 @@ export default function ExampleReportPage() {
                       {index + 1}
                     </span>
                     <span className="rounded-md border border-white/10 px-2 py-1 text-xs text-slate-400">
-                      {priority.category}
+                    {titleCase(priority.category)}
                     </span>
                   </div>
                   <h3 className="mt-6 text-lg font-semibold text-white">
@@ -224,16 +203,20 @@ export default function ExampleReportPage() {
                     <span className="font-semibold text-slate-300">
                       Evidence:
                     </span>{" "}
-                    {priority.evidence}
+                    {priority.evidenceSummary}
                   </p>
                   <dl className="mt-4 flex gap-4 text-xs">
                     <div>
                       <dt className="text-slate-400">Effort</dt>
-                      <dd className="mt-1 text-slate-300">{priority.effort}</dd>
+                      <dd className="mt-1 text-slate-300">
+                        {priority.estimatedEffort}
+                      </dd>
                     </div>
                     <div>
                       <dt className="text-slate-400">Impact</dt>
-                      <dd className="mt-1 text-teal-200">{priority.impact}</dd>
+                      <dd className="mt-1 text-teal-200">
+                        {priority.expectedImpact}
+                      </dd>
                     </div>
                   </dl>
                 </article>
@@ -266,7 +249,7 @@ export default function ExampleReportPage() {
             <div className="overflow-hidden rounded-lg border border-white/10">
               <table className="w-full border-collapse text-left text-sm">
                 <caption className="sr-only">
-                  Fictional Harbor and Pine website crawl coverage
+                  Fictional {canonical.business.name} website crawl coverage
                 </caption>
                 <thead className="bg-[#111e1f] text-xs text-slate-400">
                   <tr>
@@ -289,7 +272,9 @@ export default function ExampleReportPage() {
                     <th scope="row" className="px-4 py-3 text-white">
                       Pages crawled
                     </th>
-                    <td className="px-4 py-3">12 public URLs</td>
+                    <td className="px-4 py-3">
+                      {canonical.facts.pagesScanned} public URLs
+                    </td>
                     <td className="px-4 py-3 text-teal-200">Scanned</td>
                     <td className="hidden px-4 py-3 sm:table-cell">
                       Review affected pages
@@ -299,17 +284,30 @@ export default function ExampleReportPage() {
                     <th scope="row" className="px-4 py-3 text-white">
                       Homepage H1
                     </th>
-                    <td className="px-4 py-3">No descriptive H1 found</td>
-                    <td className="px-4 py-3 text-amber-200">Verified issue</td>
+                    <td className="px-4 py-3">
+                      {homepage?.h1Count === 1
+                        ? "One main heading found"
+                        : `${homepage?.h1Count ?? 0} main headings found`}
+                    </td>
+                    <td
+                      className={`px-4 py-3 ${homepage?.h1Count === 1 ? "text-teal-200" : "text-amber-200"}`}
+                    >
+                      {homepage?.h1Count === 1 ? "Clear" : "Review"}
+                    </td>
                     <td className="hidden px-4 py-3 sm:table-cell">
-                      Add one clear heading
+                      {homepage?.h1Count === 1
+                        ? "Keep the heading focused"
+                        : "Add one clear heading"}
                     </td>
                   </tr>
                   <tr className="border-t border-white/10">
                     <th scope="row" className="px-4 py-3 text-white">
                       Meta descriptions
                     </th>
-                    <td className="px-4 py-3">5 of 12 missing</td>
+                    <td className="px-4 py-3">
+                      {canonical.facts.pagesMissingMetaDescriptions.length} of{" "}
+                      {canonical.facts.pagesScanned} missing
+                    </td>
                     <td className="px-4 py-3 text-amber-200">Verified issue</td>
                     <td className="hidden px-4 py-3 sm:table-cell">
                       Fix priority pages first
@@ -320,7 +318,8 @@ export default function ExampleReportPage() {
                       Important pages
                     </th>
                     <td className="px-4 py-3">
-                      About, contact, and collections found
+                      {coveredPurposes.slice(0, 4).join(", ") ||
+                        "No equivalent purpose confirmed"}
                     </td>
                     <td className="px-4 py-3 text-teal-200">
                       Verified strength
@@ -332,8 +331,7 @@ export default function ExampleReportPage() {
                 </tbody>
               </table>
               <p className="border-t border-white/10 bg-amber-300/[0.06] px-4 py-3 text-sm text-amber-100">
-                Priority: clarify the homepage offer and primary shopping
-                action, then rerun the audit to verify the heading.
+                Priority: {firstPriority?.title ?? "Review the saved findings."}
               </p>
             </div>
           </div>
@@ -367,39 +365,37 @@ export default function ExampleReportPage() {
                   Recommendation
                 </p>
                 <h3 className="mt-3 text-xl font-semibold text-white">
-                  Give the homepage one clear main headline
+                  {firstPriority?.title ?? "No implementation brief available"}
                 </h3>
                 <p className="mt-4 text-sm leading-6 text-slate-400">
-                  The current homepage has no descriptive H1. Start with the
-                  offer and pair it with the primary shopping action.
+                  {firstPriority?.description ??
+                    "The saved evidence did not support an implementation brief."}
                 </p>
               </article>
               <article className="rounded-lg border border-teal-300/30 bg-teal-300/[0.05] p-6">
                 <p className="text-xs font-semibold uppercase tracking-[0.16em] text-teal-200">
-                  Draft options
+                  Ready-to-use brief
                 </p>
-                <ol className="mt-4 grid gap-3 sm:grid-cols-3">
-                  {[
-                    "Coastal essentials, made for unhurried weekends.",
-                    "Thoughtful goods for life near the water.",
-                    "Bring the calm of the coast into every day.",
-                  ].map((option, index) => (
-                    <li
-                      key={option}
-                      className="rounded-lg border border-white/10 bg-[#0a1314] p-4 text-sm leading-6 text-slate-200"
-                    >
-                      <span className="mb-3 block font-mono text-xs text-teal-300">
-                        0{index + 1}
-                      </span>
-                      {option}
-                    </li>
-                  ))}
-                </ol>
+                <dl className="mt-4 grid gap-4 text-sm sm:grid-cols-2">
+                  <div className="rounded-lg border border-white/10 bg-[#0a1314] p-4">
+                    <dt className="font-semibold text-white">Complete when</dt>
+                    <dd className="mt-2 leading-6 text-slate-300">
+                      {firstPriority?.completionCriteria ??
+                        "The recommended change is visible on every affected page."}
+                    </dd>
+                  </div>
+                  <div className="rounded-lg border border-white/10 bg-[#0a1314] p-4">
+                    <dt className="font-semibold text-white">How to verify it</dt>
+                    <dd className="mt-2 leading-6 text-slate-300">
+                      {firstPriority?.verificationMethod ??
+                        "Run another audit after publishing the change."}
+                    </dd>
+                  </div>
+                </dl>
                 <p className="mt-5 text-sm text-slate-300">
-                  <span className="font-semibold text-white">
-                    Suggested CTA:
-                  </span>{" "}
-                  Shop the collection
+                  <span className="font-semibold text-white">Affected pages:</span>{" "}
+                  {firstPriority?.affectedPages.map((page) => page.label).join(", ") ||
+                    "See the saved evidence"}
                 </p>
               </article>
             </div>
@@ -495,4 +491,18 @@ export default function ExampleReportPage() {
       </main>
     </MarketingShell>
   );
+}
+
+function titleCase(value: string) {
+  return value
+    .toLowerCase()
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function healthLabelForScore(score: number) {
+  if (score >= 85) return "Strong";
+  if (score >= 70) return "Good foundation";
+  if (score >= 55) return "Needs attention";
+  return "Priority work needed";
 }

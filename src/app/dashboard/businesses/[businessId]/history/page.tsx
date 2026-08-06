@@ -18,6 +18,7 @@ import {
   LEGACY_SCORING_LABEL,
   WEBSITE_GROWTH_SCORE_LABEL,
 } from "@/lib/product/website-seo-scope";
+import { readCanonicalAuditReport } from "@/lib/reports/canonical-audit-report";
 import { requireUser } from "@/lib/session";
 import { cn } from "@/lib/utils";
 
@@ -187,7 +188,11 @@ export default async function BusinessHistoryPage({
         </div>
         <div className="divide-y divide-border rounded-lg border border-border bg-card px-5">
           {business.audits.map((audit, index) => {
+            const canonicalReport = readCanonicalAuditReport(
+              audit.analysisSnapshot,
+            );
             const overallScore =
+              canonicalReport?.view.audit.overallScore ??
               audit.overallScore ??
               audit.scores.find((score) => score.category === "OVERALL")
                 ?.score ??
@@ -216,10 +221,24 @@ export default async function BusinessHistoryPage({
                 : isComplete
                   ? "View current overview"
                   : "View run";
+            const canonicalRecommendationIds = canonicalReport
+              ? new Set(
+                  canonicalReport.recommendations.map(
+                    (recommendation) => recommendation.recommendationId,
+                  ),
+                )
+              : null;
             const completedRecommendations = audit.recommendations.filter(
               (recommendation) =>
-                recommendation.status === RecommendationStatus.COMPLETED,
+                recommendation.status === RecommendationStatus.COMPLETED &&
+                (!canonicalRecommendationIds ||
+                  canonicalRecommendationIds.has(recommendation.id)),
             ).length;
+            const recommendationCount =
+              canonicalReport?.recommendations.length ??
+              audit._count.recommendations;
+            const findingCount =
+              canonicalReport?.findings.length ?? audit._count.findings;
             const websiteGrowthScore = isWebsiteGrowthAuditSnapshot(
               audit.analysisSnapshot,
             );
@@ -280,9 +299,9 @@ export default async function BusinessHistoryPage({
                       ) : null}
                     </div>
                     <p className="mt-1 text-sm text-muted">
-                      {audit._count.findings} findings -{" "}
+                      {findingCount} findings -{" "}
                       {completedRecommendations} of{" "}
-                      {audit._count.recommendations} recommendations completed
+                      {recommendationCount} recommendations completed
                     </p>
                     {comparison?.methodologyChanged ? (
                       <details className="mt-2 text-sm">

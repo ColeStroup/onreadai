@@ -39,6 +39,7 @@ import {
   ReportSection,
   SummaryStrip,
 } from "@/components/dashboard/report-ui";
+import { ReportQualityNotice } from "@/components/reports/report-quality-notice";
 import { GuidedProfileManager } from "@/components/onboarding/guided-profile-manager";
 import { buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -69,6 +70,7 @@ import {
 import { prisma } from "@/lib/prisma";
 import { platformLabels } from "@/lib/profiles/platforms";
 import { sortRecommendations } from "@/lib/recommendations/utils";
+import { readCanonicalAuditReport } from "@/lib/reports/canonical-audit-report";
 import { requireUser } from "@/lib/session";
 import { cn } from "@/lib/utils";
 
@@ -745,21 +747,33 @@ function ResultsStep({ business }: { business: NonNullable<SetupBusiness> }) {
     );
   }
 
-  const categories = audit.scores
+  const canonicalReport = readCanonicalAuditReport(audit.analysisSnapshot);
+  if (canonicalReport?.integrity.status === "NEEDS_REVIEW") {
+    return <ReportQualityNotice businessId={business.id} />;
+  }
+  const categories = (canonicalReport?.scores ?? audit.scores)
     .filter(
       (score) => !score.platform && score.category !== ScoreCategory.OVERALL,
     )
     .sort((a, b) => b.score - a.score);
   const strongest = categories.at(0);
   const weakest = categories.at(-1);
-  const nextMoves = sortRecommendations(audit.recommendations).slice(0, 3);
+  const nextMoves = canonicalReport
+    ? canonicalReport.priorities.map((recommendation) => ({
+        id: recommendation.recommendationId,
+        title: recommendation.title,
+        description: recommendation.description,
+      }))
+    : sortRecommendations(audit.recommendations).slice(0, 3);
+  const overallScore =
+    canonicalReport?.view.audit.overallScore ?? audit.overallScore ?? 0;
 
   return (
     <div className="space-y-5">
       <section className="grid gap-3 sm:grid-cols-3">
         <CompactMetricCard
           label="Website Growth Score"
-          value={`${audit.overallScore ?? 0}/100`}
+          value={`${overallScore}/100`}
         />
         <CompactMetricCard
           label="Strongest area"

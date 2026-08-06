@@ -2,7 +2,10 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 
-export const REPORT_VIEW_MODEL_VERSION = "audit-report-v3-normalized-facts";
+export const LEGACY_REPORT_VIEW_MODEL_VERSION =
+  "audit-report-v3-normalized-facts";
+export const REPORT_VIEW_MODEL_VERSION =
+  "audit-report-v4-canonical-integrity";
 export const SOCIAL_STRATEGY_GENERATOR_VERSION =
   "social-strategy-v3-business-model";
 export const COMPETITOR_COMPARISON_VERSION = "competitor-comparison-v2";
