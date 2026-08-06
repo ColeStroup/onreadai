@@ -3,6 +3,7 @@ import { FindingSeverity } from "@prisma/client";
 export const auditFindingTypeValues = [
   "VERIFIED_TECHNICAL_ISSUE",
   "AI_REVIEWED_OPPORTUNITY",
+  "OPTIONAL_REFINEMENT",
   "VERIFIED_STRENGTH",
   "COVERAGE_INFORMATION",
   "LIMITATION",
@@ -14,6 +15,7 @@ export type AuditFindingType = (typeof auditFindingTypeValues)[number];
 export const findingTypeLabels: Record<AuditFindingType, string> = {
   VERIFIED_TECHNICAL_ISSUE: "Verified technical issue",
   AI_REVIEWED_OPPORTUNITY: "AI-reviewed opportunity",
+  OPTIONAL_REFINEMENT: "Optional refinement",
   VERIFIED_STRENGTH: "Verified strength",
   COVERAGE_INFORMATION: "Coverage note",
   LIMITATION: "Limitation",

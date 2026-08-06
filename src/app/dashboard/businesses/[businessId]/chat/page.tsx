@@ -102,21 +102,27 @@ export default async function BusinessChatPage({
     );
   }
 
-  const suggestedQuestions = getSuggestedQuestionsForGoals(
-    business.goals,
-    business.primaryGoal,
-    [],
-    null,
-    null,
-    null,
-    {
-      description: business.description,
-      targetAudience: business.targetAudience,
-      businessType: business.businessType,
-      primaryConversionGoal: business.primaryConversionGoal,
-      contextConfirmedAt: business.contextConfirmedAt,
-    },
-  ).slice(0, 3);
+  const suggestedQuestions = [
+    "What should I fix first?",
+    "Explain my top issue in simple words.",
+    "Can I fix my top issue myself?",
+    "How will Onread check that it is fixed?",
+    ...getSuggestedQuestionsForGoals(
+      business.goals,
+      business.primaryGoal,
+      [],
+      null,
+      null,
+      null,
+      {
+        description: business.description,
+        targetAudience: business.targetAudience,
+        businessType: business.businessType,
+        primaryConversionGoal: business.primaryConversionGoal,
+        contextConfirmedAt: business.contextConfirmedAt,
+      },
+    ),
+  ].filter((question, index, all) => all.indexOf(question) === index).slice(0, 6);
   const initialMessages: ChatMessageView[] =
     business.chatThreads.at(0)?.messages.map((message) => ({
       id: message.id,

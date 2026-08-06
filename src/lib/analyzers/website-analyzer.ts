@@ -1,11 +1,16 @@
 import { load, type CheerioAPI } from "cheerio";
-import type { Element } from "domhandler";
 
 import {
   classifyWebsiteActions,
   emptyWebsiteActionSummary,
+  inferActionBusinessKind,
   type WebsiteActionSummary,
 } from "@/lib/analyzers/action-classifier";
+import {
+  extractInteractionEvidence,
+  type ContactEvidenceSummary,
+  type ExtractedInteractionEvidence,
+} from "@/lib/analyzers/interaction-evidence";
 import {
   emptyLocalBusinessClues,
   extractLocalBusinessClues,
@@ -19,8 +24,21 @@ import { extractOperatingHoursSignals } from "@/lib/analyzers/observable-signals
 
 export type WebsiteAnalysis = {
   normalizedUrl: string;
+  requestedUrl?: string;
+  finalUrl?: string;
+  canonicalUrl?: string | null;
   fetchStatus?: "success" | "failed";
   statusCode?: number | null;
+  contentType?: string | null;
+  rawHtmlBytes?: number;
+  extractedTextBytes?: number;
+  fetchDurationMs?: number;
+  redirectHistory?: Array<{
+    from: string;
+    to: string;
+    statusCode: number;
+  }>;
+  extractionCompleteness?: "COMPLETE" | "PARTIAL" | "INCOMPLETE";
   pageTitle: string | null;
   metaDescription: string | null;
   contentExcerpt?: string | null;
@@ -45,6 +63,8 @@ export type WebsiteAnalysis = {
   operatingHoursSignals: string[];
   ctaCandidates: string[];
   actionSummary: WebsiteActionSummary;
+  interactionEvidence?: ExtractedInteractionEvidence[];
+  contactEvidence?: ContactEvidenceSummary;
   warnings: string[];
   score: number;
 };
@@ -58,6 +78,7 @@ type WebsiteAnalyzerOptions = {
     businessType?: string | null;
     primaryConversionGoal?: string | null;
   } | null;
+  fetchText?: typeof fetchPublicText;
 };
 
 const fetchTimeoutMs = 8000;
@@ -82,6 +103,8 @@ function emptyAnalysis(
 
   return {
     normalizedUrl,
+    requestedUrl: normalizedUrl,
+    finalUrl: normalizedUrl,
     fetchStatus: "failed",
     statusCode: null,
     pageTitle: null,
@@ -103,6 +126,7 @@ function emptyAnalysis(
     ...localBusinessClues,
     ctaCandidates: [],
     actionSummary: emptyWebsiteActionSummary(),
+    interactionEvidence: [],
     operatingHoursSignals: [],
     warnings,
     score: 0,
@@ -196,7 +220,6 @@ function scoreAnalysis(analysis: Omit<WebsiteAnalysis, "score">) {
   }
   if (analysis.ctaCandidates.length === 0) score -= 12;
   if (!analysis.hasContactLink) score -= 8;
-  if (!analysis.hasSocialLinks) score -= 4;
   score -= Math.min(12, analysis.warnings.length * 4);
 
   return Math.max(0, Math.min(100, score));
@@ -227,7 +250,7 @@ export async function analyzeWebsite(
   }
 
   try {
-    const response = await fetchPublicText(normalizedUrl, {
+    const response = await (options.fetchText ?? fetchPublicText)(normalizedUrl, {
       timeoutMs: fetchTimeoutMs,
       maxBytes: maxHtmlBytes,
       accept: "text/html,application/xhtml+xml",
@@ -267,36 +290,23 @@ export async function analyzeWebsite(
       .get()
       .filter(Boolean)
       .slice(0, 8);
-    const links = $("a[href]")
-      .map((_, element) => {
-        const rawHref = $(element).attr("href") ?? "";
-        const label = textOf($(element).text());
-
-        try {
-          return {
-            href: new URL(rawHref, finalUrl).toString(),
-            label,
-            ...elementActionSignals($, element),
-          };
-        } catch {
-          return null;
-        }
-      })
-      .get()
+    const businessKind = inferActionBusinessKind(options.businessContext);
+    const interactionExtraction = extractInteractionEvidence({
+      $,
+      pageUrl: finalUrl,
+      businessKind,
+    });
+    const links = interactionExtraction.interactions
       .filter(
-        (
-          link,
-        ): link is {
-          href: string;
-          label: string;
-          elementType: string;
-          domLocation:
-            "hero" | "main" | "header" | "navigation" | "footer" | "unknown";
-          buttonLike: boolean;
-          nearPrimaryHeading: boolean;
-          navigationLike: boolean;
-        } => Boolean(link?.href),
-      );
+        (interaction) =>
+          interaction.elementType === "a" && Boolean(interaction.destinationUrl),
+      )
+      .map((interaction) => ({
+        href: interaction.destinationUrl!,
+        label:
+          interaction.visibleText ?? interaction.accessibleName ?? "",
+        interaction,
+      }));
     const navigableLinks = links.filter((link) => /^https?:/i.test(link.href));
     const internalLinks = navigableLinks.filter(
       (link) => new URL(link.href).origin === finalOrigin,
@@ -308,18 +318,37 @@ export async function analyzeWebsite(
       links.filter((link) => isSocialUrl(link.href)).map((link) => link.href),
       12,
     );
-    const buttonCandidates = $("button, [role='button']")
-      .map((_, element) => ({
-        label: textOf($(element).text()),
-        href: $(element).attr("data-href") ?? "",
-        ...elementActionSignals($, element),
+    const rawActionCandidates = interactionExtraction.interactions
+      .filter((interaction) => interaction.visibility !== "HIDDEN")
+      .map((interaction) => ({
+        evidenceId: interaction.id,
+        label: interaction.visibleText,
+        accessibleName: interaction.accessibleName,
+        href: interaction.destinationUrl,
+        surroundingText: interaction.surroundingText,
+        destinationPurpose: interaction.destinationPurpose,
+        intentConfidence: interaction.intentConfidence,
+        elementType: interaction.elementType,
+        domLocation: actionDomLocation(interaction.domRegion),
+        buttonLike:
+          interaction.elementType === "button" ||
+          interaction.elementType === "input" ||
+          interaction.relativeProminence >= 5,
+        nearPrimaryHeading:
+          interaction.domRegion === "HERO" &&
+          interaction.relativeProminence >= 4,
+        navigationLike: [
+          "HEADER",
+          "PRIMARY_NAVIGATION",
+          "SECONDARY_NAVIGATION",
+          "FOOTER",
+        ].includes(interaction.domRegion),
       }))
-      .get()
-      .filter((button) => Boolean(button.label));
-    const rawActionCandidates = [...links, ...buttonCandidates].slice(0, 100);
+      .slice(0, 140);
     const actionSummary = classifyWebsiteActions({
       candidates: rawActionCandidates,
       businessContext: options.businessContext,
+      businessKind,
     });
     const ctaCandidates = actionSummary.detectedActionTypes;
     const images = $("img");
@@ -333,6 +362,18 @@ export async function analyzeWebsite(
       .toLowerCase();
     const bodyText = textOf($("body").text());
     const contentExcerpt = extractBusinessContentExcerpt($);
+    const canonicalHref = $('link[rel="canonical"]').first().attr("href")?.trim();
+    const canonicalUrl = canonicalHref
+      ? (() => {
+          try {
+            const value = new URL(canonicalHref, finalUrl);
+            value.hash = "";
+            return value.toString();
+          } catch {
+            return null;
+          }
+        })()
+      : null;
     const localBusinessClues = extractLocalBusinessClues({
       $,
       baseUrl: finalUrl,
@@ -340,15 +381,36 @@ export async function analyzeWebsite(
       linkUrls: links.map((link) => link.href),
     });
     const warnings: string[] = [];
+    const rawHtmlBytes = Buffer.byteLength(html, "utf8");
+    const extractedTextBytes = Buffer.byteLength(bodyText, "utf8");
+    const extractionCompleteness = response.truncated
+      ? ("PARTIAL" as const)
+      : bodyText.length < 80 && html.length > 4_000
+        ? ("INCOMPLETE" as const)
+        : ("COMPLETE" as const);
 
     if (response.truncated) {
       warnings.push("Homepage HTML was large, so analysis used the first 1MB.");
     }
+    if (extractionCompleteness === "INCOMPLETE") {
+      warnings.push(
+        "The static homepage response contained very little readable content, so some client-rendered elements may be unavailable.",
+      );
+    }
 
     const analysisWithoutScore = {
       normalizedUrl: finalUrl,
+      requestedUrl: normalizedUrl,
+      finalUrl,
+      canonicalUrl,
       fetchStatus: "success" as const,
       statusCode: response.status,
+      contentType,
+      rawHtmlBytes,
+      extractedTextBytes,
+      fetchDurationMs: response.fetchDurationMs,
+      redirectHistory: response.redirectHistory,
+      extractionCompleteness,
       pageTitle,
       metaDescription,
       contentExcerpt,
@@ -360,7 +422,7 @@ export async function analyzeWebsite(
       externalLinksCount: externalLinks.length,
       imageCount,
       imagesMissingAltCount,
-      hasContactLink: /contact|call|email|get-in-touch/.test(allLinkText),
+      hasContactLink: interactionExtraction.contact.hasAnyContactPath,
       hasPricingLink: /pricing|plans|rates|packages/.test(allLinkText),
       hasBlogLink: /blog|articles|resources|insights/.test(allLinkText),
       hasSocialLinks: detectedSocialLinks.length > 0,
@@ -371,6 +433,8 @@ export async function analyzeWebsite(
       ),
       ctaCandidates,
       actionSummary,
+      interactionEvidence: interactionExtraction.interactions,
+      contactEvidence: interactionExtraction.contact,
       warnings,
     };
 
@@ -385,41 +449,15 @@ export async function analyzeWebsite(
   }
 }
 
-function elementActionSignals($: CheerioAPI, element: Element) {
-  const node = $(element);
-  const className = node.attr("class") ?? "";
-  const role = node.attr("role") ?? "";
-  const hero = node.closest(
-    "[class*='hero'], [class*='Hero'], [id*='hero'], [id*='Hero'], [class*='banner'], [class*='Banner']",
-  );
-  const inNavigation = node.closest("nav").length > 0;
-  const inHeader = node.closest("header").length > 0;
-  const inFooter = node.closest("footer").length > 0;
-  const inMain = node.closest("main").length > 0;
-  const domLocation = hero.length
-    ? "hero"
-    : inNavigation
-      ? "navigation"
-      : inHeader
-        ? "header"
-        : inFooter
-          ? "footer"
-          : inMain
-            ? "main"
-            : "unknown";
-
-  return {
-    elementType: element.tagName ?? "unknown",
-    domLocation: domLocation as
-      "hero" | "main" | "header" | "navigation" | "footer" | "unknown",
-    buttonLike:
-      element.tagName === "button" ||
-      role.toLowerCase() === "button" ||
-      /(?:^|\s)(?:btn|button|cta)(?:\s|$|-|_)/i.test(className),
-    nearPrimaryHeading:
-      hero.find("h1").length > 0 ||
-      node.parent().find("h1").length > 0 ||
-      node.siblings("h1").length > 0,
-    navigationLike: inNavigation || inHeader || inFooter,
-  };
+function actionDomLocation(
+  region: ExtractedInteractionEvidence["domRegion"],
+) {
+  if (region === "HERO") return "hero" as const;
+  if (region === "BODY") return "main" as const;
+  if (region === "HEADER") return "header" as const;
+  if (region === "PRIMARY_NAVIGATION" || region === "SECONDARY_NAVIGATION") {
+    return "navigation" as const;
+  }
+  if (region === "FOOTER") return "footer" as const;
+  return "unknown" as const;
 }

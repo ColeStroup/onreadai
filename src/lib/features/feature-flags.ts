@@ -96,6 +96,51 @@ export const featureFlagInventory = [
     effect:
       "Adds bounded AI review of selected crawled pages without changing deterministic audit scores.",
   },
+  {
+    key: "auditValidationPipelineV2",
+    environmentVariable: "AUDIT_VALIDATION_PIPELINE_V2_ENABLED",
+    developmentDefault: false,
+    productionDefault: false,
+    routes: ["Audit generation"],
+    effect:
+      "Publishes only candidate findings that pass evidence, contradiction, materiality, and completeness validation. Shadow diagnostics run before promotion.",
+  },
+  {
+    key: "auditAiFindingReview",
+    environmentVariable: "AUDIT_AI_FINDING_REVIEW_ENABLED",
+    developmentDefault: false,
+    productionDefault: false,
+    routes: ["Audit finding validation"],
+    effect:
+      "Uses bounded structured AI review only for ambiguous finding candidates after deterministic contradiction checks.",
+  },
+  {
+    key: "auditRenderedFetchFallback",
+    environmentVariable: "AUDIT_RENDERED_FETCH_FALLBACK_ENABLED",
+    developmentDefault: false,
+    productionDefault: false,
+    routes: ["Website crawl"],
+    effect:
+      "Escalates incomplete static pages to the secure browser-rendering adapter when available.",
+  },
+  {
+    key: "auditPlainLanguageV2",
+    environmentVariable: "AUDIT_PLAIN_LANGUAGE_V2_ENABLED",
+    developmentDefault: false,
+    productionDefault: false,
+    routes: ["Audit report", "AI Consultant"],
+    effect:
+      "Shows the validated plain-language finding contract and specialist-readiness guidance.",
+  },
+  {
+    key: "auditTargetedVerificationV1",
+    environmentVariable: "AUDIT_TARGETED_VERIFICATION_V1_ENABLED",
+    developmentDefault: false,
+    productionDefault: false,
+    routes: ["Audit verification"],
+    effect:
+      "Enables frozen-scope verification contracts separately from discovery audits.",
+  },
 ] as const;
 
 export const featureFlagEnvironmentVariables = featureFlagInventory.map(
@@ -109,6 +154,82 @@ export function isAiAssistedAuditsEnabled(
   env: Record<string, string | undefined> = process.env,
 ) {
   return env.AI_ASSISTED_AUDITS_ENABLED?.trim().toLowerCase() === "true";
+}
+
+type AuditQualityFlag =
+  | "AUDIT_VALIDATION_PIPELINE_V2_ENABLED"
+  | "AUDIT_AI_FINDING_REVIEW_ENABLED"
+  | "AUDIT_RENDERED_FETCH_FALLBACK_ENABLED"
+  | "AUDIT_PLAIN_LANGUAGE_V2_ENABLED"
+  | "AUDIT_TARGETED_VERIFICATION_V1_ENABLED";
+
+function auditQualityFlagEnabled(
+  name: AuditQualityFlag,
+  env: Record<string, string | undefined> = process.env,
+  businessId?: string | null,
+) {
+  if (env[name]?.trim().toLowerCase() === "true") return true;
+  if (!businessId) return false;
+  const allowlist = env[`${name.replace(/_ENABLED$/, "")}_BUSINESS_IDS`]
+    ?.split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return allowlist?.includes(businessId) ?? false;
+}
+
+export function isAuditValidationPipelineV2Enabled(
+  env: Record<string, string | undefined> = process.env,
+  businessId?: string | null,
+) {
+  return auditQualityFlagEnabled(
+    "AUDIT_VALIDATION_PIPELINE_V2_ENABLED",
+    env,
+    businessId,
+  );
+}
+
+export function isAuditAiFindingReviewEnabled(
+  env: Record<string, string | undefined> = process.env,
+  businessId?: string | null,
+) {
+  return auditQualityFlagEnabled(
+    "AUDIT_AI_FINDING_REVIEW_ENABLED",
+    env,
+    businessId,
+  );
+}
+
+export function isAuditRenderedFetchFallbackEnabled(
+  env: Record<string, string | undefined> = process.env,
+  businessId?: string | null,
+) {
+  return auditQualityFlagEnabled(
+    "AUDIT_RENDERED_FETCH_FALLBACK_ENABLED",
+    env,
+    businessId,
+  );
+}
+
+export function isAuditPlainLanguageV2Enabled(
+  env: Record<string, string | undefined> = process.env,
+  businessId?: string | null,
+) {
+  return auditQualityFlagEnabled(
+    "AUDIT_PLAIN_LANGUAGE_V2_ENABLED",
+    env,
+    businessId,
+  );
+}
+
+export function isAuditTargetedVerificationV1Enabled(
+  env: Record<string, string | undefined> = process.env,
+  businessId?: string | null,
+) {
+  return auditQualityFlagEnabled(
+    "AUDIT_TARGETED_VERIFICATION_V1_ENABLED",
+    env,
+    businessId,
+  );
 }
 
 function enabled(

@@ -618,38 +618,29 @@ function buildPresentationActionPlan(
 function buildTopPriorities(
   report: AuditReportViewModel,
 ): PresentationDeckData["topPriorities"] {
-  return report.nextMoves.slice(0, 3).map((move) => {
-    const recommendation = recommendationForMove(
-      move.title,
-      move.category,
-      report,
+  return report.recommendations.primary.slice(0, 3).map((recommendation) => {
+    const move = report.nextMoves.find(
+      (item) =>
+        item.category === recommendation.category &&
+        canonicalMoveKey(item.title) === canonicalMoveKey(recommendation.title),
     );
     return {
-      title: move.title,
+      title: recommendation.title,
       description: conciseText(
-        recommendation?.description ?? move.implementationAction,
+        recommendation.description ?? move?.implementationAction ?? "",
         190,
       ),
-      category: categoryDisplay(move.category),
-      priority: recommendation?.priority.toLowerCase() ?? "high",
-      effort: move.effort,
-      impact: move.impact,
-      confidence: recommendation?.confidence ?? "Medium",
-      evidence: conciseText(move.evidence, 190),
+      category: categoryDisplay(recommendation.category),
+      priority: recommendation.priority.toLowerCase(),
+      effort: recommendation.estimatedEffort,
+      impact: recommendation.expectedImpact,
+      confidence: recommendation.confidence,
+      evidence: conciseText(
+        recommendation.evidenceSummary ?? move?.evidence ?? "",
+        190,
+      ),
     };
   });
-}
-
-function recommendationForMove(
-  moveTitle: string,
-  category: ScoreCategory,
-  report: AuditReportViewModel,
-) {
-  const moveKey = canonicalMoveKey(moveTitle);
-  return report.recommendations.all.find(
-    (item) =>
-      item.category === category && canonicalMoveKey(item.title) === moveKey,
-  );
 }
 
 function canonicalMoveKey(title: string) {

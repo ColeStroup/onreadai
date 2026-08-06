@@ -54,7 +54,7 @@ export async function requestStructuredAuditAiOutput<T>({
   responseFactory = createResponse,
 }: {
   route: AuditAiModelRoute;
-  operation: "PAGE_ANALYSIS" | "AUDIT_SYNTHESIS";
+  operation: "PAGE_ANALYSIS" | "AUDIT_SYNTHESIS" | "FINDING_VALIDATION";
   instructions: string;
   input: string;
   schemaName: string;

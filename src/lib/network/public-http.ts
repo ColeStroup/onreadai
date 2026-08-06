@@ -9,6 +9,13 @@ export type PublicTextResponse = {
   ok: boolean;
   status: number;
   url: string;
+  requestedUrl?: string;
+  redirectHistory?: Array<{
+    from: string;
+    to: string;
+    statusCode: number;
+  }>;
+  fetchDurationMs?: number;
   headers: Headers;
   text: string;
   truncated: boolean;
@@ -224,9 +231,12 @@ export async function fetchPublicText(
     resolveHostname?: ResolveHostname;
   },
 ): Promise<PublicTextResponse> {
+  const startedAt = Date.now();
   const fetchImpl = options.fetchImpl ?? defaultPublicFetch;
   const resolveHostname = options.resolveHostname ?? defaultResolver;
   let currentUrl = await assertPublicHttpUrl(input, resolveHostname);
+  const requestedUrl = currentUrl.toString();
+  const redirectHistory: NonNullable<PublicTextResponse["redirectHistory"]> = [];
   const maxRedirects = Math.max(0, Math.min(options.maxRedirects ?? 5, 8));
   const allowedHostname = options.allowedHostname
     ? comparableHostname(options.allowedHostname)
@@ -286,10 +296,16 @@ export async function fetchPublicText(
         );
       }
 
-      currentUrl = await assertPublicHttpUrl(
+      const nextUrl = await assertPublicHttpUrl(
         new URL(location, currentUrl),
         resolveHostname,
       );
+      redirectHistory.push({
+        from: currentUrl.toString(),
+        to: nextUrl.toString(),
+        statusCode: response.status,
+      });
+      currentUrl = nextUrl;
       continue;
     }
 
@@ -317,6 +333,9 @@ export async function fetchPublicText(
       ok: response.ok,
       status: response.status,
       url: currentUrl.toString(),
+      requestedUrl,
+      redirectHistory,
+      fetchDurationMs: Date.now() - startedAt,
       headers: response.headers,
       text: body.text,
       truncated: body.truncated,

@@ -15,6 +15,7 @@ export type AuditConsistencyIssueCode =
   | "KNOWN_VALUE_RESTORED"
   | "H1_CONTRADICTION_REJECTED"
   | "META_CONTRADICTION_REJECTED"
+  | "CONTACT_PATH_CONTRADICTION_REJECTED"
   | "UNSUPPORTED_SOURCE_URL_REJECTED"
   | "DUPLICATE_ROOT_CAUSE_REJECTED"
   | "FINDING_TAXONOMY_NORMALIZED"
@@ -298,6 +299,7 @@ export function validateAuditConsistency<
       issue.severity === "ERROR" &&
       issue.code !== "H1_CONTRADICTION_REJECTED" &&
       issue.code !== "META_CONTRADICTION_REJECTED" &&
+      issue.code !== "CONTACT_PATH_CONTRADICTION_REJECTED" &&
       issue.code !== "UNSUPPORTED_SOURCE_URL_REJECTED",
   );
   const snapshot: AuditConsistencySnapshot = {
@@ -367,6 +369,17 @@ function findingContradiction({
     return {
       code: "META_CONTRADICTION_REJECTED" as const,
       message: `Finding "${finding.title}" contradicted the measured homepage meta-description status.`,
+    };
+  }
+  if (
+    /(?:no|missing|without|not (?:obvious|found|detected|available)).{0,45}(?:contact|email|phone|call|order|booking|conversion)\s*(?:path|link|option|information)?|(?:contact|conversion)\s+path.{0,35}(?:missing|not (?:obvious|found|detected|available))/i.test(
+      text,
+    ) &&
+    facts.homepage?.contact?.hasAnyContactPath
+  ) {
+    return {
+      code: "CONTACT_PATH_CONTRADICTION_REJECTED" as const,
+      message: `Finding "${finding.title}" contradicted ${facts.homepage.contact.usableContactPathEvidenceIds.length || facts.homepage.contact.contactPathEvidenceIds.length} saved interaction signal(s), ${facts.homepage.contact.contactSectionHeadings.length} contact heading(s), ${facts.homepage.contact.visibleEmailCount} visible email address(es), and ${facts.homepage.contact.visiblePhoneCount} visible phone number(s).`,
     };
   }
   if (sourceUrl && knownUrls.size > 0 && !knownUrls.has(sourceUrl)) {
@@ -472,6 +485,16 @@ function recommendationContradiction({
         message: `Recommendation "${recommendation.title}" had no measured missing meta description.`,
       };
     }
+  }
+
+  if (
+    issueKey.includes("contact-path:missing") &&
+    facts.homepage?.contact?.hasAnyContactPath
+  ) {
+    return {
+      code: "CONTACT_PATH_CONTRADICTION_REJECTED" as const,
+      message: `Recommendation "${recommendation.title}" contradicted saved homepage contact and conversion evidence.`,
+    };
   }
 
   if (

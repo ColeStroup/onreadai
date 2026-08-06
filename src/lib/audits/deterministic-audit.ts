@@ -476,6 +476,17 @@ export function generateDeterministicAudit(
   const primaryCtaNeedsAttention =
     primaryCtaAssessment?.clarity === "NEEDS_IMPROVEMENT" ||
     primaryCtaAssessment?.clarity === "UNCERTAIN";
+  const homepageCrawlPage = websiteCrawl?.pageResults.find(
+    (page) =>
+      page.analysisStatus !== "FAILED" && page.pageTypes.includes("Homepage"),
+  );
+  const homepageContactEvidence =
+    homepageCrawlPage?.contactEvidence ?? websiteAnalysis?.contactEvidence;
+  const homepageHasUsableContactPath = homepageContactEvidence
+    ? homepageContactEvidence.hasAnyContactPath
+    : Boolean(websiteAnalysis?.hasContactLink);
+  const brokenHomepageContactPathEvidenceIds =
+    homepageContactEvidence?.brokenContactPathEvidenceIds ?? [];
   const confirmedCount = countByStatus(
     input.profiles,
     BusinessProfileStatus.CONFIRMED,
@@ -1018,17 +1029,40 @@ export function generateDeterministicAudit(
               },
             ]
           : []),
-        ...(!websiteAnalysis.hasContactLink
+        ...(!homepageHasUsableContactPath &&
+        brokenHomepageContactPathEvidenceIds.length === 0
           ? [
               {
                 category: ScoreCategory.WEBSITE,
-                title: "Contact path is not obvious from homepage links.",
+                title: "Visitors may not have a clear way to contact the business.",
                 description:
-                  "No clear contact, call, email, or get-in-touch link was detected on the homepage.",
+                  "The analyzed homepage did not show a usable contact, email, phone, order, booking, quote, purchase, application, or chat path.",
                 severity: FindingSeverity.MEDIUM,
+                sourceUrl: websiteAnalysis.normalizedUrl,
                 evidence: {
                   normalizedUrl: websiteAnalysis.normalizedUrl,
                   hasContactLink: websiteAnalysis.hasContactLink,
+                  contactEvidence: homepageContactEvidence ?? null,
+                  issueKey: "website:contact-path:missing",
+                },
+              },
+            ]
+          : []),
+        ...(brokenHomepageContactPathEvidenceIds.length > 0 &&
+        !homepageHasUsableContactPath
+          ? [
+              {
+                category: ScoreCategory.WEBSITE,
+                title: "A contact or order path did not load during the crawl.",
+                description:
+                  "The homepage includes a business action, but its destination page failed to load during this audit. This is different from having no contact path.",
+                severity: FindingSeverity.HIGH,
+                sourceUrl: websiteAnalysis.normalizedUrl,
+                evidence: {
+                  normalizedUrl: websiteAnalysis.normalizedUrl,
+                  brokenInteractionEvidenceIds:
+                    brokenHomepageContactPathEvidenceIds,
+                  issueKey: "website:contact-path:broken-destination",
                 },
               },
             ]
@@ -1729,18 +1763,46 @@ export function generateDeterministicAudit(
                 },
               ]
             : []),
-          ...(!websiteAnalysis.hasContactLink
+          ...(!homepageHasUsableContactPath &&
+          brokenHomepageContactPathEvidenceIds.length === 0
             ? [
                 {
-                  title: "Make contact easy to find",
+                  title: "Add one clear customer contact path",
                   description:
-                    "Add a clear contact link or button in the header, footer, or primary homepage CTA area.",
+                    "Add a visible contact, email, phone, order, booking, quote, purchase, application, or chat path that fits how customers use this business.",
                   category: ScoreCategory.WEBSITE,
                   priority: RecommendationPriority.MEDIUM,
                   estimatedEffort: "Low" as const,
                   expectedImpact: "Medium" as const,
                   sourceUrl: websiteAnalysis.normalizedUrl,
-                  issueKey: "website:contact-path:unclear",
+                  issueKey: "website:contact-path:missing",
+                  evidence: {
+                    issueKey: "website:contact-path:missing",
+                    sourceUrl: websiteAnalysis.normalizedUrl,
+                    contactEvidence: homepageContactEvidence ?? null,
+                  },
+                },
+              ]
+            : []),
+          ...(brokenHomepageContactPathEvidenceIds.length > 0 &&
+          !homepageHasUsableContactPath
+            ? [
+                {
+                  title: "Repair the broken customer action path",
+                  description:
+                    "Open the saved contact or order destination, restore the page or update the link, and test it from the homepage.",
+                  category: ScoreCategory.WEBSITE,
+                  priority: RecommendationPriority.HIGH,
+                  estimatedEffort: "Low" as const,
+                  expectedImpact: "High" as const,
+                  sourceUrl: websiteAnalysis.normalizedUrl,
+                  issueKey: "website:contact-path:broken-destination",
+                  evidence: {
+                    issueKey: "website:contact-path:broken-destination",
+                    sourceUrl: websiteAnalysis.normalizedUrl,
+                    brokenInteractionEvidenceIds:
+                      brokenHomepageContactPathEvidenceIds,
+                  },
                 },
               ]
             : []),

@@ -25,6 +25,7 @@ import {
 } from "@/lib/analyzers/website-crawler";
 import { analyzeWebsite } from "@/lib/analyzers/website-analyzer";
 import { generateBusinessContextDraft } from "@/lib/ai/business-context-generator";
+import { isOpenAIConfigured } from "@/lib/ai/openai-client";
 import {
   buildDeterministicSummary,
   generateCompetitorIntelligenceSummary,
@@ -34,6 +35,12 @@ import { validateAuditConsistency } from "@/lib/audits/audit-consistency";
 import { generateDeterministicAudit } from "@/lib/audits/deterministic-audit";
 import { buildAuditEvidenceIntegrity } from "@/lib/audits/evidence-integrity";
 import { buildNormalizedAuditFacts } from "@/lib/audits/normalized-audit-facts";
+import { runAuditValidationPipeline } from "@/lib/audits/quality/candidate-pipeline";
+import { validateFindingWithAi } from "@/lib/audits/quality/finding-ai-validator";
+import {
+  calculateValidatedWebsiteSeoScores,
+  VALIDATED_SCORING_ENGINE_VERSION,
+} from "@/lib/audits/quality/validated-scoring";
 import { runSelectiveAiAuditAnalysis } from "@/lib/audits/selective-ai/selective-ai-audit";
 import {
   type AuditProgressStage,
@@ -47,6 +54,10 @@ import { analyzeBusinessCompetitors } from "@/lib/competitors/competitor-analysi
 import { compareBusinessToCompetitors } from "@/lib/competitors/competitor-comparison";
 import type { AuditCompetitorIntelligence } from "@/lib/competitors/competitor-types";
 import {
+  isAuditAiFindingReviewEnabled,
+  isAuditPlainLanguageV2Enabled,
+  isAuditRenderedFetchFallbackEnabled,
+  isAuditValidationPipelineV2Enabled,
   isCompetitorIntelligenceEnabled,
   isLocalGrowthEnabled,
   isSocialGrowthEnabled,
@@ -415,6 +426,22 @@ async function buildAuditData({
   const socialGrowthEnabled = isSocialGrowthEnabled();
   const competitorIntelligenceEnabled = isCompetitorIntelligenceEnabled();
   const localGrowthEnabled = isLocalGrowthEnabled();
+  const validationPipelineEnabled = isAuditValidationPipelineV2Enabled(
+    process.env,
+    businessId,
+  );
+  const aiFindingReviewEnabled = isAuditAiFindingReviewEnabled(
+    process.env,
+    businessId,
+  );
+  const renderedFetchFallbackEnabled = isAuditRenderedFetchFallbackEnabled(
+    process.env,
+    businessId,
+  );
+  const plainLanguageV2Enabled = isAuditPlainLanguageV2Enabled(
+    process.env,
+    businessId,
+  );
   const business = await prisma.business.findUnique({
     where: {
       id: businessId,
@@ -526,6 +553,7 @@ async function buildAuditData({
     maxPages: entitlements.maxCrawlPages,
     timeBudgetMs: 3 * 60 * 1_000,
     businessContext,
+    renderedFallbackEnabled: renderedFetchFallbackEnabled,
   });
   if (websiteCrawl) {
     logInfo("audit_content_quality_analysis", {
@@ -1232,7 +1260,7 @@ async function buildAuditData({
     }
   }
 
-  const evidenceIntegrityResult = buildAuditEvidenceIntegrity({
+  const preValidationEvidenceIntegrityResult = buildAuditEvidenceIntegrity({
     website: websiteAnalysis,
     websiteCrawl,
     seo: seoAnalysis,
@@ -1282,11 +1310,132 @@ async function buildAuditData({
       scoring: SCORING_ENGINE_VERSION,
     },
   });
+  const validationResult = await runAuditValidationPipeline({
+    findings: preValidationEvidenceIntegrityResult.findings,
+    recommendations: preValidationEvidenceIntegrityResult.recommendations,
+    facts: normalizedFacts,
+    evidenceIntegrity: preValidationEvidenceIntegrityResult.snapshot,
+    apply: validationPipelineEnabled,
+    applyPlainLanguage: plainLanguageV2Enabled,
+    aiValidator:
+      aiFindingReviewEnabled && isOpenAIConfigured()
+        ? (input) =>
+            validateFindingWithAi({
+              ...input,
+              businessContext: effectiveBusinessContext,
+              telemetry: {
+                auditId,
+                businessId,
+                planType: plan,
+              },
+            })
+        : null,
+  });
+  const validatedScore = calculateValidatedWebsiteSeoScores({
+    findings: validationResult.shadowFindings,
+  });
+  validationResult.snapshot.scoreShadow = {
+    overall: validatedScore.overall,
+    website: validatedScore.website,
+    seo: validatedScore.seo,
+  };
+
+  auditResult.findings = validationResult.findings;
+  auditResult.recommendations = validationResult.recommendations;
+  if (validationPipelineEnabled) {
+    auditResult.overallScore = validatedScore.overall;
+    auditResult.scores = auditResult.scores.map((score) => ({
+      ...score,
+      score:
+        score.category === ScoreCategory.OVERALL
+          ? validatedScore.overall
+          : score.category === ScoreCategory.WEBSITE
+            ? validatedScore.website
+            : score.category === ScoreCategory.SEO
+              ? validatedScore.seo
+              : score.score,
+    }));
+    auditResult.scoreBreakdowns = validatedScore.breakdowns;
+    auditResult.summary = `${business.name} has a ${validatedScore.overall}/100 Website Growth Score based on validated website and SEO evidence. Start with the highest-priority open action, make the change, then run another audit to verify the result.`;
+  }
+
+  logInfo("audit_validation_pipeline_completed", {
+    businessId,
+    auditId,
+    mode: validationResult.snapshot.mode,
+    candidates: validationResult.snapshot.candidateCount,
+    confirmed: validationResult.snapshot.confirmedCount,
+    reframed: validationResult.snapshot.reframedCount,
+    suppressed: validationResult.snapshot.suppressedCount,
+    limitations: validationResult.snapshot.limitationCount,
+    contradictions: validationResult.snapshot.contradictionCount,
+    aiReviews: validationResult.snapshot.aiReviewCount,
+    extractionIncompletePages:
+      websiteCrawl?.fetchQualitySummary?.incompletePages ?? 0,
+    renderedPages: websiteCrawl?.fetchQualitySummary?.renderedPages ?? 0,
+    renderedFallbackFailures:
+      websiteCrawl?.fetchQualitySummary?.renderedFallbackFailures ?? 0,
+  });
+
+  const evidenceIntegrityResult = buildAuditEvidenceIntegrity({
+    website: websiteAnalysis,
+    websiteCrawl,
+    seo: seoAnalysis,
+    social: socialAnalysis,
+    reviews: reviewAnalysis,
+    businessContext: effectiveBusinessContext,
+    businessProfiles: (socialGrowthEnabled || localGrowthEnabled
+      ? business.profiles
+      : business.profiles.filter(
+          (profile) => profile.platform === ProfilePlatform.WEBSITE,
+        )
+    ).map((profile) => ({
+      id: profile.id,
+      platform: profile.platform,
+      status: profile.status,
+    })),
+    competitors: (competitorIntelligenceEnabled
+      ? business.competitors
+      : []
+    ).map((competitor) => ({
+      id: competitor.id,
+      name: competitor.name,
+      profiles: competitor.discoveredProfiles.map((profile) => ({
+        id: profile.id,
+        platform: profile.platform,
+        status: profile.status,
+      })),
+    })),
+    competitorComparison: comparison,
+    findings: auditResult.findings.map((finding) => ({
+      ...finding,
+      id: finding.id ?? randomUUID(),
+    })),
+    recommendations: auditResult.recommendations,
+    scoreBreakdowns: auditResult.scoreBreakdowns,
+    observedAt: new Date(),
+    sourceVersions: {
+      website: WEBSITE_ANALYZER_VERSION,
+      seo: SEO_ANALYZER_VERSION,
+      ...(socialGrowthEnabled ? { social: "social-analyzer-v3-coverage" } : {}),
+      ...(localGrowthEnabled
+        ? { reviews: "review-analyzer-v3-data-sufficiency" }
+        : {}),
+      ...(competitorIntelligenceEnabled
+        ? { competitors: COMPETITOR_COMPARISON_VERSION }
+        : {}),
+      scoring: validationPipelineEnabled
+        ? VALIDATED_SCORING_ENGINE_VERSION
+        : SCORING_ENGINE_VERSION,
+    },
+  });
   auditResult.findings = evidenceIntegrityResult.findings;
   auditResult.recommendations = evidenceIntegrityResult.recommendations;
 
   const scoringMetadata = {
-    scoringEngineVersion: SCORING_ENGINE_VERSION,
+    scoringEngineVersion: validationPipelineEnabled
+      ? VALIDATED_SCORING_ENGINE_VERSION
+      : SCORING_ENGINE_VERSION,
     reportViewModelVersion: REPORT_VIEW_MODEL_VERSION,
     analyzerVersions: {
       website: WEBSITE_ANALYZER_VERSION,
@@ -1386,6 +1535,7 @@ async function buildAuditData({
       normalizedFacts,
       coverage: normalizedFacts.coverage,
       consistencyValidation: consistencyResult.snapshot,
+      auditValidation: validationResult.snapshot,
       evidenceIntegrity: evidenceIntegrityResult.snapshot,
     }),
   };

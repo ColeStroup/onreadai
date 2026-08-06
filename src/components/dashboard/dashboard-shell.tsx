@@ -10,6 +10,7 @@ import {
   KeyRound,
   Plus,
   Settings,
+  ShieldCheck,
 } from "lucide-react";
 import { signOut } from "next-auth/react";
 import Link from "next/link";
@@ -62,6 +63,11 @@ export function DashboardShell({
             label: "Partner Admin",
             href: "/dashboard/admin/partners",
             icon: Handshake,
+          },
+          {
+            label: "Audit Quality",
+            href: "/dashboard/admin/audit-quality",
+            icon: ShieldCheck,
           },
         ]
       : []),

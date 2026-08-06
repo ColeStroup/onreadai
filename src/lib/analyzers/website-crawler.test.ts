@@ -203,3 +203,60 @@ test("homepage comparison normalizes common paths and URL variants", () => {
     crawlUrlKey("https://www.example.com/index.html"),
   );
 });
+
+test("a client-rendered shell escalates once and records rendered evidence", async () => {
+  const shell = `<!doctype html><html><head><title>Loading</title></head><body><main></main><div id="root"></div><script>${"x".repeat(5_000)}</script></body></html>`;
+  let renderCalls = 0;
+  const crawl = await crawlWebsite("https://example.com/", {
+    maxPages: 1,
+    renderedFallbackEnabled: true,
+    fetchText: async () => htmlResponse({ url: "https://example.com/", html: shell }),
+    renderPage: async () => {
+      renderCalls += 1;
+      return {
+        status: "SUCCESS",
+        finalUrl: "https://example.com/",
+        html: `<!doctype html><html><head><title>Rendered business</title><meta name="description" content="A rendered description"></head><body><main><h1>Rendered business</h1><a href="/contact">Contact us</a></main></body></html>`,
+        renderedTextSize: 42,
+        durationMs: 9,
+        errorClassification: null,
+        cacheHit: false,
+      };
+    },
+  });
+  const homepage = crawl.pageResults[0];
+
+  assert.equal(renderCalls, 1);
+  assert.equal(homepage?.fetchQuality?.method, "RENDERED_HTML");
+  assert.equal(homepage?.fetchQuality?.renderingStatus, "USED");
+  assert.equal(homepage?.fetchQuality?.extractionCompleteness, "COMPLETE");
+  assert.equal(homepage?.h1Count, 1);
+  assert.equal(crawl.fetchQualitySummary?.renderedPages, 1);
+});
+
+test("a failed rendered fallback stays incomplete and is not treated as an empty-page defect", async () => {
+  const shell = `<!doctype html><html><head><title>Loading</title></head><body><main></main><div id="root"></div><script>${"x".repeat(5_000)}</script></body></html>`;
+  const crawl = await crawlWebsite("https://example.com/", {
+    maxPages: 1,
+    renderedFallbackEnabled: true,
+    fetchText: async () => htmlResponse({ url: "https://example.com/", html: shell }),
+    renderPage: async () => ({
+      status: "FAILED",
+      finalUrl: "https://example.com/",
+      html: null,
+      renderedTextSize: 0,
+      durationMs: 11,
+      errorClassification: "TIMEOUT",
+      cacheHit: false,
+    }),
+  });
+  const homepage = crawl.pageResults[0];
+
+  assert.equal(homepage?.analysisStatus, "ANALYZED");
+  assert.equal(homepage?.fetchQuality?.renderingStatus, "FAILED");
+  assert.equal(homepage?.fetchQuality?.extractionCompleteness, "INCOMPLETE");
+  assert.equal(crawl.fetchQualitySummary?.incompletePages, 1);
+  assert.equal(crawl.fetchQualitySummary?.renderedFallbackFailures, 1);
+  assert.equal(crawl.pagesWithNoH1, 0);
+  assert.equal(crawl.pagesMissingMetaDescription, 0);
+});

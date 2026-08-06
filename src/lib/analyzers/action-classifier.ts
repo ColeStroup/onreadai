@@ -2,6 +2,10 @@ import type {
   DetectedActionLink,
   PrimaryCtaAssessment,
 } from "@/lib/audits/evidence-contracts";
+import {
+  classifyBusinessIntent,
+  type BusinessIntentPurpose,
+} from "@/lib/analyzers/business-intent";
 
 export type ActionBusinessKind =
   | "restaurant"
@@ -20,8 +24,13 @@ export type ActionBusinessContext = {
 };
 
 export type ActionCandidateInput = {
+  evidenceId?: string | null;
   label?: string | null;
+  accessibleName?: string | null;
   href?: string | null;
+  surroundingText?: string | null;
+  destinationPurpose?: BusinessIntentPurpose | null;
+  intentConfidence?: number | null;
   elementType?: string | null;
   domLocation?: DetectedActionLink["domLocation"] | null;
   buttonLike?: boolean;
@@ -132,9 +141,10 @@ export function classifyWebsiteActions({
 
   for (const candidate of candidates) {
     const label = cleanLabel(candidate.label);
+    const accessibleName = cleanLabel(candidate.accessibleName);
     const href = candidate.href?.trim() ?? "";
-    const display = label || href;
-    const text = `${label} ${href}`.toLowerCase();
+    const display = label || accessibleName || href;
+    const text = `${label} ${accessibleName} ${href} ${candidate.surroundingText ?? ""}`.toLowerCase();
 
     if (!display) continue;
     rawCandidates.add(display);
@@ -149,9 +159,21 @@ export function classifyWebsiteActions({
       continue;
     }
 
+    const inferredIntent = candidate.destinationPurpose
+      ? {
+          purpose: candidate.destinationPurpose,
+          confidence: candidate.intentConfidence ?? 0,
+        }
+      : classifyBusinessIntent({
+          label,
+          accessibleName,
+          href,
+          surroundingText: candidate.surroundingText,
+          businessKind: kind,
+        });
     const primary =
       primaryActionLabel({
-        text: label.toLowerCase(),
+        text: `${label} ${accessibleName}`.toLowerCase(),
         kind,
         reservationRelevant,
       }) ??
@@ -161,6 +183,9 @@ export function classifyWebsiteActions({
             kind,
             reservationRelevant,
           })
+        : null) ??
+      (inferredIntent.confidence >= 0.7
+        ? actionLabelForPurpose(inferredIntent.purpose)
         : null);
     if (primary) {
       primaryActions.add(primary);
@@ -174,7 +199,12 @@ export function classifyWebsiteActions({
       if (/newsletter|subscribe/i.test(primary)) {
         newsletterActions.add(display);
       }
-      const action = toDetectedActionLink(candidate, primary, label, href);
+      const action = toDetectedActionLink(
+        candidate,
+        primary,
+        label || accessibleName,
+        href,
+      );
       const key = `${action.actionType}:${action.label}:${action.href ?? ""}`;
       const existing = detectedActionLinks.get(key);
       if (!existing || existing.prominenceScore < action.prominenceScore) {
@@ -327,6 +357,10 @@ function toDetectedActionLink(
     label: label || actionType,
     href: href || null,
     actionType,
+    accessibleName: cleanLabel(candidate.accessibleName) || null,
+    destinationPurpose: candidate.destinationPurpose ?? null,
+    intentConfidence: candidate.intentConfidence ?? null,
+    evidenceId: candidate.evidenceId ?? null,
     elementType: candidate.elementType?.trim().toLowerCase() || "unknown",
     domLocation,
     buttonLike,
@@ -503,6 +537,21 @@ function primaryActionLabel({
   if (/\bsubscribe\b/.test(text)) return "Subscribe";
 
   return null;
+}
+
+function actionLabelForPurpose(purpose: BusinessIntentPurpose) {
+  const labels: Partial<Record<BusinessIntentPurpose, string>> = {
+    CONTACT: "Contact",
+    ORDER: "Order / Inquiry",
+    BOOKING: "Booking / Scheduling",
+    QUOTE: "Request a Quote",
+    PURCHASE: "Buy / Shop",
+    APPLICATION: "Application",
+    DIRECTIONS: "Directions / Location",
+    SUBSCRIBE: "Newsletter Signup",
+    CHAT: "Contact / Chat",
+  };
+  return labels[purpose] ?? null;
 }
 
 function contextText(context?: ActionBusinessContext | null) {

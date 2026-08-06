@@ -29,6 +29,7 @@ import {
 import { getAuditAssessment } from "@/lib/audits/audit-applicability";
 import { readEvidenceIntegrity } from "@/lib/audits/evidence-contracts";
 import { completeEvidenceSummary } from "@/lib/audits/finding-copy";
+import { readFindingValidationMetadata } from "@/lib/audits/quality/candidate-pipeline";
 import { readNormalizedAuditFacts } from "@/lib/audits/normalized-audit-facts";
 import {
   readAiReviewedOpportunityEvidence,
@@ -1017,13 +1018,27 @@ function buildWebsiteSeoConsultantContext({
         severityWeight(right.severity) - severityWeight(left.severity),
     )
     .slice(0, 10)
-    .map((finding) => ({
-      category: categoryLabels[finding.category],
-      severity: finding.severity,
-      title: finding.title,
-      evidence: completeEvidenceSummary(finding.description, 320),
-      affectedUrl: finding.sourceUrl ?? null,
-    }));
+    .map((finding) => {
+      const validation = readFindingValidationMetadata(finding.evidence);
+      return {
+        category: categoryLabels[finding.category],
+        severity: finding.severity,
+        title: finding.title,
+        classification: validation?.classification ?? "LEGACY_FINDING",
+        confidence: validation?.confidence ?? null,
+        whatThisMeans:
+          validation?.plainLanguage.whatThisMeans ??
+          completeEvidenceSummary(finding.description, 320),
+        whyItMatters: validation?.plainLanguage.whyItMatters ?? null,
+        recommendedAction: validation?.plainLanguage.whatToDo ?? null,
+        ownerFixability:
+          validation?.plainLanguage.ownerFixabilityLabel ?? null,
+        specialist: validation?.plainLanguage.whoCanHelpLabel ?? null,
+        verification: validation?.plainLanguage.howOnreadWillCheck ?? null,
+        evidenceIds: validation?.supportingEvidenceIds.slice(0, 12) ?? [],
+        affectedUrl: finding.sourceUrl ?? null,
+      };
+    });
   const relevantRecommendations = input.recommendations
     .filter((recommendation) => isWebsiteSeoCategory(recommendation.category))
     .sort(

@@ -6,6 +6,7 @@ import {
 } from "@prisma/client";
 
 import { readNormalizedAuditFacts } from "@/lib/audits/normalized-audit-facts";
+import { readFindingValidationMetadata } from "@/lib/audits/quality/candidate-pipeline";
 
 export type AuditComparisonScore = {
   category: ScoreCategory;
@@ -29,6 +30,7 @@ export type AuditComparisonFinding = {
   description: string;
   category: ScoreCategory;
   severity: FindingSeverity;
+  evidence?: unknown;
 };
 
 export type AuditComparisonRecommendation = {
@@ -264,6 +266,10 @@ function scoreFor(audit: AuditComparisonInput, category: ScoreCategory) {
 }
 
 function findingKey(finding: AuditComparisonFinding) {
+  const stableFindingKey = readFindingValidationMetadata(
+    finding.evidence,
+  )?.stableFindingKey;
+  if (stableFindingKey) return stableFindingKey;
   return `${finding.category}:${normalizeText(finding.title)}`;
 }
 

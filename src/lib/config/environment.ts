@@ -1,6 +1,7 @@
 import { getAuditAiModelRoute } from "@/lib/ai/model-routing";
 import {
   featureFlagEnvironmentVariables,
+  isAuditAiFindingReviewEnabled,
   isAiAssistedAuditsEnabled,
 } from "@/lib/features/feature-flags";
 
@@ -166,7 +167,12 @@ function validateAiAssistedAuditConfiguration(
   env: Environment,
   issues: string[],
 ) {
-  if (!isAiAssistedAuditsEnabled(env)) return;
+  if (
+    !isAiAssistedAuditsEnabled(env) &&
+    !isAuditAiFindingReviewEnabled(env)
+  ) {
+    return;
+  }
 
   if (!env.OPENAI_API_KEY?.trim()) {
     issues.push("OPENAI_API_KEY is required in production.");

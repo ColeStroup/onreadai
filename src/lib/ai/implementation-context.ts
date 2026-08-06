@@ -9,6 +9,7 @@ import {
 
 import { buildCompetitorConsultantContext } from "@/lib/ai/competitor-consultant-context";
 import { readNormalizedAuditFacts } from "@/lib/audits/normalized-audit-facts";
+import { readFindingValidationMetadata } from "@/lib/audits/quality/candidate-pipeline";
 import { readAiReviewedOpportunityEvidence } from "@/lib/audits/selective-ai/types";
 import { businessGoalLabels } from "@/lib/goals";
 import { prisma } from "@/lib/prisma";
@@ -78,6 +79,11 @@ export type ImplementationContext = {
     title: string;
     description: string;
     sourceUrl: string | null;
+    whatToDo?: string | null;
+    ownerFixability?: string | null;
+    specialist?: string | null;
+    completionCriteria?: string[];
+    verificationMethod?: string | null;
   }>;
   website: {
     url: string | null;
@@ -200,6 +206,7 @@ export async function buildImplementationContext({
                 title: true,
                 description: true,
                 sourceUrl: true,
+                evidence: true,
               },
             },
           },
@@ -224,16 +231,19 @@ export async function buildImplementationContext({
       impact: record.expectedImpact ?? record.impact,
       effort: record.estimatedEffort ?? record.effort,
     };
+    const validationKey = recommendationValidationKey(record.evidence);
+    const matchingFindings = validationKey
+      ? (record.audit?.findings.filter(
+          (finding) =>
+            readFindingValidationMetadata(finding.evidence)
+              ?.stableFindingKey === validationKey,
+        ) ?? [])
+      : (record.audit?.findings.filter(
+          (finding) => finding.category === record.category,
+        ) ?? []);
     sourceFindings = [
       ...recommendationEvidence(record.evidence, record.sourceUrl),
-      ...(record.audit?.findings
-        .filter((finding) => finding.category === record.category)
-        .slice(0, 3)
-        .map((finding) => ({
-          title: finding.title,
-          description: finding.description,
-          sourceUrl: finding.sourceUrl,
-        })) ?? []),
+      ...matchingFindings.slice(0, 3).map(implementationFindingEvidence),
     ].slice(0, 3);
     competitorReferenceId =
       record.sourceType === "competitor_comparison"
@@ -315,11 +325,7 @@ export async function buildImplementationContext({
     : latestAudit?.findings
         .filter((finding) => finding.category === recommendation.category)
         .slice(0, 3)
-        .map((finding) => ({
-          title: finding.title,
-          description: finding.description,
-          sourceUrl: finding.sourceUrl,
-        })) ?? [];
+        .map(implementationFindingEvidence) ?? [];
   const currentCompetitorContext = competitorReferenceId
     ? await buildCompetitorConsultantContext({
         userId,
@@ -486,6 +492,35 @@ function recommendationEvidence(value: unknown, sourceUrl: string | null) {
         sourceUrl,
       };
     });
+}
+
+function recommendationValidationKey(value: unknown) {
+  const evidence = asRecord(value);
+  const validation = asRecord(evidence.validationV2);
+  return stringValue(validation.stableFindingKey);
+}
+
+function implementationFindingEvidence(finding: {
+  title: string;
+  description: string;
+  sourceUrl: string | null;
+  evidence?: unknown;
+}): ImplementationContext["evidence"][number] {
+  const validation = readFindingValidationMetadata(finding.evidence);
+  return {
+    title: finding.title,
+    description:
+      validation?.plainLanguage.whatThisMeans ?? finding.description,
+    sourceUrl: finding.sourceUrl,
+    whatToDo: validation?.plainLanguage.whatToDo ?? null,
+    ownerFixability:
+      validation?.plainLanguage.ownerFixabilityLabel ?? null,
+    specialist: validation?.plainLanguage.whoCanHelpLabel ?? null,
+    completionCriteria:
+      validation?.specialistReadiness.requiredCompletionCriteria ?? [],
+    verificationMethod:
+      validation?.plainLanguage.howOnreadWillCheck ?? null,
+  };
 }
 
 export function classifyImplementationTask(input: {

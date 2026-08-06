@@ -1,5 +1,4 @@
 import { load, type CheerioAPI } from "cheerio";
-import type { Element } from "domhandler";
 import { createHash } from "node:crypto";
 
 import {
@@ -7,6 +6,16 @@ import {
   emptyWebsiteActionSummary,
   type WebsiteActionSummary,
 } from "@/lib/analyzers/action-classifier";
+import {
+  isCustomerContactOrConversionIntent,
+  type BusinessIntentPurpose,
+} from "@/lib/analyzers/business-intent";
+import {
+  enrichInteractionDestinationPurpose,
+  extractInteractionEvidence,
+  type ContactEvidenceSummary,
+  type ExtractedInteractionEvidence,
+} from "@/lib/analyzers/interaction-evidence";
 import {
   analyzeConversionProcess,
   assessThinContent,
@@ -31,6 +40,12 @@ import {
 } from "@/lib/analyzers/website-url";
 import { extractOperatingHoursSignals } from "@/lib/analyzers/observable-signals";
 import {
+  defaultRenderedPageFetcher,
+  rawPageContentHash,
+  shouldUseRenderedFetch,
+  type RenderedPageFetcher,
+} from "@/lib/analyzers/rendered-page-fetch";
+import {
   fetchPublicText,
   publicHttpErrorMessage,
 } from "@/lib/network/public-http";
@@ -53,6 +68,8 @@ export type ImportantPageRecord = {
 
 export type CrawledPageResult = {
   url: string;
+  requestedUrl?: string;
+  finalUrl?: string;
   statusCode: number | null;
   analysisStatus?: "ANALYZED" | "FAILED";
   title: string | null;
@@ -67,6 +84,8 @@ export type CrawledPageResult = {
   externalLinksCount: number;
   ctaCandidates: string[];
   actionSummary: WebsiteActionSummary;
+  interactionEvidence?: ExtractedInteractionEvidence[];
+  contactEvidence?: ContactEvidenceSummary;
   wordCount: number;
   mainContentWordCount?: number;
   thinContent?: ThinContentAssessment;
@@ -99,6 +118,32 @@ export type CrawledPageResult = {
   inPrimaryNavigation?: boolean;
   internalLinkProminence?: number;
   indexable?: boolean;
+  fetchQuality?: {
+    method: "STATIC_HTML" | "RENDERED_HTML";
+    contentType: string | null;
+    redirectHistory: Array<{
+      from: string;
+      to: string;
+      statusCode: number;
+    }>;
+    rawHtmlBytes: number;
+    extractedTextBytes: number;
+    renderedTextBytes: number;
+    fetchDurationMs: number;
+    timeout: boolean;
+    retryCount: number;
+    robotsStatus: "UNKNOWN" | "ALLOWED" | "DISALLOWED";
+    extractionCompleteness: "COMPLETE" | "PARTIAL" | "INCOMPLETE";
+    errorClassification: string | null;
+    renderingStatus:
+      | "NOT_ENABLED"
+      | "NOT_NEEDED"
+      | "USED"
+      | "UNAVAILABLE"
+      | "FAILED";
+    renderingEscalationSignals: string[];
+    renderedCacheHit: boolean;
+  };
 };
 
 export type WebsiteCrawlResult = {
@@ -139,6 +184,13 @@ export type WebsiteCrawlResult = {
     evidence: string[];
   }>;
   warnings: string[];
+  fetchQualitySummary?: {
+    completePages: number;
+    partialPages: number;
+    incompletePages: number;
+    renderedPages: number;
+    renderedFallbackFailures: number;
+  };
 };
 
 export type CrawlBusinessKind =
@@ -153,6 +205,8 @@ type CrawlOptions = {
   timeBudgetMs?: number;
   businessContext?: CrawlBusinessContext | null;
   fetchText?: typeof fetchPublicText;
+  renderedFallbackEnabled?: boolean;
+  renderPage?: RenderedPageFetcher;
 };
 
 type CrawledLink = {
@@ -321,51 +375,20 @@ function textOf(value: string) {
   return value.replace(/\s+/g, " ").trim();
 }
 
-function elementActionSignals($: CheerioAPI, element: Element) {
-  const node = $(element);
-  const className = node.attr("class") ?? "";
-  const role = node.attr("role") ?? "";
-  const hero = node.closest(
-    "[class*='hero'], [class*='Hero'], [id*='hero'], [id*='Hero'], [class*='banner'], [class*='Banner']",
-  );
-  const inNavigation = node.closest("nav").length > 0;
-  const inHeader = node.closest("header").length > 0;
-  const inFooter = node.closest("footer").length > 0;
-  const inMain = node.closest("main").length > 0;
-  const domLocation = hero.length
-    ? "hero"
-    : inNavigation
-      ? "navigation"
-      : inHeader
-        ? "header"
-        : inFooter
-          ? "footer"
-          : inMain
-            ? "main"
-            : "unknown";
-
-  return {
-    elementType: element.tagName ?? "unknown",
-    domLocation: domLocation as
-      | "hero"
-      | "main"
-      | "header"
-      | "navigation"
-      | "footer"
-      | "unknown",
-    buttonLike:
-      element.tagName === "button" ||
-      role.toLowerCase() === "button" ||
-      /(?:^|\s)(?:btn|button|cta)(?:\s|$|-|_)/i.test(className),
-    nearPrimaryHeading:
-      hero.find("h1").length > 0 ||
-      node.parent().find("h1").length > 0 ||
-      node.siblings("h1").length > 0,
-    navigationLike: inNavigation || inHeader || inFooter,
-  };
+function actionDomLocation(
+  region: ExtractedInteractionEvidence["domRegion"],
+) {
+  if (region === "HERO") return "hero" as const;
+  if (region === "BODY") return "main" as const;
+  if (region === "HEADER") return "header" as const;
+  if (region === "PRIMARY_NAVIGATION" || region === "SECONDARY_NAVIGATION") {
+    return "navigation" as const;
+  }
+  if (region === "FOOTER") return "footer" as const;
+  return "unknown" as const;
 }
 
-function unique(values: string[]) {
+function unique<T extends string>(values: T[]) {
   return [...new Set(values.filter(Boolean))];
 }
 
@@ -583,11 +606,15 @@ function emptyPageResult(
   statusCode: number | null,
   warnings: string[],
   pageTypes: string[] = [],
+  fetchQuality?: CrawledPageResult["fetchQuality"],
+  requestedUrl = url,
 ): CrawledPageResult {
   const localBusinessClues = emptyLocalBusinessClues();
 
   return {
     url,
+    requestedUrl,
+    finalUrl: url,
     statusCode,
     analysisStatus: "FAILED",
     title: null,
@@ -609,6 +636,7 @@ function emptyPageResult(
     hasContactInfo: false,
     contactSignals: [],
     operatingHoursSignals: [],
+    fetchQuality,
     ...localBusinessClues,
   };
 }
@@ -824,18 +852,24 @@ function pageTemplateGroup(url: string, pageTypes: string[]) {
 
 function analyzeHtmlPage({
   url,
+  requestedUrl = url,
   html,
   statusCode,
   rootHostname,
   pageTypes,
   kind,
+  extractionMethod = "STATIC_HTML",
+  fetchQuality,
 }: {
   url: string;
+  requestedUrl?: string;
   html: string;
   statusCode: number;
   rootHostname: string;
   pageTypes: string[];
   kind: CrawlBusinessKind;
+  extractionMethod?: ExtractedInteractionEvidence["extractionMethod"];
+  fetchQuality?: CrawledPageResult["fetchQuality"];
 }) {
   const $ = load(html);
   const pageOrigin = new URL(url).origin;
@@ -853,41 +887,24 @@ function analyzeHtmlPage({
     .slice(0, 8);
   const h2Text = shortTextList($, "h2", 16);
   const h3Text = shortTextList($, "h3", 16);
-  const links = $("a[href]")
-    .map((_, element) => {
-      const rawHref = $(element).attr("href") ?? "";
-      const label = textOf($(element).text());
-
-      try {
-        return {
-          href: new URL(rawHref, url).toString(),
-          rawHref,
-          label,
-          ...elementActionSignals($, element),
-        };
-      } catch {
-        return null;
-      }
-    })
-    .get()
+  const interactionExtraction = extractInteractionEvidence({
+    $,
+    pageUrl: url,
+    businessKind: kind,
+    extractionMethod,
+  });
+  const links = interactionExtraction.interactions
     .filter(
-      (link): link is {
-        href: string;
-        rawHref: string;
-        label: string;
-        elementType: string;
-        domLocation:
-          | "hero"
-          | "main"
-          | "header"
-          | "navigation"
-          | "footer"
-          | "unknown";
-        buttonLike: boolean;
-        nearPrimaryHeading: boolean;
-        navigationLike: boolean;
-      } => Boolean(link),
-    );
+      (interaction) =>
+        interaction.elementType === "a" && Boolean(interaction.destinationUrl),
+    )
+    .map((interaction) => ({
+      href: interaction.destinationUrl!,
+      rawHref: interaction.destinationUrl!,
+      label: interaction.visibleText ?? interaction.accessibleName ?? "",
+      interaction,
+      domLocation: actionDomLocation(interaction.domRegion),
+    }));
   const navigableLinks = links.filter(
     (link) => !/^(mailto|tel|javascript):/i.test(link.rawHref),
   );
@@ -909,15 +926,33 @@ function analyzeHtmlPage({
       return false;
     }
   });
-  const buttonCandidates = $("button, [role='button']")
-    .map((_, element) => ({
-      label: textOf($(element).text()),
-      href: $(element).attr("data-href") ?? "",
-      ...elementActionSignals($, element),
+  const rawActionCandidates = interactionExtraction.interactions
+    .filter((interaction) => interaction.visibility !== "HIDDEN")
+    .map((interaction) => ({
+      evidenceId: interaction.id,
+      label: interaction.visibleText,
+      accessibleName: interaction.accessibleName,
+      href: interaction.destinationUrl,
+      surroundingText: interaction.surroundingText,
+      destinationPurpose: interaction.destinationPurpose,
+      intentConfidence: interaction.intentConfidence,
+      elementType: interaction.elementType,
+      domLocation: actionDomLocation(interaction.domRegion),
+      buttonLike:
+        interaction.elementType === "button" ||
+        interaction.elementType === "input" ||
+        interaction.relativeProminence >= 5,
+      nearPrimaryHeading:
+        interaction.domRegion === "HERO" &&
+        interaction.relativeProminence >= 4,
+      navigationLike: [
+        "HEADER",
+        "PRIMARY_NAVIGATION",
+        "SECONDARY_NAVIGATION",
+        "FOOTER",
+      ].includes(interaction.domRegion),
     }))
-    .get()
-    .filter((button) => Boolean(button.label));
-  const rawActionCandidates = [...links, ...buttonCandidates].slice(0, 120);
+    .slice(0, 180);
   const actionSummary = classifyWebsiteActions({
     candidates: rawActionCandidates,
     businessKind: kind,
@@ -1006,6 +1041,8 @@ function analyzeHtmlPage({
 
   const pageWithoutScore = {
     url,
+    requestedUrl,
+    finalUrl: url,
     statusCode,
     analysisStatus: "ANALYZED" as const,
     title: pageTitle,
@@ -1020,6 +1057,8 @@ function analyzeHtmlPage({
     externalLinksCount: externalLinks.length,
     ctaCandidates,
     actionSummary,
+    interactionEvidence: interactionExtraction.interactions,
+    contactEvidence: interactionExtraction.contact,
     wordCount: bodyText ? bodyText.split(/\s+/).length : 0,
     mainContentWordCount,
     thinContent,
@@ -1027,7 +1066,8 @@ function analyzeHtmlPage({
     conversionProcess,
     warnings,
     pageTypes: finalTypes,
-    hasContactInfo: contactSignals.length > 0,
+    hasContactInfo:
+      contactSignals.length > 0 || interactionExtraction.contact.hasAnyContactPath,
     contactSignals,
     operatingHoursSignals: extractOperatingHoursSignals(
       `${bodyText} ${metaDescription ?? ""}`,
@@ -1050,6 +1090,7 @@ function analyzeHtmlPage({
     indexable: !/\bnoindex\b/i.test(
       $('meta[name="robots"]').attr("content") ?? "",
     ),
+    fetchQuality,
     ...localBusinessClues,
   };
 
@@ -1073,12 +1114,16 @@ async function fetchAndAnalyzePage({
   kind,
   fetchText,
   timeoutMs,
+  renderedFallbackEnabled,
+  renderPage,
 }: {
   target: CrawlTarget;
   rootHostname: string;
   kind: CrawlBusinessKind;
   fetchText: typeof fetchPublicText;
   timeoutMs: number;
+  renderedFallbackEnabled: boolean;
+  renderPage: RenderedPageFetcher;
 }): Promise<{
   page: CrawledPageResult;
   internalLinks: CrawledLink[];
@@ -1096,11 +1141,33 @@ async function fetchAndAnalyzePage({
     const finalUrl = response.url;
     const contentType = response.headers.get("content-type") ?? "";
 
+    const baseQuality: NonNullable<CrawledPageResult["fetchQuality"]> = {
+      method: "STATIC_HTML",
+      contentType: contentType || null,
+      redirectHistory: response.redirectHistory ?? [],
+      rawHtmlBytes: Buffer.byteLength(response.text, "utf8"),
+      extractedTextBytes: 0,
+      renderedTextBytes: 0,
+      fetchDurationMs: response.fetchDurationMs ?? 0,
+      timeout: false,
+      retryCount: 0,
+      robotsStatus: "UNKNOWN",
+      extractionCompleteness: response.truncated ? "PARTIAL" : "COMPLETE",
+      errorClassification: null,
+      renderingStatus: renderedFallbackEnabled ? "NOT_NEEDED" : "NOT_ENABLED",
+      renderingEscalationSignals: [],
+      renderedCacheHit: false,
+    };
+
     if (!response.ok) {
       return {
         page: emptyPageResult(finalUrl, response.status, [
           `Request returned HTTP ${response.status}.`,
-        ], target.pageTypes),
+        ], target.pageTypes, {
+          ...baseQuality,
+          extractionCompleteness: "INCOMPLETE",
+          errorClassification: `HTTP_${response.status}`,
+        }, target.url),
         internalLinks: [],
       };
     }
@@ -1109,19 +1176,82 @@ async function fetchAndAnalyzePage({
       return {
         page: emptyPageResult(finalUrl, response.status, [
           `Page returned non-HTML content: ${contentType || "unknown"}.`,
-        ], target.pageTypes),
+        ], target.pageTypes, {
+          ...baseQuality,
+          extractionCompleteness: "INCOMPLETE",
+          errorClassification: "NON_HTML_RESPONSE",
+        }, target.url),
         internalLinks: [],
       };
     }
 
-    const result = analyzeHtmlPage({
+    const staticText = textOf(load(response.text)("body").text());
+    const escalation = shouldUseRenderedFetch({
+      html: response.text,
+      extractedText: staticText,
+    });
+    baseQuality.extractedTextBytes = Buffer.byteLength(staticText, "utf8");
+    baseQuality.renderingEscalationSignals = escalation.signals;
+    if (escalation.shouldRender) {
+      baseQuality.extractionCompleteness = "INCOMPLETE";
+    }
+
+    let result = analyzeHtmlPage({
       url: finalUrl,
+      requestedUrl: target.url,
       html: response.text,
       statusCode: response.status,
       rootHostname,
       pageTypes: target.pageTypes,
       kind,
+      fetchQuality: baseQuality,
     });
+
+    if (renderedFallbackEnabled && escalation.shouldRender) {
+      const rendered = await renderPage({
+        url: finalUrl,
+        allowedHostname: rootHostname,
+        timeoutMs: Math.min(12_000, Math.max(2_000, timeoutMs)),
+        maxBytes: maxHtmlBytes,
+        rawContentHash: rawPageContentHash(response.text),
+      });
+      const renderingStatus =
+        rendered.status === "SUCCESS"
+          ? "USED"
+          : rendered.status === "UNAVAILABLE"
+            ? "UNAVAILABLE"
+            : "FAILED";
+      const renderedQuality: NonNullable<CrawledPageResult["fetchQuality"]> = {
+        ...baseQuality,
+        method: rendered.status === "SUCCESS" ? "RENDERED_HTML" : "STATIC_HTML",
+        renderedTextBytes: rendered.renderedTextSize,
+        fetchDurationMs: baseQuality.fetchDurationMs + rendered.durationMs,
+        renderingStatus,
+        renderedCacheHit: rendered.cacheHit,
+        errorClassification: rendered.errorClassification,
+        extractionCompleteness:
+          rendered.status === "SUCCESS" ? "COMPLETE" : "INCOMPLETE",
+      };
+
+      if (rendered.status === "SUCCESS" && rendered.html) {
+        result = analyzeHtmlPage({
+          url: rendered.finalUrl,
+          requestedUrl: target.url,
+          html: rendered.html,
+          statusCode: response.status,
+          rootHostname,
+          pageTypes: target.pageTypes,
+          kind,
+          extractionMethod: "RENDERED_HTML",
+          fetchQuality: renderedQuality,
+        });
+      } else {
+        result.page.fetchQuality = renderedQuality;
+        result.page.warnings.push(
+          "Static extraction looked incomplete and rendered-page verification was unavailable. This page is treated as a coverage limitation, not an empty-page defect.",
+        );
+      }
+    }
 
     if (response.truncated) {
       result.page.warnings.push(
@@ -1131,12 +1261,165 @@ async function fetchAndAnalyzePage({
 
     return result;
   } catch (error) {
+    const message = publicHttpErrorMessage(error, "Page request failed.");
     return {
-      page: emptyPageResult(target.url, null, [
-        publicHttpErrorMessage(error, "Page request failed."),
-      ], target.pageTypes),
+      page: emptyPageResult(
+        target.url,
+        null,
+        [message],
+        target.pageTypes,
+        {
+          method: "STATIC_HTML",
+          contentType: null,
+          redirectHistory: [],
+          rawHtmlBytes: 0,
+          extractedTextBytes: 0,
+          renderedTextBytes: 0,
+          fetchDurationMs: 0,
+          timeout: /timed out/i.test(message),
+          retryCount: 0,
+          robotsStatus: "UNKNOWN",
+          extractionCompleteness: "INCOMPLETE",
+          errorClassification: /timed out/i.test(message)
+            ? "TIMEOUT"
+            : "FETCH_FAILED",
+          renderingStatus: renderedFallbackEnabled
+            ? "NOT_NEEDED"
+            : "NOT_ENABLED",
+          renderingEscalationSignals: [],
+          renderedCacheHit: false,
+        },
+      ),
       internalLinks: [],
     };
+  }
+}
+
+function enrichCrawledInteractionDestinations(
+  pages: CrawledPageResult[],
+  kind: CrawlBusinessKind,
+  rootHostname: string,
+) {
+  const destinations = new Map<string, CrawledPageResult>();
+  for (const page of pages) {
+    try {
+      destinations.set(crawlUrlKey(page.url), page);
+    } catch {
+      // Invalid failed-page URLs cannot provide destination evidence.
+    }
+  }
+
+  for (const page of pages) {
+    if (page.analysisStatus !== "ANALYZED" || !page.interactionEvidence) {
+      continue;
+    }
+
+    const enriched = page.interactionEvidence.map((interaction) => {
+      if (!interaction.destinationUrl) return interaction;
+      if (/^(?:mailto|tel):/i.test(interaction.destinationUrl)) {
+        return { ...interaction, destinationStatus: "NON_HTTP" as const };
+      }
+
+      let destination: CrawledPageResult | undefined;
+      let destinationStatus: ExtractedInteractionEvidence["destinationStatus"] =
+        "NOT_CRAWLED";
+      try {
+        const url = new URL(interaction.destinationUrl);
+        if (!isSameWebsiteHostname(url.hostname, rootHostname)) {
+          return { ...interaction, destinationStatus: "EXTERNAL" as const };
+        }
+        destination = destinations.get(crawlUrlKey(url));
+        if (destination) {
+          destinationStatus =
+            destination.analysisStatus === "ANALYZED" ? "ANALYZED" : "FAILED";
+        }
+      } catch {
+        return interaction;
+      }
+
+      return enrichInteractionDestinationPurpose({
+        interaction,
+        destinationTitle: destination?.title,
+        destinationH1: destination?.h1Text,
+        destinationText: destination?.contentExcerpt,
+        destinationStatus,
+        businessKind: kind,
+      });
+    });
+    const actionSummary = classifyWebsiteActions({
+      candidates: enriched
+        .filter((interaction) => interaction.visibility !== "HIDDEN")
+        .map((interaction) => ({
+          evidenceId: interaction.id,
+          label: interaction.visibleText,
+          accessibleName: interaction.accessibleName,
+          href: interaction.destinationUrl,
+          surroundingText: interaction.surroundingText,
+          destinationPurpose: interaction.destinationPurpose,
+          intentConfidence: interaction.intentConfidence,
+          elementType: interaction.elementType,
+          domLocation: actionDomLocation(interaction.domRegion),
+          buttonLike:
+            interaction.elementType === "button" ||
+            interaction.relativeProminence >= 5,
+          nearPrimaryHeading:
+            interaction.domRegion === "HERO" &&
+            interaction.relativeProminence >= 4,
+          navigationLike: [
+            "HEADER",
+            "PRIMARY_NAVIGATION",
+            "SECONDARY_NAVIGATION",
+            "FOOTER",
+          ].includes(interaction.domRegion),
+        })),
+      businessKind: kind,
+    });
+    const contactCandidates = enriched.filter(
+      (interaction) =>
+        interaction.visibility !== "HIDDEN" &&
+        interaction.intentConfidence >= 0.7 &&
+        isCustomerContactOrConversionIntent(interaction.destinationPurpose),
+    );
+    const brokenContactPathEvidenceIds = contactCandidates
+      .filter((interaction) => interaction.destinationStatus === "FAILED")
+      .map((interaction) => interaction.id);
+    const usableContactPathEvidenceIds = contactCandidates
+      .filter((interaction) => interaction.destinationStatus !== "FAILED")
+      .map((interaction) => interaction.id);
+    const existingContact = page.contactEvidence;
+
+    page.interactionEvidence = enriched;
+    page.actionSummary = actionSummary;
+    page.ctaCandidates = actionSummary.detectedActionTypes;
+    page.contactEvidence = existingContact
+      ? {
+          ...existingContact,
+          contactPathEvidenceIds: contactCandidates.map(
+            (interaction) => interaction.id,
+          ),
+          allContactEvidenceIds: unique([
+            ...contactCandidates.map((interaction) => interaction.id),
+            ...(existingContact.contactFormEvidenceIds ?? []),
+            ...(existingContact.contactSectionEvidenceIds ?? []),
+            ...(existingContact.visibleEmailEvidenceIds ?? []),
+            ...(existingContact.visiblePhoneEvidenceIds ?? []),
+          ]),
+          usableContactPathEvidenceIds,
+          brokenContactPathEvidenceIds,
+          hasAnyContactPath:
+            usableContactPathEvidenceIds.length > 0 ||
+            existingContact.contactSectionHeadings.length > 0 ||
+            existingContact.visibleEmailAddresses.length > 0 ||
+            existingContact.visiblePhoneNumbers.length > 0 ||
+            existingContact.hasContactForm,
+          detectedPurposes: unique<BusinessIntentPurpose>(
+            contactCandidates.map((interaction) => interaction.destinationPurpose),
+          ),
+        }
+      : existingContact;
+    page.hasContactInfo =
+      page.contactSignals.length > 0 ||
+      Boolean(page.contactEvidence?.hasAnyContactPath);
   }
 }
 
@@ -1189,11 +1472,14 @@ function summarizeCrawl({
     (page) =>
       page.analysisStatus === "ANALYZED" && belongsToAuditedWebsite(page),
   );
+  const evidenceReadyPages = successfulPages.filter(
+    (page) => page.fetchQuality?.extractionCompleteness !== "INCOMPLETE",
+  );
   const averagePageScore =
-    successfulPages.length > 0
+    evidenceReadyPages.length > 0
       ? Math.round(
-          successfulPages.reduce((total, page) => total + page.score, 0) /
-            successfulPages.length,
+          evidenceReadyPages.reduce((total, page) => total + page.score, 0) /
+            evidenceReadyPages.length,
         )
       : 0;
   const scannedImportantMap = new Map<string, InternalImportantRecord>();
@@ -1304,7 +1590,7 @@ function summarizeCrawl({
   const missingImportantPageTypes = reportableTypes
     .filter((type) => type !== "Homepage")
     .filter((type) => !discoveredTypes.has(type));
-  const thinPages = successfulPages
+  const thinPages = evidenceReadyPages
     .filter(
       (page) =>
         page.thinContent?.status === "THIN" ||
@@ -1316,17 +1602,17 @@ function summarizeCrawl({
       status: page.thinContent!.status as "THIN" | "EMPTY",
     }));
   const duplicateContentGroups = detectDuplicateContentGroups(
-    successfulPages.map((page) => ({
+    evidenceReadyPages.map((page) => ({
       url: page.url,
       content: page.analysisContent ?? null,
       contentHash: page.contentHash,
       mainContentWordCount: page.mainContentWordCount ?? page.wordCount,
     })),
   );
-  const copyQualityFindings = successfulPages
+  const copyQualityFindings = evidenceReadyPages
     .flatMap((page) => page.copyQualityIssues ?? [])
     .slice(0, 10);
-  const orderingFrictionPages = successfulPages
+  const orderingFrictionPages = evidenceReadyPages
     .filter(
       (page) =>
         page.conversionProcess?.frictionLevel === "LOW" ||
@@ -1348,39 +1634,39 @@ function summarizeCrawl({
     successfulPages: successfulPages.length,
     failedPages: pageResults.length - successfulPages.length,
     averagePageScore,
-    pagesMissingTitle: successfulPages.filter((page) => !page.title).length,
-    pagesMissingMetaDescription: successfulPages.filter(
+    pagesMissingTitle: evidenceReadyPages.filter((page) => !page.title).length,
+    pagesMissingMetaDescription: evidenceReadyPages.filter(
       (page) => !page.metaDescription,
     ).length,
-    pagesWithNoH1: successfulPages.filter((page) => page.h1Count === 0).length,
-    pagesWithMultipleH1: successfulPages.filter((page) => page.h1Count > 1)
+    pagesWithNoH1: evidenceReadyPages.filter((page) => page.h1Count === 0).length,
+    pagesWithMultipleH1: evidenceReadyPages.filter((page) => page.h1Count > 1)
       .length,
-    totalImages: successfulPages.reduce(
+    totalImages: evidenceReadyPages.reduce(
       (total, page) => total + page.imageCount,
       0,
     ),
-    totalImagesMissingAlt: successfulPages.reduce(
+    totalImagesMissingAlt: evidenceReadyPages.reduce(
       (total, page) => total + page.imagesMissingAltCount,
       0,
     ),
-    pagesWithNoCTA: successfulPages.filter(
+    pagesWithNoCTA: evidenceReadyPages.filter(
       (page) => !page.actionSummary.hasDetectedActionLinks,
     ).length,
-    pagesWithDetectedActionLinks: successfulPages.filter(
+    pagesWithDetectedActionLinks: evidenceReadyPages.filter(
       (page) => page.actionSummary.hasDetectedActionLinks,
     ).length,
-    pagesWithAssessedPrimaryCta: successfulPages.filter(
+    pagesWithAssessedPrimaryCta: evidenceReadyPages.filter(
       (page) => page.actionSummary.primaryCtaAssessment.assessed,
     ).length,
-    pagesWithClearPrimaryCta: successfulPages.filter(
+    pagesWithClearPrimaryCta: evidenceReadyPages.filter(
       (page) => page.actionSummary.primaryCtaAssessment.clarity === "CLEAR",
     ).length,
-    pagesWithCtaNeedsImprovement: successfulPages.filter(
+    pagesWithCtaNeedsImprovement: evidenceReadyPages.filter(
       (page) =>
         page.actionSummary.primaryCtaAssessment.clarity ===
         "NEEDS_IMPROVEMENT",
     ).length,
-    pagesWithUncertainPrimaryCta: successfulPages.filter(
+    pagesWithUncertainPrimaryCta: evidenceReadyPages.filter(
       (page) => page.actionSummary.primaryCtaAssessment.clarity === "UNCERTAIN",
     ).length,
     importantPagesFound: scannedTypes,
@@ -1406,6 +1692,25 @@ function summarizeCrawl({
     copyQualityFindings,
     orderingFrictionPages,
     warnings,
+    fetchQualitySummary: {
+      completePages: pageResults.filter(
+        (page) => page.fetchQuality?.extractionCompleteness === "COMPLETE",
+      ).length,
+      partialPages: pageResults.filter(
+        (page) => page.fetchQuality?.extractionCompleteness === "PARTIAL",
+      ).length,
+      incompletePages: pageResults.filter(
+        (page) => page.fetchQuality?.extractionCompleteness === "INCOMPLETE",
+      ).length,
+      renderedPages: pageResults.filter(
+        (page) => page.fetchQuality?.renderingStatus === "USED",
+      ).length,
+      renderedFallbackFailures: pageResults.filter((page) =>
+        ["FAILED", "UNAVAILABLE"].includes(
+          page.fetchQuality?.renderingStatus ?? "",
+        ),
+      ).length,
+    },
   };
 }
 
@@ -1416,6 +1721,8 @@ export async function crawlWebsite(
   const crawlLimitUsed = clampLimit(options.maxPages);
   const businessTypeUsed = inferBusinessKind(options.businessContext);
   const fetchText = options.fetchText ?? fetchPublicText;
+  const renderedFallbackEnabled = options.renderedFallbackEnabled === true;
+  const renderPage = options.renderPage ?? defaultRenderedPageFetcher;
   const startedAt = Date.now();
   const timeBudgetMs = Math.max(
     fetchTimeoutMs,
@@ -1504,6 +1811,8 @@ export async function crawlWebsite(
       kind: businessTypeUsed,
       fetchText,
       timeoutMs: Math.max(500, Math.min(fetchTimeoutMs, remainingMs)),
+      renderedFallbackEnabled,
+      renderPage,
     });
 
     pageResults.push(result.page);
@@ -1593,6 +1902,20 @@ export async function crawlWebsite(
       });
       order += 1;
     }
+  }
+
+  enrichCrawledInteractionDestinations(
+    pageResults,
+    businessTypeUsed,
+    rootHostname,
+  );
+  const incompleteExtractionCount = pageResults.filter(
+    (page) => page.fetchQuality?.extractionCompleteness === "INCOMPLETE",
+  ).length;
+  if (incompleteExtractionCount > 0) {
+    warnings.push(
+      `${incompleteExtractionCount} page${incompleteExtractionCount === 1 ? " had" : "s had"} incomplete extraction and was excluded from missing-element issue counts.`,
+    );
   }
 
   for (const page of pageResults) {

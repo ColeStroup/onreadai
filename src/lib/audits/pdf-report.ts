@@ -1205,6 +1205,14 @@ function renderTechnicalAppendix(flow: PdfFlow, report: AuditReportViewModel) {
           finding.evidenceSummary
             ? ` | Evidence: ${finding.evidenceSummary}`
             : ""
+        }${finding.suggestedAction ? ` | What to do: ${finding.suggestedAction}` : ""}${
+          finding.ownerFixability
+            ? ` | Owner access: ${finding.ownerFixability}`
+            : ""
+        }${finding.whoCanHelp ? ` | Who can help: ${finding.whoCanHelp}` : ""}${
+          finding.howOnreadWillCheck
+            ? ` | Verification: ${finding.howOnreadWillCheck}`
+            : ""
         }`,
     ),
     "Technical Appendix",

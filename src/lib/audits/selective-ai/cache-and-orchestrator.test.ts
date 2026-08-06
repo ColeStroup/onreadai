@@ -394,7 +394,7 @@ function inMemoryDependencies({
   failPagePath?: string;
   failCacheWrites?: boolean;
   onProviderRequest?: (
-    operation: "PAGE_ANALYSIS" | "AUDIT_SYNTHESIS",
+    operation: "PAGE_ANALYSIS" | "AUDIT_SYNTHESIS" | "FINDING_VALIDATION",
   ) => void;
   onUsage?: (
     record: Parameters<SelectiveAiAuditDependencies["recordUsage"]>[0],

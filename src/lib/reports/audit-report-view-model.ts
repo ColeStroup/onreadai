@@ -59,6 +59,7 @@ import {
   findingTypeLabels,
   type AuditFindingType,
 } from "@/lib/audits/finding-taxonomy";
+import { readFindingValidationMetadata } from "@/lib/audits/quality/candidate-pipeline";
 import {
   buildNormalizedAuditFacts,
   readNormalizedAuditFacts,
@@ -188,6 +189,12 @@ export type ReportFinding = {
   confidence?: "High" | "Medium" | "Low";
   whyItMatters?: string | null;
   suggestedAction?: string | null;
+  ownerFixability?: string | null;
+  whoCanHelp?: string | null;
+  howOnreadWillCheck?: string | null;
+  materiality?: "HIGH" | "MEDIUM" | "LOW" | null;
+  validationState?: string | null;
+  supportingEvidenceIds?: string[];
 };
 
 export type ReportScoringMetadata = {
@@ -1719,6 +1726,7 @@ function buildCurrentFindings({
     diagnosticLabel: "report-findings",
   }).map<ReportFinding>((finding) => {
     const aiEvidence = readAiReviewedOpportunityEvidence(finding.evidence);
+    const validation = readFindingValidationMetadata(finding.evidence);
     const findingType = classifyAuditFindingType({
       title: finding.title,
       description: finding.description,
@@ -1729,7 +1737,9 @@ function buildCurrentFindings({
     return {
       id: finding.id,
       title: normalizeFindingTitle(finding.title),
-      description: normalizeFindingDescription(finding.description),
+      description: normalizeFindingDescription(
+        validation?.plainLanguage.whatThisMeans ?? finding.description,
+      ),
       category: finding.category,
       severity: finding.severity,
       findingType,
@@ -1737,11 +1747,31 @@ function buildCurrentFindings({
       sourceLabel: findingTypeLabels[findingType],
       sourceUrl: finding.sourceUrl ?? aiEvidence?.sourceUrl ?? null,
       evidenceSummary: aiEvidence?.excerpt ?? finding.description,
-      confidence: aiEvidence
+      confidence: validation
+        ? validation.confidence >= 0.85
+          ? "High"
+          : validation.confidence >= 0.65
+            ? "Medium"
+            : "Low"
+        : aiEvidence
         ? evidenceConfidenceLabel(aiEvidence.confidence)
         : "High",
-      whyItMatters: aiEvidence?.businessImpact ?? null,
-      suggestedAction: aiEvidence?.suggestedAction ?? null,
+      whyItMatters:
+        validation?.plainLanguage.whyItMatters ??
+        aiEvidence?.businessImpact ??
+        null,
+      suggestedAction:
+        validation?.plainLanguage.whatToDo ??
+        aiEvidence?.suggestedAction ??
+        null,
+      ownerFixability:
+        validation?.plainLanguage.ownerFixabilityLabel ?? null,
+      whoCanHelp: validation?.plainLanguage.whoCanHelpLabel ?? null,
+      howOnreadWillCheck:
+        validation?.plainLanguage.howOnreadWillCheck ?? null,
+      materiality: validation?.materiality ?? null,
+      validationState: validation?.state ?? null,
+      supportingEvidenceIds: validation?.supportingEvidenceIds ?? [],
     };
   });
 

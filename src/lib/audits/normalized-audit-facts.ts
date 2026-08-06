@@ -13,13 +13,14 @@ import type {
 } from "@/lib/analyzers/website-crawler";
 import type { WebsiteAnalysis } from "@/lib/analyzers/website-analyzer";
 import type { SelectiveAiAuditSnapshot } from "@/lib/audits/selective-ai/types";
+import { stableEvidenceId } from "@/lib/audits/evidence-contracts";
 import {
   classifyBusinessModel,
   type BusinessModelClassification,
   type BusinessModelContext,
 } from "@/lib/business-model";
 
-export const NORMALIZED_AUDIT_FACTS_VERSION = "normalized-audit-facts-v3";
+export const NORMALIZED_AUDIT_FACTS_VERSION = "normalized-audit-facts-v4";
 export const COVERAGE_MODEL_VERSION = "audit-coverage-v2";
 
 export type FactConfidence = "HIGH" | "MEDIUM" | "LOW";
@@ -29,13 +30,26 @@ export type NormalizedTextFact = {
   length: number;
   status: "GOOD" | "MISSING" | "TOO_SHORT" | "TOO_LONG" | "UNKNOWN";
   confidence: FactConfidence;
+  provenance?: NormalizedFactProvenance;
 };
 
 export type NormalizedH1Fact = {
   count: number;
   values: string[];
   status: "GOOD" | "MISSING" | "MULTIPLE";
-  confidence: "HIGH";
+  confidence: FactConfidence;
+  provenance?: NormalizedFactProvenance;
+};
+
+export type NormalizedFactProvenance = {
+  evidenceId: string;
+  sourceUrl: string;
+  extractionMethod: string;
+  confidence: FactConfidence;
+  visibility: "VISIBLE" | "ACCESSIBLE_ONLY" | "HIDDEN" | "DOCUMENT";
+  observedAt: string;
+  contentHash: string | null;
+  analyzerVersion: string;
 };
 
 export type NormalizedPageFacts = {
@@ -58,6 +72,28 @@ export type NormalizedPageFacts = {
       | "UNCERTAIN"
       | "NOT_ASSESSED"
       | "NOT_APPLICABLE";
+    interactionEvidenceIds?: string[];
+  };
+  contact?: {
+    hasAnyContactPath: boolean;
+    contactPathEvidenceIds: string[];
+    allContactEvidenceIds?: string[];
+    usableContactPathEvidenceIds: string[];
+    brokenContactPathEvidenceIds: string[];
+    contactSectionHeadings: string[];
+    visibleEmailCount: number;
+    visiblePhoneCount: number;
+    hasContactForm: boolean;
+    detectedPurposes: string[];
+    confidence: FactConfidence;
+  };
+  fetch?: {
+    requestedUrl: string;
+    finalUrl: string;
+    canonicalUrl: string | null;
+    method: "STATIC_HTML" | "RENDERED_HTML";
+    extractionCompleteness: "COMPLETE" | "PARTIAL" | "INCOMPLETE";
+    errorClassification: string | null;
   };
 };
 
@@ -144,6 +180,14 @@ export type NormalizedAuditFacts = {
     orderingFrictionPages: NonNullable<
       WebsiteCrawlResult["orderingFrictionPages"]
     >;
+    pageFetchFacts?: Array<{
+      url: string;
+      requestedUrl: string;
+      statusCode: number | null;
+      extractionCompleteness: "COMPLETE" | "PARTIAL" | "INCOMPLETE";
+      renderingStatus: string;
+      evidenceId: string;
+    }>;
   };
   profiles: {
     userConfirmedPlatforms: string[];
@@ -230,10 +274,13 @@ export function buildNormalizedAuditFacts({
         website,
         homepagePage,
         seo,
+        generatedAt,
       })
     : null;
   const successfulPages = (websiteCrawl?.pageResults ?? []).filter(
-    (page) => page.analysisStatus !== "FAILED",
+    (page) =>
+      page.analysisStatus !== "FAILED" &&
+      page.fetchQuality?.extractionCompleteness !== "INCOMPLETE",
   );
   const confirmedSocialPlatforms = unique(
     businessProfiles
@@ -317,6 +364,20 @@ export function buildNormalizedAuditFacts({
       duplicateContentGroups: websiteCrawl?.duplicateContentGroups ?? [],
       copyQualityFindings: websiteCrawl?.copyQualityFindings ?? [],
       orderingFrictionPages: websiteCrawl?.orderingFrictionPages ?? [],
+      pageFetchFacts: (websiteCrawl?.pageResults ?? []).map((page) => ({
+        url: page.url,
+        requestedUrl: page.requestedUrl ?? page.url,
+        statusCode: page.statusCode,
+        extractionCompleteness:
+          page.fetchQuality?.extractionCompleteness ??
+          (page.analysisStatus === "FAILED" ? "INCOMPLETE" : "PARTIAL"),
+        renderingStatus: page.fetchQuality?.renderingStatus ?? "NOT_ENABLED",
+        evidenceId: stableEvidenceId(
+          "page-fetch",
+          page.requestedUrl ?? page.url,
+          page.url,
+        ),
+      })),
     },
     profiles: {
       userConfirmedPlatforms: confirmedSocialPlatforms,
@@ -552,7 +613,9 @@ export function readNormalizedAuditFacts(
   if (!isRecord(snapshot) || !isRecord(snapshot.normalizedFacts)) return null;
   const value = snapshot.normalizedFacts;
   if (
-    value.version !== NORMALIZED_AUDIT_FACTS_VERSION ||
+    !["normalized-audit-facts-v3", NORMALIZED_AUDIT_FACTS_VERSION].includes(
+      String(value.version),
+    ) ||
     !isRecord(value.siteWide) ||
     !isRecord(value.profiles) ||
     !isRecord(value.coverage) ||
@@ -574,42 +637,75 @@ function normalizedHomepageFacts({
   website,
   homepagePage,
   seo,
+  generatedAt,
 }: {
   website: WebsiteAnalysis;
   homepagePage: CrawledPageResult | null;
   seo: SeoAnalysis | null;
+  generatedAt: string;
 }): NormalizedPageFacts {
   const title = preferKnownFact(website.pageTitle, homepagePage?.title);
   const metaDescription = preferKnownFact(
     website.metaDescription,
     homepagePage?.metaDescription,
   );
-  const h1Count = website.h1Count;
+  const h1Count = homepagePage?.h1Count ?? website.h1Count;
   const h1Values =
-    website.h1Text.length > 0 ? website.h1Text : homepagePage?.h1Text ?? [];
-  const actionSummary = website.actionSummary ?? homepagePage?.actionSummary;
+    homepagePage?.h1Text.length
+      ? homepagePage.h1Text
+      : website.h1Text;
+  const actionSummary = homepagePage?.actionSummary ?? website.actionSummary;
   const primaryCtaClarity =
     actionSummary?.primaryCtaAssessment?.clarity ?? "NOT_ASSESSED";
+  const sourceUrl = homepagePage?.url ?? website.normalizedUrl;
+  const contentHash = homepagePage?.contentHash ?? null;
+  const extractionMethod =
+    homepagePage?.fetchQuality?.method ?? "STATIC_HTML";
+  const factConfidence: FactConfidence =
+    homepagePage?.fetchQuality?.extractionCompleteness === "INCOMPLETE"
+      ? "LOW"
+      : homepagePage?.fetchQuality?.extractionCompleteness === "PARTIAL"
+        ? "MEDIUM"
+        : "HIGH";
+  const provenance = (
+    key: string,
+    visibility: NormalizedFactProvenance["visibility"] = "DOCUMENT",
+  ): NormalizedFactProvenance => ({
+    evidenceId: stableEvidenceId("normalized-homepage", key, sourceUrl),
+    sourceUrl,
+    extractionMethod,
+    confidence: factConfidence,
+    visibility,
+    observedAt: generatedAt,
+    contentHash,
+    analyzerVersion: NORMALIZED_AUDIT_FACTS_VERSION,
+  });
+  const contact = homepagePage?.contactEvidence ?? website.contactEvidence;
+  const interactions =
+    homepagePage?.interactionEvidence ?? website.interactionEvidence ?? [];
 
   return {
-    url: website.normalizedUrl || homepagePage?.url || "",
+    url: sourceUrl,
     title: {
       value: title,
       length: title?.length ?? 0,
       status: normalizeTextStatus(seo?.titleStatus, title),
-      confidence: "HIGH",
+      confidence: factConfidence,
+      provenance: provenance("title"),
     },
     metaDescription: {
       value: metaDescription,
       length: metaDescription?.length ?? 0,
       status: normalizeTextStatus(seo?.metaDescriptionStatus, metaDescription),
-      confidence: "HIGH",
+      confidence: factConfidence,
+      provenance: provenance("meta-description"),
     },
     h1: {
       count: h1Count,
       values: h1Values,
       status: h1Count === 1 ? "GOOD" : h1Count === 0 ? "MISSING" : "MULTIPLE",
-      confidence: "HIGH",
+      confidence: factConfidence,
+      provenance: provenance("h1"),
     },
     actions: {
       detectedTypes: actionSummary?.detectedActionTypes ?? [],
@@ -622,6 +718,51 @@ function normalizedHomepageFacts({
       socialLinks:
         actionSummary?.socialLinks ?? website.detectedSocialLinks ?? [],
       primaryCtaClarity,
+      interactionEvidenceIds: interactions.map((interaction) => interaction.id),
+    },
+    contact: contact
+      ? {
+          hasAnyContactPath: contact.hasAnyContactPath,
+          contactPathEvidenceIds: contact.contactPathEvidenceIds,
+          allContactEvidenceIds:
+            contact.allContactEvidenceIds ?? contact.contactPathEvidenceIds,
+          usableContactPathEvidenceIds:
+            contact.usableContactPathEvidenceIds ??
+            contact.contactPathEvidenceIds,
+          brokenContactPathEvidenceIds:
+            contact.brokenContactPathEvidenceIds ?? [],
+          contactSectionHeadings: contact.contactSectionHeadings,
+          visibleEmailCount: contact.visibleEmailAddresses.length,
+          visiblePhoneCount: contact.visiblePhoneNumbers.length,
+          hasContactForm: contact.hasContactForm,
+          detectedPurposes: contact.detectedPurposes,
+          confidence: contact.confidence,
+        }
+      : {
+          hasAnyContactPath: website.hasContactLink,
+          contactPathEvidenceIds: [],
+          allContactEvidenceIds: [],
+          usableContactPathEvidenceIds: [],
+          brokenContactPathEvidenceIds: [],
+          contactSectionHeadings: [],
+          visibleEmailCount: 0,
+          visiblePhoneCount: 0,
+          hasContactForm: false,
+          detectedPurposes: [],
+          confidence: website.hasContactLink ? "MEDIUM" : "LOW",
+        },
+    fetch: {
+      requestedUrl:
+        homepagePage?.requestedUrl ?? website.requestedUrl ?? sourceUrl,
+      finalUrl: homepagePage?.finalUrl ?? website.finalUrl ?? sourceUrl,
+      canonicalUrl: homepagePage?.canonicalUrl ?? website.canonicalUrl ?? null,
+      method: homepagePage?.fetchQuality?.method ?? "STATIC_HTML",
+      extractionCompleteness:
+        homepagePage?.fetchQuality?.extractionCompleteness ??
+        website.extractionCompleteness ??
+        "PARTIAL",
+      errorClassification:
+        homepagePage?.fetchQuality?.errorClassification ?? null,
     },
   };
 }
@@ -653,7 +794,8 @@ function buildCoverage({
     ? ("NOT_APPLICABLE" as const)
     : !websiteCrawl
       ? ("HOMEPAGE_ONLY" as const)
-      : websiteCrawl.failedPages > 0
+      : websiteCrawl.failedPages > 0 ||
+          (websiteCrawl.fetchQualitySummary?.incompletePages ?? 0) > 0
         ? ("PARTIAL_FAILURES" as const)
         : websiteCrawl.crawlLimitReached
           ? ("LIMITED_TO_CRAWL_SCOPE" as const)
@@ -690,7 +832,8 @@ function buildCoverage({
       pagesAnalyzed: websiteCrawl?.successfulPages ?? (website ? 1 : 0),
       status: !website
         ? "NOT_APPLICABLE"
-        : (websiteCrawl?.failedPages ?? 0) > 0
+        : (websiteCrawl?.failedPages ?? 0) > 0 ||
+            (websiteCrawl?.fetchQualitySummary?.incompletePages ?? 0) > 0
           ? "PARTIAL"
           : "COMPLETE",
       explanation: !website
@@ -765,7 +908,7 @@ function crawlExplanation(
   if (status === "NOT_APPLICABLE") return "No website was provided.";
   if (status === "HOMEPAGE_ONLY") return "Only the homepage was analyzed.";
   if (status === "PARTIAL_FAILURES") {
-    return `${crawl?.successfulPages ?? 0} pages loaded and ${crawl?.failedPages ?? 0} failed.`;
+    return `${crawl?.successfulPages ?? 0} pages loaded, ${crawl?.failedPages ?? 0} failed, and ${crawl?.fetchQualitySummary?.incompletePages ?? 0} had incomplete extraction. Incomplete pages are coverage limitations, not confirmed defects.`;
   }
   if (status === "LIMITED_TO_CRAWL_SCOPE") {
     return `${crawl?.successfulPages ?? 0} eligible pages were analyzed before the ${crawl?.crawlLimitUsed ?? 0}-page crawl limit was reached. This is not a claim of full-site discovery.`;

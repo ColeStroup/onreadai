@@ -3,7 +3,7 @@ import type {
   ScoreCategory,
 } from "@prisma/client";
 
-export const EVIDENCE_CONTRACT_VERSION = "audit-evidence-v2";
+export const EVIDENCE_CONTRACT_VERSION = "audit-evidence-v3";
 export const CLAIM_VALIDATOR_VERSION = "claim-validator-v1";
 export const RECOMMENDATION_EVIDENCE_VERSION =
   "recommendation-evidence-v2-root-cause";
@@ -19,6 +19,9 @@ export type AuditEvidenceType =
   | "RAW_LINK_DETECTED"
   | "ACTION_LINK_DETECTED"
   | "PRIMARY_CTA_ASSESSED"
+  | "INTERACTION_ELEMENT"
+  | "CONTACT_SIGNAL"
+  | "PAGE_FETCH_QUALITY"
   | "PAGE_TITLE_LENGTH"
   | "H1_COUNT"
   | "META_DESCRIPTION_LENGTH"
@@ -95,6 +98,10 @@ export type DetectedActionLink = {
   label: string;
   href: string | null;
   actionType: string;
+  accessibleName?: string | null;
+  destinationPurpose?: string | null;
+  intentConfidence?: number | null;
+  evidenceId?: string | null;
   elementType: string;
   domLocation: "hero" | "main" | "header" | "navigation" | "footer" | "unknown";
   buttonLike: boolean;
@@ -219,6 +226,7 @@ export type CanonicalRecommendationEvidence = {
   findingType?:
     | "VERIFIED_TECHNICAL_ISSUE"
     | "AI_REVIEWED_OPPORTUNITY"
+    | "OPTIONAL_REFINEMENT"
     | "VERIFIED_STRENGTH"
     | "COVERAGE_INFORMATION"
     | "LIMITATION"
@@ -281,7 +289,7 @@ export function readEvidenceIntegrity(
 
   const value = snapshot.evidenceIntegrity;
   if (
-    !["audit-evidence-v1", EVIDENCE_CONTRACT_VERSION].includes(
+    !["audit-evidence-v1", "audit-evidence-v2", EVIDENCE_CONTRACT_VERSION].includes(
       String(value.contractVersion),
     ) ||
     !Array.isArray(value.evidence) ||

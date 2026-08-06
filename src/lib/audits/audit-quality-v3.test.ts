@@ -654,7 +654,7 @@ function normalizedFacts(): NormalizedAuditFacts {
   };
 
   return {
-    version: "normalized-audit-facts-v3",
+    version: "normalized-audit-facts-v4",
     generatedAt,
     businessModel: {
       model: "COTTAGE_FOOD",

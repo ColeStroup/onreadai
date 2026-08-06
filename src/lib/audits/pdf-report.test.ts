@@ -8,6 +8,7 @@ import {
   createReportFixture,
   type ReportFixtureKind,
 } from "@/lib/reports/report-fixtures.test-support";
+import { buildPresentationViewModel } from "@/lib/reports/presentation-view-model";
 
 const requiredSections = [
   "Website & SEO Growth Report",
@@ -257,6 +258,39 @@ test("stress PDF paginates long text, URLs, tables, and findings safely", async 
       assert(item.top <= 750, `stress text crossed top bound: ${item.text}`);
     }
   }
+});
+
+test("PDF appendix carries the validated action and verification contract", async () => {
+  const report = createReportFixture("hospitality");
+  const finding = report.technicalAppendix.findings[0];
+  assert(finding);
+  finding.suggestedAction = "Add one clear order link near the main heading.";
+  finding.ownerFixability = "May require website access";
+  finding.whoCanHelp = "Website Developer";
+  finding.howOnreadWillCheck =
+    "Onread will open the saved action and check that its destination loads.";
+
+  const pdf = await inspectPdf(await generateGrowthAuditPdf(report));
+  assert.match(pdf.text, /What to do: Add one clear order link/i);
+  assert.match(pdf.text, /Owner access: May require website access/i);
+  assert.match(pdf.text, /Who can help: Website Developer/i);
+  assert.match(pdf.text, /Verification: Onread will open the saved action/i);
+});
+
+test("PDF and Presentation consume the same canonical priority set", async () => {
+  const report = createReportFixture("hospitality");
+  const priority = report.recommendations.primary[0];
+  assert(priority);
+  priority.title = "Validated shared priority marker";
+  const presentation = buildPresentationViewModel(report);
+  const pdf = await inspectPdf(await generateGrowthAuditPdf(report));
+
+  assert(
+    presentation.topPriorities.some(
+      (item) => item.title === "Validated shared priority marker",
+    ),
+  );
+  assert.match(pdf.text, /Validated shared priority marker/i);
 });
 
 type InspectedPdf = {

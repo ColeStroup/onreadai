@@ -59,6 +59,7 @@ enum AuditStatus {
 enum AiOperationType {
   PAGE_ANALYSIS
   AUDIT_SYNTHESIS
+  FINDING_VALIDATION
   CONSULTANT_MESSAGE
   COMPLEX_CONSULTANT_MESSAGE
   IMPLEMENTATION_DRAFT
@@ -89,6 +90,24 @@ enum FindingSeverity {
   MEDIUM
   HIGH
   CRITICAL
+}
+
+enum AuditFindingFeedbackReason {
+  INCORRECT
+  ALREADY_FIXED
+  NOT_RELEVANT
+  UNABLE_TO_UNDERSTAND
+  DUPLICATE
+  TOO_MINOR
+  WRONG_PAGE
+  WRONG_EVIDENCE
+}
+
+enum AuditFindingFeedbackStatus {
+  PENDING
+  REVIEWED
+  RESOLVED
+  DISMISSED
 }
 
 enum RecommendationPriority {
@@ -338,6 +357,8 @@ model User {
   partnerNotifications             PartnerNotification[]
   emailVerificationCodes           EmailVerificationCode[]
   passwordResetTokens              PasswordResetToken[]
+  auditFindingFeedbackReports      AuditFindingFeedback[]      @relation("AuditFindingFeedbackReporter")
+  auditFindingFeedbackReviews      AuditFindingFeedback[]      @relation("AuditFindingFeedbackReviewer")
 
   @@index([email])
   @@index([role])
@@ -598,6 +619,7 @@ model Business {
   implementationDrafts   ImplementationDraft[]
   pageAnalysisCache      PageAnalysisCache[]
   auditAiUsage           AuditAiUsage[]
+  auditFindingFeedback   AuditFindingFeedback[]
 
   @@index([ownerId])
   @@index([status])
@@ -712,13 +734,14 @@ model Audit {
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
 
-  business             Business              @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  business             Business               @relation(fields: [businessId], references: [id], onDelete: Cascade)
   scores               AuditScore[]
   findings             AuditFinding[]
   recommendations      Recommendation[]
   implementationDrafts ImplementationDraft[]
   competitorSnapshots  CompetitorSnapshot[]
   aiUsage              AuditAiUsage[]
+  findingFeedback      AuditFindingFeedback[]
 
   @@index([businessId])
   @@index([status])
@@ -819,6 +842,33 @@ model AuditScore {
   @@index([category])
 }
 
+model AuditFindingFeedback {
+  id           String                     @id @default(cuid())
+  findingId    String
+  auditId      String
+  businessId   String
+  reporterId   String
+  reason       AuditFindingFeedbackReason
+  comment      String?
+  status       AuditFindingFeedbackStatus @default(PENDING)
+  reviewedById String?
+  reviewedAt   DateTime?
+  reviewNotes  String?
+  createdAt    DateTime                   @default(now())
+  updatedAt    DateTime                   @updatedAt
+
+  finding    AuditFinding @relation(fields: [findingId], references: [id], onDelete: Cascade)
+  audit      Audit        @relation(fields: [auditId], references: [id], onDelete: Cascade)
+  business   Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  reporter   User         @relation("AuditFindingFeedbackReporter", fields: [reporterId], references: [id], onDelete: Cascade)
+  reviewedBy User?        @relation("AuditFindingFeedbackReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@unique([findingId, reporterId, reason])
+  @@index([businessId, status, createdAt])
+  @@index([auditId])
+  @@index([reporterId])
+}
+
 model AuditFinding {
   id          String          @id @default(cuid())
   auditId     String
@@ -832,7 +882,8 @@ model AuditFinding {
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
 
-  audit Audit @relation(fields: [auditId], references: [id], onDelete: Cascade)
+  audit    Audit                  @relation(fields: [auditId], references: [id], onDelete: Cascade)
+  feedback AuditFindingFeedback[]
 
   @@index([auditId])
   @@index([severity])

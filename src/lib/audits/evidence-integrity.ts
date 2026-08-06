@@ -6,10 +6,18 @@ import {
 } from "@prisma/client";
 
 import { getPrimaryCtaAssessment } from "@/lib/analyzers/action-classifier";
+import {
+  contactSignalEvidenceId,
+  type ContactEvidenceSummary,
+  type ExtractedInteractionEvidence,
+} from "@/lib/analyzers/interaction-evidence";
 import type { ReviewAnalysis } from "@/lib/analyzers/review-analyzer";
 import type { SeoAnalysis } from "@/lib/analyzers/seo-analyzer";
 import type { SocialAnalysis } from "@/lib/analyzers/social-analyzer";
-import type { WebsiteCrawlResult } from "@/lib/analyzers/website-crawler";
+import type {
+  CrawledPageResult,
+  WebsiteCrawlResult,
+} from "@/lib/analyzers/website-crawler";
 import type { WebsiteAnalysis } from "@/lib/analyzers/website-analyzer";
 import {
   buildEvidenceValidationWarnings,
@@ -37,7 +45,7 @@ import {
 } from "@/lib/recommendations/recommendation-deduplication";
 
 export const EVIDENCE_INTEGRITY_BUILDER_VERSION =
-  "evidence-integrity-builder-v1";
+  "evidence-integrity-builder-v2-normalized-interactions";
 
 export function buildAuditEvidenceIntegrity<
   T extends RecommendationCandidate,
@@ -489,6 +497,23 @@ function buildEvidenceRecords({
             : [],
       },
     );
+    records.push(
+      ...interactionEvidenceRecords({
+        interactions: website.interactionEvidence ?? [],
+        page: "Homepage",
+        path: "website.homepage.interactions",
+        observedAt,
+        analyzerVersion: sourceVersions.website ?? "unknown",
+      }),
+      ...contactEvidenceRecords({
+        url: website.finalUrl ?? website.normalizedUrl,
+        page: "Homepage",
+        path: "website.homepage.contact",
+        contact: website.contactEvidence,
+        observedAt,
+        analyzerVersion: sourceVersions.website ?? "unknown",
+      }),
+    );
   } else {
     records.push({
       id: stableEvidenceId("website", "unavailable"),
@@ -624,6 +649,28 @@ function buildEvidenceRecords({
             ? ["sitewide:image-alt:missing"]
             : [],
       },
+    );
+    records.push(
+      fetchQualityEvidence({
+        page,
+        observedAt,
+        analyzerVersion: sourceVersions.website ?? "unknown",
+      }),
+      ...interactionEvidenceRecords({
+        interactions: page.interactionEvidence ?? [],
+        page: pageLabel(page.url, page.pageTypes),
+        path: `websiteCrawl.pages.${page.url}.interactions`,
+        observedAt,
+        analyzerVersion: sourceVersions.website ?? "unknown",
+      }),
+      ...contactEvidenceRecords({
+        url: page.url,
+        page: pageLabel(page.url, page.pageTypes),
+        path: `websiteCrawl.pages.${page.url}.contact`,
+        contact: page.contactEvidence,
+        observedAt,
+        analyzerVersion: sourceVersions.website ?? "unknown",
+      }),
     );
   }
 
@@ -786,6 +833,257 @@ function buildEvidenceRecords({
   }
 
   return dedupeEvidence(records);
+}
+
+function interactionEvidenceRecords({
+  interactions,
+  page,
+  path,
+  observedAt,
+  analyzerVersion,
+}: {
+  interactions: ExtractedInteractionEvidence[];
+  page: string;
+  path: string;
+  observedAt: string;
+  analyzerVersion: string;
+}) {
+  return [...interactions]
+    .sort(
+      (left, right) =>
+        Number(right.destinationPurpose !== "OTHER") -
+          Number(left.destinationPurpose !== "OTHER") ||
+        Number(right.visibility === "VISIBLE") -
+          Number(left.visibility === "VISIBLE") ||
+        right.relativeProminence - left.relativeProminence,
+    )
+    .filter(
+      (interaction, index) =>
+        index < 40 &&
+        (interaction.destinationPurpose !== "OTHER" ||
+          interaction.elementType === "form" ||
+          /^(?:mailto|tel):/i.test(interaction.destinationUrl ?? "")),
+    )
+    .map<AuditEvidenceRecord>((interaction) => {
+      const contactIntent = [
+        "CONTACT",
+        "ORDER",
+        "BOOKING",
+        "QUOTE",
+        "PURCHASE",
+        "APPLICATION",
+        "CHAT",
+      ].includes(interaction.destinationPurpose);
+      return {
+        id: interaction.id,
+        type: "INTERACTION_ELEMENT",
+        category: ScoreCategory.WEBSITE,
+        source: path.startsWith("websiteCrawl")
+          ? "website_crawler"
+          : "website_analyzer",
+        sourceUrl: interaction.sourceUrl,
+        sourcePage: page,
+        sourcePath: `${path}.${interaction.id}`,
+        observedValue: {
+          visibleText: interaction.visibleText,
+          accessibleName: interaction.accessibleName,
+          elementType: interaction.elementType,
+          destinationUrl: interaction.destinationUrl,
+          domRegion: interaction.domRegion,
+          visibility: interaction.visibility,
+          surroundingText: interaction.surroundingText,
+          repeated: interaction.repeated,
+        },
+        interpretedValue: {
+          purpose: interaction.destinationPurpose,
+          destinationStatus: interaction.destinationStatus ?? "NOT_CRAWLED",
+          intentSignals: interaction.intentSignals,
+          relativeProminence: interaction.relativeProminence,
+        },
+        confidence: confidenceFromNumber(interaction.intentConfidence),
+        applicability:
+          interaction.visibility === "HIDDEN" ? "NOT_APPLICABLE" : "APPLICABLE",
+        observedAt,
+        analyzerVersion: interaction.analyzerVersion || analyzerVersion,
+        explanation: `${page} contains a ${interaction.elementType} interpreted as ${interaction.destinationPurpose.toLowerCase().replaceAll("_", " ")}.`,
+        issueKeys: [
+          ...(contactIntent ? ["website:contact-path:missing"] : []),
+          ...(contactIntent && interaction.destinationStatus === "FAILED"
+            ? ["website:contact-path:broken-destination"]
+            : []),
+          ...(interaction.destinationPurpose !== "OTHER"
+            ? ["homepage:primary-cta:unclear"]
+            : []),
+        ],
+      };
+    });
+}
+
+function contactEvidenceRecords({
+  url,
+  page,
+  path,
+  contact,
+  observedAt,
+  analyzerVersion,
+}: {
+  url: string;
+  page: string;
+  path: string;
+  contact?: ContactEvidenceSummary;
+  observedAt: string;
+  analyzerVersion: string;
+}) {
+  if (!contact) return [];
+
+  const records: AuditEvidenceRecord[] = [
+    {
+      id: stableEvidenceId("contact-summary", url),
+      type: "CONTACT_SIGNAL",
+      category: ScoreCategory.WEBSITE,
+      source: path.startsWith("websiteCrawl")
+        ? "website_crawler"
+        : "website_analyzer",
+      sourceUrl: url,
+      sourcePage: page,
+      sourcePath: `${path}.summary`,
+      observedValue: {
+        hasAnyContactPath: contact.hasAnyContactPath,
+        contactPathCount: contact.contactPathEvidenceIds.length,
+        contactSectionCount: contact.contactSectionHeadings.length,
+        visibleEmailCount: contact.visibleEmailAddresses.length,
+        visiblePhoneCount: contact.visiblePhoneNumbers.length,
+        hasContactForm: contact.hasContactForm,
+      },
+      interpretedValue: {
+        purposes: contact.detectedPurposes,
+        usablePathCount:
+          contact.usableContactPathEvidenceIds?.length ??
+          contact.contactPathEvidenceIds.length,
+        brokenPathCount: contact.brokenContactPathEvidenceIds?.length ?? 0,
+      },
+      confidence: contact.confidence,
+      applicability: "APPLICABLE",
+      observedAt,
+      analyzerVersion,
+      explanation: contact.hasAnyContactPath
+        ? `${page} contains customer contact or conversion evidence.`
+        : `${page} did not contain a verified customer contact or conversion path in the extracted evidence.`,
+      issueKeys: [
+        "website:contact-path:missing",
+        ...((contact.brokenContactPathEvidenceIds?.length ?? 0) > 0
+          ? ["website:contact-path:broken-destination"]
+          : []),
+      ],
+    },
+  ];
+
+  const signalRecords = <T extends "heading" | "email" | "phone">(
+    kind: T,
+    values: string[],
+    ids: string[] | undefined,
+  ) =>
+    values.map<AuditEvidenceRecord>((value, index) => ({
+      id: ids?.[index] ?? contactSignalEvidenceId(url, kind, value),
+      type: "CONTACT_SIGNAL",
+      category: ScoreCategory.WEBSITE,
+      source: path.startsWith("websiteCrawl")
+        ? "website_crawler"
+        : "website_analyzer",
+      sourceUrl: url,
+      sourcePage: page,
+      sourcePath: `${path}.${kind}.${index}`,
+      observedValue: value,
+      interpretedValue: kind.toUpperCase(),
+      confidence: "HIGH",
+      applicability: "APPLICABLE",
+      observedAt,
+      analyzerVersion,
+      explanation: `${page} contains a visible contact ${kind}.`,
+      issueKeys: ["website:contact-path:missing"],
+    }));
+
+  records.push(
+    ...signalRecords(
+      "heading",
+      contact.contactSectionHeadings,
+      contact.contactSectionEvidenceIds,
+    ),
+    ...signalRecords(
+      "email",
+      contact.visibleEmailAddresses,
+      contact.visibleEmailEvidenceIds,
+    ),
+    ...signalRecords(
+      "phone",
+      contact.visiblePhoneNumbers,
+      contact.visiblePhoneEvidenceIds,
+    ),
+  );
+  return records;
+}
+
+function fetchQualityEvidence({
+  page,
+  observedAt,
+  analyzerVersion,
+}: {
+  page: CrawledPageResult;
+  observedAt: string;
+  analyzerVersion: string;
+}): AuditEvidenceRecord {
+  const quality = page.fetchQuality;
+  const completeness =
+    quality?.extractionCompleteness ??
+    (page.analysisStatus === "FAILED" ? "INCOMPLETE" : "PARTIAL");
+  return {
+    id: stableEvidenceId(
+      "page-fetch",
+      page.requestedUrl ?? page.url,
+      page.url,
+    ),
+    type: "PAGE_FETCH_QUALITY",
+    category: ScoreCategory.WEBSITE,
+    source: "website_crawler",
+    sourceUrl: page.url,
+    sourcePage: pageLabel(page.url, page.pageTypes),
+    sourcePath: `websiteCrawl.pages.${page.url}.fetchQuality`,
+    observedValue: {
+      requestedUrl: page.requestedUrl ?? page.url,
+      finalUrl: page.finalUrl ?? page.url,
+      canonicalUrl: page.canonicalUrl ?? null,
+      statusCode: page.statusCode,
+      redirectHistory: quality?.redirectHistory ?? [],
+      contentType: quality?.contentType ?? null,
+      rawHtmlBytes: quality?.rawHtmlBytes ?? null,
+      extractedTextBytes: quality?.extractedTextBytes ?? null,
+      renderedTextBytes: quality?.renderedTextBytes ?? null,
+      fetchDurationMs: quality?.fetchDurationMs ?? null,
+      retryCount: quality?.retryCount ?? 0,
+      timeout: quality?.timeout ?? false,
+    },
+    interpretedValue: {
+      extractionCompleteness: completeness,
+      renderingStatus: quality?.renderingStatus ?? "NOT_ENABLED",
+      method: quality?.method ?? "STATIC_HTML",
+      errorClassification: quality?.errorClassification ?? null,
+    },
+    confidence: completeness === "COMPLETE" ? "HIGH" : "LOW",
+    applicability: completeness === "INCOMPLETE" ? "UNAVAILABLE" : "APPLICABLE",
+    observedAt,
+    analyzerVersion,
+    explanation:
+      completeness === "COMPLETE"
+        ? `${pageLabel(page.url, page.pageTypes)} was fetched and extracted completely.`
+        : `${pageLabel(page.url, page.pageTypes)} extraction was ${completeness.toLowerCase()}, so absence-based claims require caution.`,
+    issueKeys: [],
+  };
+}
+
+function confidenceFromNumber(value: number) {
+  if (value >= 0.85) return "HIGH" as const;
+  if (value >= 0.6) return "MEDIUM" as const;
+  return "LOW" as const;
 }
 
 function buildClaims({

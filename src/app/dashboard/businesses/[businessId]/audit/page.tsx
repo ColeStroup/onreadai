@@ -20,6 +20,7 @@ import { notFound } from "next/navigation";
 import { DisclosureSection } from "@/components/dashboard/disclosure-section";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { FloatingScrollControls } from "@/components/dashboard/floating-scroll-controls";
+import { FindingFeedbackForm } from "@/components/dashboard/finding-feedback-form";
 import { RecommendationPrimaryAction } from "@/components/dashboard/recommendation-primary-action";
 import {
   PageIntro,
@@ -66,7 +67,7 @@ const findingViewLabels: Record<FindingView, string> = {
   all: "All findings",
   priority: "High priority",
   issues: "Verified issues",
-  opportunities: "AI opportunities",
+  opportunities: "Opportunities",
   strengths: "Strengths",
   limitations: "Limitations",
 };
@@ -124,7 +125,10 @@ function matchesView(finding: ReportFinding, view: FindingView) {
     case "issues":
       return finding.findingType === "VERIFIED_TECHNICAL_ISSUE";
     case "opportunities":
-      return finding.findingType === "AI_REVIEWED_OPPORTUNITY";
+      return (
+        finding.findingType === "AI_REVIEWED_OPPORTUNITY" ||
+        finding.findingType === "OPTIONAL_REFINEMENT"
+      );
     case "strengths":
       return finding.findingType === "VERIFIED_STRENGTH";
     case "limitations":
@@ -515,6 +519,36 @@ export default async function AuditFindingsPage({
                       <p className="mt-2 max-w-4xl text-sm leading-6 text-muted">
                         {findingImpact(finding)}
                       </p>
+                      {finding.suggestedAction ? (
+                        <div className="mt-4 border-l-2 border-accent/70 pl-4">
+                          <p className="text-xs font-semibold uppercase text-muted">
+                            What to do
+                          </p>
+                          <p className="mt-1 max-w-4xl text-sm leading-6">
+                            {finding.suggestedAction}
+                          </p>
+                        </div>
+                      ) : null}
+                      {finding.ownerFixability || finding.whoCanHelp ? (
+                        <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+                          {finding.ownerFixability ? (
+                            <div>
+                              <dt className="font-semibold">Can you fix it?</dt>
+                              <dd className="mt-1 text-muted">
+                                {finding.ownerFixability}
+                              </dd>
+                            </div>
+                          ) : null}
+                          {finding.whoCanHelp ? (
+                            <div>
+                              <dt className="font-semibold">Who can help</dt>
+                              <dd className="mt-1 text-muted">
+                                {finding.whoCanHelp}
+                              </dd>
+                            </div>
+                          ) : null}
+                        </dl>
+                      ) : null}
                     </div>
                     {relatedRecommendation ? (
                       <RecommendationPrimaryAction
@@ -552,16 +586,27 @@ export default async function AuditFindingsPage({
                           {finding.confidence}
                         </p>
                       ) : null}
-                      {finding.suggestedAction ? (
+                      {finding.howOnreadWillCheck ? (
                         <p>
                           <strong className="text-foreground">
-                            Recommended response:
+                            How Onread will check it:
                           </strong>{" "}
-                          {finding.suggestedAction}
+                          {finding.howOnreadWillCheck}
+                        </p>
+                      ) : null}
+                      {finding.materiality ? (
+                        <p>
+                          <strong className="text-foreground">Materiality:</strong>{" "}
+                          {finding.materiality.toLowerCase()}
                         </p>
                       ) : null}
                     </div>
                   </DisclosureSection>
+                  <FindingFeedbackForm
+                    businessId={business.id}
+                    auditId={report.audit.id}
+                    findingId={finding.id}
+                  />
                 </article>
               );
             })}
